@@ -114,6 +114,11 @@ async fn place(app: &App, t: &Task, p: &Project, tool: &str, cwd: Option<&str>) 
 
 fn env(t: &Task, p: &Project) -> Vec<(String, String)> {
     let mut e: Vec<(String, String)> = p.env.0.iter().map(|(k, v)| (k.clone(), v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))).collect();
+    // reagent's PATH as it is now: the supervisor may be older (it outlives
+    // restarts) and its own PATH stale.
+    if let Ok(path) = std::env::var("PATH") {
+        e.push(("PATH".into(), path));
+    }
     e.push(("REAGENT_TASK".into(), t.id.clone()));
     e.push(("REAGENT_PROJECT".into(), p.slug.clone()));
     // Commands are run unattended: nothing should wait for a pager or an editor.

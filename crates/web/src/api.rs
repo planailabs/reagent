@@ -606,7 +606,7 @@ struct PtyOpen {
 /// The person opens a terminal in a task's working directory.
 async fn pty_open(State(s): State<S>, Path(id): Path<String>, Json(o): Json<PtyOpen>) -> R {
     let t = s.w.app.task(&id).await?;
-    let m = s.w.app.sup.pty_open(sup::PtyArgs { cmd: o.cmd, cwd: t.cwd.clone(), env: vec![("REAGENT_TASK".into(), t.id.clone())], owner: Some(t.id), cols: o.cols.unwrap_or(120), rows: o.rows.unwrap_or(32) }).await?;
+    let m = s.w.app.sup.pty_open(sup::PtyArgs { cmd: o.cmd, cwd: t.cwd.clone(), env: std::env::var("PATH").ok().map(|p| ("PATH".to_string(), p)).into_iter().chain([("REAGENT_TASK".to_string(), t.id.clone())]).collect(), owner: Some(t.id), cols: o.cols.unwrap_or(120), rows: o.rows.unwrap_or(32) }).await?;
     Ok(Json(json!(m)))
 }
 

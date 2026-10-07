@@ -29,7 +29,8 @@
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     # What its tasks' commands find.
-    path = with pkgs; [ bashInteractive coreutils findutils gnugrep gnused gawk diffutils git gh nix openssh curl jq ripgrep apprise gnumake gcc python3 nodejs which procps gnutar gzip xz ];
+    # The system's packages too (/run/current-system/sw/bin): what's added there reaches tasks.
+    path = [ "/run/current-system/sw" ] ++ (with pkgs; [ bashInteractive coreutils findutils gnugrep gnused gawk diffutils git gh nix openssh curl jq ripgrep apprise gnumake gcc python3 nodejs which procps gnutar gzip xz ]);
     environment = {
       REAGENT_DATA = "/var/lib/reagent";
       REAGENT_WEBUI = "/opt/reagent/webui";

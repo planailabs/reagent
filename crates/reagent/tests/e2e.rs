@@ -14,11 +14,15 @@ async fn a_task_reads_edits_runs_and_reports() {
         assert!(last_result(b).contains("1│hello world"), "{}", last_result(b));
         call("c2", "fs.edit", json!({"path": "a.txt", "old": "world", "new": "reagent"}))
     });
-    r.push("Fix", |_| call("c3", "shell.exec", json!({"cmd": "cat a.txt"})));
+    r.push("Fix", |_| call("c3", "shell.exec", json!({"cmd": "cat a.txt; echo \"path=$PATH\""})));
     r.push("Fix", |b| {
         assert!(last_result(b).starts_with("exit 0") && last_result(b).contains("hello reagent"), "{}", last_result(b));
+        let path = std::env::var("PATH").unwrap();
+        let first = path.split(':').next().unwrap();
+        assert!(last_result(b).contains(&format!("path={first}")), "commands get reagent's PATH: {}", &last_result(b)[..last_result(b).len().min(600)]);
         text("Changed a.txt; cat shows it.")
     });
+    r.allow_all().await;
     let t = r.start_task("Fix", "change world to reagent in a.txt").await;
     let t = r.done(&t.id).await;
     assert_eq!(t.report.as_deref(), Some("Changed a.txt; cat shows it."));
