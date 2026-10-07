@@ -28,6 +28,7 @@ pub struct Opts {
 
 pub struct Running {
     pub app: Arc<App>,
+    mcp_stop: Arc<tokio::sync::Notify>,
     pub hub: Arc<Hub>,
     pub hub_url: String,
     pub admin_token: String,
@@ -81,10 +82,13 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     let app = App::new(paths, config, store, sup);
 
     // reagent's MCP servers, for the node only.
-    let mcp_l = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mcp_l = mcp_listener(&o.data).await?;
     let mcp_base = format!("http://{}", mcp_l.local_addr()?);
     let mcp = reagent_tools::mcp::router(app.clone());
-    tokio::spawn(async move { axum::serve(mcp_l, mcp).await });
+    // Closed at stop (the port is kept for the next start).
+    let mcp_stop = Arc::new(tokio::sync::Notify::new());
+    let ms = mcp_stop.clone();
+    tokio::spawn(async move { axum::serve(mcp_l, mcp).with_graceful_shutdown(async move { ms.notified().await }).await });
 
     // The hub, on SQLite next to reagent's own database.
     let admin_token = uuid::Uuid::new_v4().simple().to_string();
@@ -109,7 +113,22 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     let web_url = format!("http://{}", web_l.local_addr()?);
     let r = reagent_web::router(web);
     tokio::spawn(async move { axum::serve(web_l, r.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
-    Ok(Running { app, hub, hub_url, admin_token, web_url })
+    Ok(Running { app, mcp_stop, hub, hub_url, admin_token, web_url })
+}
+
+/// reagent's MCP servers listen on the same port as last time (kept in
+/// `mcp-port`): their URLs are part of their identity in subnet, and a new
+/// one at every start would make every running task's agent outdated.
+async fn mcp_listener(data: &Path) -> anyhow::Result<tokio::net::TcpListener> {
+    let file = data.join("mcp-port");
+    if let Some(port) = std::fs::read_to_string(&file).ok().and_then(|p| p.trim().parse::<u16>().ok())
+        && let Ok(l) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await
+    {
+        return Ok(l);
+    }
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    std::fs::write(&file, l.local_addr()?.port().to_string())?;
+    Ok(l)
 }
 
 async fn resume_paused(app: &App, hub: &Hub) {
@@ -152,4 +171,5 @@ pub async fn stop(r: &Running) {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     r.hub.shutdown();
+    r.mcp_stop.notify_one();
 }

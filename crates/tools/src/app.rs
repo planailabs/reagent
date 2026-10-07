@@ -821,10 +821,17 @@ impl App {
         });
         let me = self.clone();
         tokio::spawn(async move {
+            let mut n = 0u64;
             loop {
                 if let Err(e) = me.sync().await {
                     tracing::warn!(error = %e, "following tasks");
                 }
+                // Agents left on an older version (an upgrade that failed while the
+                // node was still coming up, say) are moved on as soon as it can.
+                if n % 10 == 0 {
+                    me.upgrade_outdated().await;
+                }
+                n += 1;
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             }
         });

@@ -23,6 +23,7 @@ async fn a_task_paused_at_stop_goes_on_after_the_next_start() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+    let cluster_before = std::fs::read_to_string(r.data.path().join("cluster.hcl")).unwrap();
     reagent::stop(&r.run).await;
     let kept: Vec<String> = serde_json::from_slice(&std::fs::read(r.data.path().join("paused-at-stop.json")).unwrap()).unwrap();
     assert_eq!(kept, [t.id.clone()]);
@@ -31,6 +32,7 @@ async fn a_task_paused_at_stop_goes_on_after_the_next_start() {
     // The next start, on the same data.
     let again = reagent::up(reagent::Opts { data: r.data.path().into(), listen: None, in_process_supervisor: true, exe: Default::default(), dist: "/nonexistent".into() }).await.unwrap();
     assert!(!r.data.path().join("paused-at-stop.json").exists());
+    assert_eq!(std::fs::read_to_string(r.data.path().join("cluster.hcl")).unwrap(), cluster_before, "the same servers, at the same URLs: running tasks stay current");
     let mut done = None;
     for _ in 0..200 {
         let t = again.app.task(&t.id).await.unwrap();
