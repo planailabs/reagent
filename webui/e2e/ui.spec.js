@@ -142,6 +142,19 @@ test("an API token is made and revoked", async ({ page }) => {
   expect(denied.status()).toBe(401);
 });
 
+test("an MCP server is added, reported and removed", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("server name").fill("nowhere");
+  await page.getByLabel("server url").fill("http://127.0.0.1:9/mcp");
+  await page.getByRole("button", { name: "save and apply" }).click();
+  await expect(page.getByRole("alert")).toContainText("doesn't run", { timeout: 30_000 });
+  const row = page.locator("tr", { hasText: "nowhere" });
+  await expect(row).toContainText("lazy");
+  page.once("dialog", (d) => d.accept());
+  await row.getByRole("button", { name: "remove" }).click();
+  await expect(page.locator("tr", { hasText: "nowhere" })).toHaveCount(0);
+});
+
 test("logging out locks the API", async ({ page }) => {
   await page.getByRole("button", { name: "log out" }).click();
   await expect(page.getByLabel("password")).toBeVisible();

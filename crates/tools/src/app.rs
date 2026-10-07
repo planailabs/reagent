@@ -81,6 +81,12 @@ pub struct App {
     /// Tasks already told about (approval asked, budget hit): not again.
     notified: Mutex<HashSet<(String, String)>>,
     pub notifier: crate::notify::Notifier,
+    /// Where reagent's own MCP servers are (for the cluster file).
+    pub mcp_base: OnceLock<String>,
+    /// The added MCP servers as the node runs them: name → {ok, error?, tools?}.
+    pub mcp_status: Mutex<std::collections::BTreeMap<String, Value>>,
+    /// One cluster change at a time.
+    applying: tokio::sync::Mutex<()>,
 }
 
 fn root() -> Addr {
@@ -103,6 +109,9 @@ impl App {
             shown: Default::default(),
             notified: Default::default(),
             notifier,
+            mcp_base: OnceLock::new(),
+            mcp_status: Default::default(),
+            applying: Default::default(),
         })
     }
 
@@ -122,6 +131,125 @@ impl App {
         if let Ok(Some(t)) = self.store.task(id).await {
             self.emit(json!({"kind": "task", "task": t}));
         }
+    }
+
+    // --- the cluster and added MCP servers ---------------------------------
+
+    async fn apply_text(&self, text: String) -> Result<(), String> {
+        let hub = self.hub()?;
+        let _ = std::fs::write(self.paths.data.join("cluster.hcl"), &text);
+        hub.apply_cluster(vec![subnet::hub::db::ClusterFile { name: "cluster.hcl".into(), text }], false, &root()).await.map_err(|e| e.to_string())?;
+        // Until the node has taken it (configured for this version) and offers the task types.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let nodes = hub.list_nodes().await;
+            let types = hub.op(&root(), Op::ListTypes).await?;
+            let offered = self.config.profile.keys().all(|p| types.as_array().is_some_and(|ts| ts.iter().any(|t| t["name"] == crate::cluster::mixture(p).as_str() && t["nodes"].as_u64().unwrap_or(0) > 0)));
+            if nodes.iter().any(|n| n.configured) && offered {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() > deadline {
+                let errors: Vec<String> = nodes.iter().flat_map(|n| n.errors.iter().map(|(k, v)| format!("{k}: {v}"))).collect();
+                return Err(format!("the node doesn't offer the task types (is a profile's key_env set?) {}", errors.join("; ")));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Writes the cluster from reagent.hcl and the added MCP servers, and
+    /// applies it: first with the added servers declared, then with those
+    /// the node got running in every task's mixture (one that fails is
+    /// reported, not given to tasks). Task agents of an older version move
+    /// onto the new one.
+    pub async fn apply_cluster(&self) -> Result<(), String> {
+        let _one = self.applying.lock().await;
+        let base = self.mcp_base.get().ok_or("reagent's MCP servers aren't up")?.clone();
+        let custom: Vec<_> = self.store.mcp_servers().await.map_err(|e| e.to_string())?;
+        self.apply_text(crate::cluster::render(&self.config, &base, &custom, &[])).await?;
+        // Until the node runs, or has given up on, each declared server of this version.
+        let hub = self.hub()?.clone();
+        let ids: Vec<String> = {
+            let spec = hub.cluster().spec;
+            custom.iter().filter(|m| m.enabled && crate::cluster::check_mcp(m).is_ok()).filter_map(|m| spec.mcp_id(&m.name)).collect()
+        };
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        let nodes = loop {
+            let nodes = hub.list_nodes().await;
+            let settled = ids.iter().all(|id| nodes.iter().any(|n| n.mcps.contains(id) || n.errors.contains_key(id)));
+            if settled || tokio::time::Instant::now() > deadline {
+                break nodes;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        };
+        let mut status = std::collections::BTreeMap::new();
+        let mut healthy = vec![];
+        for m in &custom {
+            let prefix = format!("{}@", m.name);
+            let v = if !m.enabled {
+                json!({"ok": false, "error": "turned off"})
+            } else if let Err(e) = crate::cluster::check_mcp(m) {
+                json!({"ok": false, "error": e})
+            } else if nodes.iter().any(|n| n.mcps.iter().any(|id| ids.contains(id) && id.starts_with(&prefix))) {
+                healthy.push(m.name.clone());
+                json!({"ok": true})
+            } else {
+                let err = nodes.iter().flat_map(|n| n.errors.iter()).find(|(k, _)| k.starts_with(&prefix)).map(|(_, e)| e.clone()).unwrap_or_else(|| "it didn't start".into());
+                json!({"ok": false, "error": err})
+            };
+            status.insert(m.name.clone(), v);
+        }
+        if !healthy.is_empty() {
+            self.apply_text(crate::cluster::render(&self.config, &base, &custom, &healthy)).await?;
+        }
+        for (name, s) in &status {
+            if s["ok"] == false && s["error"] != "turned off" {
+                tracing::warn!(mcp = %name, error = %s["error"], "an added MCP server doesn't run: tasks don't get it");
+            }
+        }
+        *self.mcp_status.lock().unwrap() = status;
+        self.emit(json!({"kind": "mcp"}));
+        self.upgrade_outdated().await;
+        Ok(())
+    }
+
+    /// Task agents of an older version (reagent.hcl, reagent or a server
+    /// changed) move onto the current one: same history, new agent.
+    pub async fn upgrade_outdated(&self) {
+        let Ok(hub) = self.hub() else { return };
+        let agents = hub.list_agents().await;
+        for t in self.store.tasks(None, None, true, 10_000).await.unwrap_or_default() {
+            let Some(id) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
+            let Some(a) = agents.iter().find(|a| a.id == id) else { continue };
+            if !a.outdated || a.superseded_by.is_some() {
+                continue;
+            }
+            match hub.upgrade(&root(), id, true).await {
+                Ok(s) => {
+                    let _ = self.store.set_agent(&t.id, &s.id.to_string()).await;
+                    tracing::info!(task = %t.id, "task moved onto the current version");
+                }
+                Err(e) => tracing::warn!(task = %t.id, error = %e, "couldn't upgrade a task's agent"),
+            }
+        }
+    }
+
+    /// Applies the cluster again when the added servers changed (from the
+    /// CLI, say, which only writes the database).
+    pub fn watch_mcp(self: &Arc<Self>) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let mut seen = me.store.setting("mcp_changed").await.ok().flatten();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let now = me.store.setting("mcp_changed").await.ok().flatten();
+                if now != seen {
+                    seen = now;
+                    if let Err(e) = me.apply_cluster().await {
+                        tracing::error!(error = %e, "applying the changed MCP servers");
+                    }
+                }
+            }
+        });
     }
 
     // --- projects -------------------------------------------------------

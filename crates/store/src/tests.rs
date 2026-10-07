@@ -93,3 +93,21 @@ async fn cron_settings_sessions_and_notifications() {
     s.mark_seen(n).await.unwrap();
     assert!(s.notifications(10).await.unwrap()[0].seen);
 }
+
+#[tokio::test]
+async fn mcp_servers_are_kept_and_changes_noted() {
+    let (s, _d) = store().await;
+    let m: McpServer = serde_json::from_value(serde_json::json!({"name": "web", "url": "https://mcp.example/mcp", "credential": {"env": "WEB_TOKEN", "prefix": "Bearer "}})).unwrap();
+    assert!(m.lazy && m.enabled, "lazy and on by default");
+    s.put_mcp_server(&m).await.unwrap();
+    let first = s.setting("mcp_changed").await.unwrap().unwrap();
+    let mut m2 = s.mcp_servers().await.unwrap().remove(0);
+    assert_eq!(m2.credential.as_ref().unwrap().0.header, "Authorization");
+    m2.lazy = false;
+    m2.idempotent = Json(vec!["search".into()]);
+    s.put_mcp_server(&m2).await.unwrap();
+    assert!(!s.mcp_servers().await.unwrap()[0].lazy);
+    assert_ne!(s.setting("mcp_changed").await.unwrap().unwrap(), first);
+    assert!(s.remove_mcp_server("web").await.unwrap());
+    assert!(!s.remove_mcp_server("web").await.unwrap());
+}

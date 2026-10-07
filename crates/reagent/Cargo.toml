@@ -33,5 +33,6 @@ tempfile.workspace = true
 futures.workspace = true
 rmcp.workspace = true
 tokio-tungstenite = "0.30"
-reagent-web.workspace = true
+schemars.workspace = true
+serde.workspace = true
 base64.workspace = true

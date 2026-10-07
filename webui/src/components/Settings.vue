@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { del, get, post } from "../lib/api.js";
 import Memory from "./Memory.vue";
+import McpServers from "./McpServers.vue";
 
 const config = ref(null);
 const push = ref("");
@@ -99,6 +100,8 @@ onMounted(() => {
     </table>
     <p class="dim">tool results over {{ config.grep_results.over || "∞" }} characters reach a task cut (grep_result reads the rest)</p>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
+    <h2>MCP servers for tasks</h2>
+    <McpServers />
     <h2>API tokens <span class="dim">(for agents using reagent's MCP API at {{ origin }}/mcp)</span></h2>
     <table>
       <tr><th>name</th><th>made</th><th>last used</th><th></th></tr>

@@ -34,11 +34,53 @@ enum Cmd {
     },
     /// Whether the supervisor runs, and its jobs.
     Status,
+    /// MCP servers every task gets (lazily, unless --eager); a running reagent applies changes within seconds.
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
     /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
     Token {
         #[command(subcommand)]
         cmd: TokenCmd,
     },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Add (or change) a server: a URL (streamable HTTP) or a command (stdio, after --).
+    Add {
+        name: String,
+        #[arg(long)]
+        url: Option<String>,
+        /// The environment variable holding a header's value (a token), for a URL server.
+        #[arg(long)]
+        header_env: Option<String>,
+        #[arg(long, default_value = "Authorization")]
+        header: String,
+        /// What goes before the value (e.g. "Bearer ").
+        #[arg(long, default_value = "")]
+        prefix: String,
+        /// KEY=VALUE for a command's environment (`$VAR` takes reagent's).
+        #[arg(long = "env")]
+        env: Vec<String>,
+        /// Offer its tools' schemas from the start (lazy = false).
+        #[arg(long)]
+        eager: bool,
+        /// Tools that may run again after a restart (they change nothing).
+        #[arg(long, value_delimiter = ',')]
+        idempotent: Vec<String>,
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Added but not given to tasks.
+        #[arg(long)]
+        disabled: bool,
+        /// The command and its arguments.
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    List,
+    Remove { name: String },
 }
 
 #[derive(Subcommand)]
@@ -108,6 +150,44 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             println!("password set; every session ended");
             Ok(())
         }
+        Cmd::Mcp { cmd } => {
+            std::fs::create_dir_all(&data)?;
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            match cmd {
+                McpCmd::Add { name, url, header_env, header, prefix, env, eager, idempotent, description, disabled, command } => {
+                    let env = env
+                        .iter()
+                        .map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).ok_or_else(|| anyhow::anyhow!("--env {kv:?}: KEY=VALUE")))
+                        .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
+                    let m = reagent_store::McpServer {
+                        name,
+                        description,
+                        url,
+                        command: (!command.is_empty()).then(|| sqlx_json(command)),
+                        env: sqlx_json(env),
+                        credential: header_env.map(|e| sqlx_json(reagent_store::McpCredential { header, env: e, prefix })),
+                        lazy: !eager,
+                        idempotent: sqlx_json(idempotent),
+                        enabled: !disabled,
+                        created: 0,
+                    };
+                    reagent_tools::cluster::check_mcp(&m).map_err(anyhow::Error::msg)?;
+                    store.put_mcp_server(&m).await?;
+                    println!("added {} ({}); a running reagent applies it within seconds (the web UI's settings show whether it runs)", m.name, if m.lazy { "lazy" } else { "eager" });
+                }
+                McpCmd::List => {
+                    for m in store.mcp_servers().await? {
+                        let what = m.url.clone().unwrap_or_else(|| m.command.as_ref().map(|c| c.0.join(" ")).unwrap_or_default());
+                        println!("{}\t{}\t{}{}", m.name, what, if m.lazy { "lazy" } else { "eager" }, if m.enabled { "" } else { "\toff" });
+                    }
+                }
+                McpCmd::Remove { name } => {
+                    anyhow::ensure!(store.remove_mcp_server(&name).await?, "no server called {name:?}");
+                    println!("removed {name}");
+                }
+            }
+            Ok(())
+        }
         Cmd::Token { cmd } => {
             std::fs::create_dir_all(&data)?;
             let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
@@ -142,4 +222,8 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+fn sqlx_json<T>(v: T) -> reagent_store::Json<T> {
+    reagent_store::Json(v)
 }

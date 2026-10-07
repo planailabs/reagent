@@ -16,7 +16,7 @@ This document describes reagent as built; the Status section at the end lists wh
 | Worktrees | The agent decides: tools to start a worktree, see its diff, merge it back, drop it. Merging is auto or needs approval, per project. |
 | Commands | Foreground (the task waits), background jobs, and PTY terminals. A foreground command moves to the background at its timeout or from the UI. |
 | Memory | Markdown: an `INDEX.md` per scope (global, each project) linking topic, folder and task files. Stored centrally, or in the project's repo, per project. The indexes are injected; tools read and change the files. |
-| Skills | The generic layout: `.agents/skills/<name>/SKILL.md` (and `.agent/skills/`) in the working directory, the project and globally (`~/.agents/skills/`, `<data>/skills/`). Names and descriptions are injected; a tool loads one. The project's `AGENTS.md` is injected too. |
+| Skills | The generic layout: `.agents/skills/<name>/SKILL.md` (and `.agent/skills/`, `.claude/skills/`) in the working directory, the project and globally (`~/.agents/skills/`, `<data>/skills/`). Names and descriptions are injected; a tool loads one. The project's `AGENTS.md` is injected too. |
 | Cron | Per project, in reagent's database, managed in the UI (and by tasks through tools). |
 | Storage | SQLite for everything: reagent's own data, and subnet's hub through subnet's SQLite backend. |
 | Notifications | Web Push and the apprise CLI. |
@@ -129,6 +129,8 @@ Commands get the project's env, `REAGENT_TASK`, `REAGENT_PROJECT`, and `PAGER=ca
 
 **Asking (`ask`)**: `ask(question, options?)`: the task waits for the answer (a notification goes out).
 
+**Added servers.** The person adds MCP servers every task gets, in the settings page or with `reagent mcp add <name> (--url <url> [--header-env VAR --header H --prefix P] | -- <command…> [--env K=V]) [--eager] [--idempotent a,b] [--description …] [--disabled]` (`mcp list`, `mcp remove`). They're kept in `reagent.db` (`mcp_servers`); a header's value or an env value can come from reagent's environment (`$VAR`, the `.env`), so no secret is stored. Their tools are `<name>.<tool>`, **lazy** by default (subnet's lazy tools: a task sees their names in `load_tools` and loads what it needs; a first call of an unloaded one loads it and asks to call again), or offered from the start (`lazy = false`, `--eager`). Applying (at start, when the web API changes one, and within seconds of a change the CLI wrote) declares them in the cluster, waits until the node runs each or reports why not, then puts the running ones into every task's mixture: a server that doesn't start is reported (the settings page shows each one's state) and never blocks tasks. Task agents whose servers changed move onto the new version; new servers reach tasks started after. Names of reagent's own servers are taken. The policy judges their calls like any other.
+
 ## Policy
 
 Per project, an ordered list of rules: `tool` (a glob over `<server>.<tool>`), `command` (a glob over the command line, for `shell.exec*`, `shell.job_input`, `pty.pty_open`, `pty.pty_send`), `target` (a glob over what a call is aimed at: the project of `task_spawn`, the path of a file tool), `action` (`allow`, `ask`, `deny`). The first rule that fits decides; none: the project's default. A command line is judged piece by piece (split at `&&`, `||`, `;`, `|`, `&`, newlines; `$(…)` and backticks are commands too; redirections like `2>&1` aren't): the strictest piece wins, so a rule for `cargo *` doesn't allow `cargo test && rm -rf ~`.
@@ -160,7 +162,7 @@ tasks/<id>.md             a task's checkpoints
 
 ## Skills
 
-A skill is a folder with a `SKILL.md` (YAML frontmatter `name`, `description`, then the instructions) and files it refers to. Found (the nearer winning on a name) in the task's working directory (`.agents/skills/`, `.agent/skills/`), then the project folder, then globally (`~/.agents/skills/`, `<data>/skills/`); read when needed, never copied. The context lists them (`name — description`); `skill_load` gives the body and the skill's files; a task or a cron entry can start with skills loaded into its first message. The project's page lists them with where they're from.
+A skill is a folder with a `SKILL.md` (YAML frontmatter `name`, `description`, then the instructions) and files it refers to. Found (the nearer winning on a name) in the task's working directory (`.agents/skills/`, `.agent/skills/`, `.claude/skills/`), then the project folder, then globally (`~/.agents/skills/`, `<data>/skills/`); read when needed, never copied. The context lists them (`name — description`); `skill_load` gives the body and the skill's files; a task or a cron entry can start with skills loaded into its first message. The project's page lists them with where they're from.
 
 ## Cron
 
@@ -174,9 +176,9 @@ Vue + Parcel (`webui/`), served by `reagent up`; live over SSE (`/api/events`).
 - **Projects:** the list and adding one; a project's tabs: tasks (a tree, subtasks under their parent), new task (profile, budget, skills), cron, policy (the rules, ordered), memory, skills, settings.
 - **Task:** state, usage and cost; pause, pause after this turn, resume, retry, cancel, open a terminal; what it waits for (approve once / always / deny with the call's arguments; answer with an option or text; merge with the diff, or send back; raise the budget); its report; a message box; subtasks; tabs: the transcript (the whole conversation, summarised parts folded, the answer streaming), jobs (live output, to background, stop, kill), terminals (xterm.js over a WebSocket), the worktree's diff.
 - **Search:** every task's conversation.
-- **Settings:** push on this browser, the profiles, API tokens (make: shown once; revoke), the global memory.
+- **Settings:** push on this browser, the profiles, added MCP servers (URL or command, header from env, env, lazy or eager, idempotent tools, on/off; whether each runs), API tokens (make: shown once; revoke), the global memory.
 
-Login: one password (`reagent passwd`, argon2), a session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` behind TLS, 30 days, kept hashed), five tries a minute per address, writes only from the same site (Origin). The API, all behind the login: `/api/session`, `login`, `logout`, `config`, `events`, `inbox`, `notifications`, `push/*`, `projects` (+ `/{id}`, `/rules`, `/skills`, `/cron`), `memory`, `cron`, `tasks` (+ `/{id}` and `/transcript`, `/message`, `/pause`, `/resume`, `/cancel`, `/retry`, `/limits`, `/raise`, `/approve`, `/answer`, `/merge`, `/diff`, `/jobs`, `/ptys`), `search`, `jobs/{id}/output|stream|background|kill`, `ptys/{id}` (WebSocket), `tokens`.
+Login: one password (`reagent passwd`, argon2), a session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` behind TLS, 30 days, kept hashed), five tries a minute per address, writes only from the same site (Origin). The API, all behind the login: `/api/session`, `login`, `logout`, `config`, `events`, `inbox`, `notifications`, `push/*`, `projects` (+ `/{id}`, `/rules`, `/skills`, `/cron`), `memory`, `cron`, `mcp` (+ `/{name}`: put applies at once), `tasks` (+ `/{id}` and `/transcript`, `/message`, `/pause`, `/resume`, `/cancel`, `/retry`, `/limits`, `/raise`, `/approve`, `/answer`, `/merge`, `/diff`, `/jobs`, `/ptys`), `search`, `jobs/{id}/output|stream|background|kill`, `ptys/{id}` (WebSocket), `tokens`.
 
 ## MCP API
 
@@ -224,7 +226,7 @@ notify {
 
 ## CLI
 
-`reagent [--data <dir>] up [--listen <addr>]`, `supervisor [--stop]`, `passwd [--password-stdin]`, `status`, `token add|list|revoke`.
+`reagent [--data <dir>] up [--listen <addr>]`, `supervisor [--stop]`, `passwd [--password-stdin]`, `status`, `mcp add|list|remove`, `token add|list|revoke`.
 
 ## Code layout
 
@@ -242,7 +244,7 @@ prompts/task.md     the task agent's system prompt
 
 - Unit tests: config, policy (pieces, targets, starter rules), edits, memory and its index, skills (precedence), git (worktrees, merge, squash, rebase, conflicts), cron (time zones, catch-up), the cluster file (it parses as subnet's), the store, passwords and tokens.
 - The supervisor: real processes and PTYs (foreground, background, timeout, stdin, process-group kill, lost jobs, scrollback, keys).
-- End to end, against a scripted OpenAI-compatible model: reading, editing and running; approvals and always-allow; denials; background jobs waking their task; a foreground command moving to the background; a worktree merged after approval; questions; memory in the context; subtasks and cross-task search; cron; budgets (pausing, raising); retrying a failed task; paths outside the project; a restart resuming a task; notifications (apprise, web push); the web API (login, guard, projects, rules, memory, cron, skills, tasks, jobs, search, terminals over WebSocket); the MCP API with tokens.
+- End to end, against a scripted OpenAI-compatible model: reading, editing and running; approvals and always-allow; denials; background jobs waking their task; a foreground command moving to the background; a worktree merged after approval; questions; memory in the context; subtasks and cross-task search; cron; budgets (pausing, raising); retrying a failed task; paths outside the project; a restart resuming a task; notifications (apprise, web push); the web API (login, guard, projects, rules, memory, cron, skills, tasks, jobs, search, terminals over WebSocket); the MCP API with tokens; added MCP servers (lazy and eager tools, a broken one reported and not given, the web API, a CLI change applied by the running reagent).
 - The web interface: node tests of its helpers, and Playwright against `reagent up` with a scripted model (`npm run e2e`).
 
 ## Status

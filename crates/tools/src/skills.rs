@@ -39,7 +39,7 @@ pub fn parse(text: &str) -> (Option<String>, Option<String>, String) {
 
 fn found_in(base: &Path, source: &str) -> Vec<Skill> {
     let mut out = vec![];
-    for sub in [".agents/skills", ".agent/skills"] {
+    for sub in [".agents/skills", ".agent/skills", ".claude/skills"] {
         let Ok(rd) = std::fs::read_dir(base.join(sub)) else { continue };
         let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("SKILL.md").is_file()).collect();
         dirs.sort();
@@ -130,13 +130,15 @@ mod tests {
         let (wt, proj, global) = (t.path().join("wt"), t.path().join("proj"), t.path().join("home/.agents/skills"));
         skill(&proj, ".agents/skills", "deploy", "ship it (project)");
         skill(&proj, ".agent/skills", "lint", "check style");
+        skill(&proj, ".claude/skills", "rebase", "rebase the fork");
         skill(&wt, ".agents/skills", "deploy", "ship it (worktree)");
         std::fs::create_dir_all(&global).unwrap();
         skill(&global, "", "deploy", "ship it (global)");
         skill(&global, "", "review", "review code");
         let found = discover(&wt, &proj, &[global.clone()]);
         let by = |n: &str| found.iter().find(|s| s.name == n).unwrap().clone();
-        assert_eq!(found.len(), 3, "{found:?}");
+        assert_eq!(found.len(), 4, "{found:?}");
+        assert_eq!(by("rebase").source, "project", ".claude/skills count too");
         assert_eq!((by("deploy").description.as_str(), by("deploy").source.as_str()), ("ship it (worktree)", "worktree"));
         assert_eq!(by("lint").source, "project");
         assert_eq!(by("review").source, "global");

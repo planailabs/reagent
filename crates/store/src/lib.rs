@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use sqlx::types::Json;
+pub use sqlx::types::Json;
 
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
@@ -181,6 +181,45 @@ pub struct CronOptions {
     pub budget: Option<Budget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+}
+
+/// A header for an HTTP MCP server, its value from an environment variable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpCredential {
+    #[serde(default = "authorization")]
+    pub header: String,
+    pub env: String,
+    #[serde(default)]
+    pub prefix: String,
+}
+
+fn authorization() -> String {
+    "Authorization".into()
+}
+
+/// An MCP server the person added.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct McpServer {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// The program and its arguments.
+    #[serde(default)]
+    pub command: Option<Json<Vec<String>>>,
+    #[serde(default)]
+    pub env: Json<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    pub credential: Option<Json<McpCredential>>,
+    #[serde(default = "yes")]
+    pub lazy: bool,
+    #[serde(default)]
+    pub idempotent: Json<Vec<String>>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub created: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -514,6 +553,44 @@ impl Store {
 
     pub async fn revoke_api_token(&self, name: &str) -> R<bool> {
         Ok(sqlx::query("delete from api_tokens where name = $1").bind(name).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    // --- MCP servers ----------------------------------------------------
+
+    pub async fn mcp_servers(&self) -> R<Vec<McpServer>> {
+        sqlx::query_as("select * from mcp_servers order by name").fetch_all(&self.pool).await
+    }
+
+    /// Adds or changes a server (by name); the change is noted for a running reagent.
+    pub async fn put_mcp_server(&self, m: &McpServer) -> R<()> {
+        sqlx::query(
+            "insert into mcp_servers (name, description, url, command, env, credential, lazy, idempotent, enabled) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             on conflict (name) do update set description = $2, url = $3, command = $4, env = $5, credential = $6, lazy = $7, idempotent = $8, enabled = $9",
+        )
+        .bind(&m.name)
+        .bind(&m.description)
+        .bind(&m.url)
+        .bind(&m.command)
+        .bind(&m.env)
+        .bind(&m.credential)
+        .bind(m.lazy)
+        .bind(&m.idempotent)
+        .bind(m.enabled)
+        .execute(&self.pool)
+        .await?;
+        self.mcp_changed().await
+    }
+
+    pub async fn remove_mcp_server(&self, name: &str) -> R<bool> {
+        let gone = sqlx::query("delete from mcp_servers where name = $1").bind(name).execute(&self.pool).await?.rows_affected() > 0;
+        if gone {
+            self.mcp_changed().await?;
+        }
+        Ok(gone)
+    }
+
+    async fn mcp_changed(&self) -> R<()> {
+        self.set_setting("mcp_changed", &chrono::Utc::now().timestamp_micros().to_string()).await
     }
 
     // --- notifications --------------------------------------------------

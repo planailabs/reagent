@@ -88,6 +88,8 @@ pub fn routes() -> Router<S> {
         .route("/api/jobs/{id}/background", post(job_background))
         .route("/api/jobs/{id}/kill", post(job_kill))
         .route("/api/ptys/{id}", get(pty_ws).delete(pty_close))
+        .route("/api/mcp", get(mcp_servers))
+        .route("/api/mcp/{name}", put(put_mcp).delete(remove_mcp))
         .route("/api/tokens", get(tokens).post(add_token))
         .route("/api/tokens/{name}", delete(revoke_token))
 }
@@ -484,6 +486,37 @@ struct SearchQ {
 /// Across tasks' conversations.
 async fn search(State(s): State<S>, Query(q): Query<SearchQ>) -> R {
     Ok(Json(s.w.app.search(&q.q, q.task.as_deref(), q.project.as_deref(), None, q.page.unwrap_or(1)).await?))
+}
+
+// --- added MCP servers ----------------------------------------------------
+
+async fn mcp_servers(State(s): State<S>) -> R {
+    let list = db(s.w.app.store.mcp_servers().await)?;
+    let status = s.w.app.mcp_status.lock().unwrap().clone();
+    Ok(Json(json!(list.iter().map(|m| {
+        let mut v = json!(m);
+        v["status"] = status.get(&m.name).cloned().unwrap_or(json!({"ok": false, "error": "not applied yet"}));
+        v
+    }).collect::<Vec<_>>())))
+}
+
+/// Adds or changes a server and applies it: the answer says whether it runs.
+async fn put_mcp(State(s): State<S>, Path(name): Path<String>, Json(mut m): Json<Value>) -> R {
+    m["name"] = json!(name);
+    let m: reagent_store::McpServer = serde_json::from_value(m).map_err(|e| E(StatusCode::BAD_REQUEST, e.to_string()))?;
+    reagent_tools::cluster::check_mcp(&m)?;
+    db(s.w.app.store.put_mcp_server(&m).await)?;
+    s.w.app.apply_cluster().await?;
+    let status = s.w.app.mcp_status.lock().unwrap().get(&m.name).cloned().unwrap_or_default();
+    Ok(Json(json!({"server": m, "status": status})))
+}
+
+async fn remove_mcp(State(s): State<S>, Path(name): Path<String>) -> R {
+    let gone = db(s.w.app.store.remove_mcp_server(&name).await)?;
+    if gone {
+        s.w.app.apply_cluster().await?;
+    }
+    Ok(Json(json!({"removed": gone})))
 }
 
 // --- API tokens (the MCP API) ---------------------------------------------

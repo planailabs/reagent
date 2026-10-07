@@ -7,7 +7,6 @@ use std::sync::Arc;
 use reagent_store::Store;
 use reagent_tools::app::{App, Paths};
 use reagent_tools::config::{self, Config};
-use subnet::hub::db::ClusterFile;
 use subnet::hub::{Hub, http};
 use subnet::node::{Node, attach};
 use subnet_core::addr::Addr;
@@ -95,27 +94,14 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     let router = http::router(hub.clone());
     tokio::spawn(async move { axum::serve(hub_l, router).await });
     hub.wait_leader().await;
-    let text = reagent_tools::cluster::render(&app.config, &mcp_base);
-    std::fs::write(o.data.join("cluster.hcl"), &text)?;
-    let applied = hub.apply_cluster(vec![ClusterFile { name: "cluster.hcl".into(), text }], false, &Addr::root()).await?;
-    tracing::info!(version = ?applied.version, "cluster applied");
     attach(hub.clone(), Arc::new(Node::new("local", None))).await?;
     app.set_hub(hub.clone());
-    // Ready once the node offers every profile's type (its MCP servers connected).
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        let types = hub.op(&Addr::root(), subnet_core::proto::Op::ListTypes).await.map_err(anyhow::Error::msg)?;
-        let missing: Vec<String> = app.config.profile.keys().map(|p| reagent_tools::cluster::mixture(p)).filter(|m| !types.as_array().is_some_and(|ts| ts.iter().any(|t| t["name"] == m.as_str() && t["nodes"].as_u64().unwrap_or(0) > 0))).collect();
-        if missing.is_empty() {
-            break;
-        }
-        anyhow::ensure!(tokio::time::Instant::now() < deadline, "the node doesn't offer {missing:?} (is a profile's key_env set?)");
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    upgrade_outdated(&app, &hub).await;
+    let _ = app.mcp_base.set(mcp_base.clone());
+    app.apply_cluster().await.map_err(anyhow::Error::msg)?;
+    tracing::info!("cluster applied");
     resume_paused(&app, &hub).await;
     app.follow();
+    app.watch_mcp();
     reagent_tools::cron::schedule(app.clone());
 
     let web = Arc::new(reagent_web::Web { app: app.clone(), hub_url: hub_url.clone(), hub_token: admin_token.clone(), dist: o.dist.clone() });
@@ -124,26 +110,6 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     let r = reagent_web::router(web);
     tokio::spawn(async move { axum::serve(web_l, r.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
     Ok(Running { app, hub, hub_url, admin_token, web_url })
-}
-
-/// Tasks whose agents are of an older version (reagent.hcl or reagent
-/// changed) move onto the current one: same history, new agent.
-async fn upgrade_outdated(app: &App, hub: &Hub) {
-    let agents = hub.list_agents().await;
-    for t in app.store.tasks(None, None, true, 10_000).await.unwrap_or_default() {
-        let Some(id) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
-        let Some(a) = agents.iter().find(|a| a.id == id) else { continue };
-        if !a.outdated || a.superseded_by.is_some() {
-            continue;
-        }
-        match hub.upgrade(&Addr::root(), id, true).await {
-            Ok(s) => {
-                let _ = app.store.set_agent(&t.id, &s.id.to_string()).await;
-                tracing::info!(task = %t.id, "task moved onto the current version");
-            }
-            Err(e) => tracing::warn!(task = %t.id, error = %e, "couldn't upgrade a task's agent"),
-        }
-    }
 }
 
 async fn resume_paused(app: &App, hub: &Hub) {
