@@ -83,8 +83,17 @@ test("a background job's output shows, and its end wakes the task", async ({ pag
   // A loop isn't a starter rule: it asks first.
   await page.getByLabel("approval").getByRole("button", { name: "allow once" }).click();
   await page.getByRole("link", { name: "jobs" }).click();
-  await page.locator(".job a").first().click();
-  await expect(page.getByLabel("output")).toContainText("tick 1");
+  await page.locator(".job").first().click();
+  const modal = page.getByRole("dialog");
+  await expect(modal).toContainText("for i in 1 2 3");
+  await expect(modal.getByLabel("output")).toContainText("tick 1");
+  // Live: the next lines come in while it's open.
+  await expect(modal.getByLabel("output")).toContainText("tick 3", { timeout: 10_000 });
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await page.locator(".job").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "close" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator(".report")).toContainText("ticker finished", { timeout: 20_000 });
 });
 
