@@ -97,8 +97,19 @@ async fn auth(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+/// Sessions that live as long as their client: rmcp's default closes one
+/// after 5 idle minutes, which ends a call still running in it (a question
+/// waiting for the person, a merge, a long command) and leaves the node
+/// waiting for an answer that never comes. The node is the only client,
+/// on loopback: a connection doesn't silently go away.
+pub fn sessions(keep_alive: Option<std::time::Duration>) -> LocalSessionManager {
+    let mut m = LocalSessionManager::default();
+    m.session_config.keep_alive = keep_alive;
+    m
+}
+
 fn service<S: rmcp::ServerHandler + Clone + Send + Sync + 'static>(s: S) -> StreamableHttpService<S, LocalSessionManager> {
-    StreamableHttpService::new(move || Ok(s.clone()), LocalSessionManager::default().into(), StreamableHttpServerConfig::default())
+    StreamableHttpService::new(move || Ok(s.clone()), sessions(None).into(), StreamableHttpServerConfig::default())
 }
 
 /// Every server, behind the token.
@@ -119,4 +130,14 @@ pub fn router(app: Arc<App>) -> axum::Router {
 /// A paging note for the end of an answer.
 pub fn more(note: impl std::fmt::Display) -> String {
     format!("\n[{note}]")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sessions_dont_end_under_a_running_call() {
+        assert_eq!(super::sessions(None).session_config.keep_alive, None);
+        // rmcp's default would: the reason this exists.
+        assert!(rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default().session_config.keep_alive.is_some());
+    }
 }

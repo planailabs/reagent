@@ -249,5 +249,7 @@ pub async fn auth(State(s): State<S>, req: Request, next: Next) -> Response {
 
 pub fn service(app: Arc<App>) -> StreamableHttpService<ReagentTools, LocalSessionManager> {
     // Callers carry a token, so any host may (reagent sits behind a proxy with its own name).
-    StreamableHttpService::new(move || Ok(ReagentTools(app.clone())), LocalSessionManager::default().into(), StreamableHttpServerConfig::default().disable_allowed_hosts())
+    // Longer than its longest call (task_wait: an hour), still ending sessions a proxy silently dropped.
+    let sessions = reagent_tools::mcp::sessions(Some(std::time::Duration::from_secs(6 * 3600)));
+    StreamableHttpService::new(move || Ok(ReagentTools(app.clone())), sessions.into(), StreamableHttpServerConfig::default().disable_allowed_hosts())
 }
