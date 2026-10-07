@@ -76,6 +76,7 @@ pub fn routes() -> Router<S> {
         .route("/api/tasks/{id}/retry", post(retry))
         .route("/api/tasks/{id}/limits", post(limits))
         .route("/api/tasks/{id}/raise", post(raise))
+        .route("/api/tasks/{id}/profile", post(switch_profile))
         .route("/api/tasks/{id}/approve", post(approve))
         .route("/api/tasks/{id}/answer", post(answer))
         .route("/api/tasks/{id}/merge", post(merge))
@@ -152,8 +153,9 @@ async fn logout(State(s): State<S>, headers: HeaderMap) -> Result<Response, E> {
 
 async fn config(State(s): State<S>) -> R {
     let c = &s.w.app.config;
-    let profiles: Vec<Value> = c.profile.iter().map(|(n, p)| json!({"name": n, "model": p.model, "provider": p.provider, "price": p.price, "context": p.context})).collect();
-    Ok(Json(json!({"profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
+    let profiles: Vec<Value> = c.profile.iter().map(|(n, p)| json!({"name": n, "model": p.model, "provider": p.provider, "price": p.price, "context": p.context, "fallback": p.fallback})).collect();
+    let kinds: Vec<Value> = c.kind.iter().map(|(n, k)| json!({"name": n, "description": k.description, "profile": k.profile, "escalate": k.escalate, "escalate_after": k.escalate_after})).collect();
+    Ok(Json(json!({"kinds": kinds, "default_kind": c.default_kind, "routing": c.routing, "profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
 }
 
 /// Live: task changes, notifications, agent events, job ends.
@@ -430,6 +432,18 @@ struct Limits {
 
 async fn limits(State(s): State<S>, Path(id): Path<String>, Json(l): Json<Limits>) -> R {
     Ok(Json(json!(s.w.app.set_limits(&id, l.profile.as_deref(), l.budget).await?)))
+}
+
+#[derive(Deserialize)]
+struct Switch {
+    profile: String,
+    #[serde(default)]
+    why: Option<String>,
+}
+
+/// The person moves a task onto another profile (another model), history and all.
+async fn switch_profile(State(s): State<S>, Path(id): Path<String>, Json(b): Json<Switch>) -> R {
+    Ok(Json(json!(s.w.app.switch_profile(&id, &b.profile, b.why.as_deref().unwrap_or("the person moved it")).await?)))
 }
 
 async fn raise(State(s): State<S>, Path(id): Path<String>, Json(b): Json<Budget>) -> R {

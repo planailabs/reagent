@@ -62,6 +62,9 @@ pub struct StartTask {
     pub parent: Option<String>,
     #[serde(default)]
     pub origin: Option<String>,
+    /// A kind from reagent.hcl (its profile, its escalation).
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 pub struct App {
@@ -87,6 +90,10 @@ pub struct App {
     pub mcp_status: Mutex<std::collections::BTreeMap<String, Value>>,
     /// One cluster change at a time.
     applying: tokio::sync::Mutex<()>,
+    /// Tool errors in a row, per task (escalation after a kind's `escalate_after`).
+    errors_in_a_row: Mutex<HashMap<String, u32>>,
+    /// Profiles a task failed over from (no going back and forth).
+    fell_back: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 /// Prompt, completion and cached prompt tokens from an agent's usage.
@@ -123,6 +130,8 @@ impl App {
             mcp_base: OnceLock::new(),
             mcp_status: Default::default(),
             applying: Default::default(),
+            errors_in_a_row: Default::default(),
+            fell_back: Default::default(),
         })
     }
 
@@ -283,6 +292,9 @@ impl App {
         if let Some(pr) = &p.profile {
             self.config.profile(Some(pr))?;
         }
+        if let Some(k) = &p.kind {
+            self.config.kind(k)?;
+        }
         if p.name.trim().is_empty() {
             p.name = p.slug.clone();
         }
@@ -341,7 +353,11 @@ impl App {
     /// Starts a task: its record, then its agent.
     pub async fn start_task(&self, req: StartTask) -> Result<Task, String> {
         let p = self.project(&req.project).await?;
-        let (profile, _) = self.config.profile(req.profile.as_deref().or(p.profile.as_deref()))?;
+        let origin = req.origin.clone().unwrap_or_else(|| "ui".into());
+        let kind = self.config.kind_for(req.kind.as_deref(), &origin, p.kind.as_deref())?;
+        let kind_profile = kind.as_deref().and_then(|k| self.config.kind.get(k)).and_then(|k| k.profile.as_deref());
+        // Asked for > the kind's > the project's > the default.
+        let (profile, _) = self.config.profile(req.profile.as_deref().or(kind_profile).or(p.profile.as_deref()))?;
         let profile = profile.to_string();
         if req.title.trim().is_empty() || req.prompt.trim().is_empty() {
             return Err("a task needs a title and what to do".into());
@@ -370,11 +386,12 @@ impl App {
                 parent: req.parent.clone(),
                 title: req.title.trim().into(),
                 prompt: req.prompt.clone(),
-                origin: req.origin.clone().unwrap_or_else(|| "ui".into()),
+                origin,
                 cwd: p.path.clone(),
                 profile: profile.clone(),
                 budget,
                 skills: req.skills.clone(),
+                kind,
             })
             .await
             .map_err(|e| e.to_string())?;
@@ -483,6 +500,84 @@ impl App {
         }
         self.task_changed(id).await;
         self.task(id).await
+    }
+
+    /// Moves a task onto another profile (another model): its history goes
+    /// on there (subnet's upgrade onto another type). A failed task is
+    /// retried there. `why` is said in the notification.
+    pub async fn switch_profile(&self, id: &str, profile: &str, why: &str) -> Result<Task, String> {
+        let t = self.task(id).await?;
+        let (name, _) = self.config.profile(Some(profile))?;
+        if name == t.profile {
+            return Err(format!("{} is already on {name}", t.title));
+        }
+        if !matches!(t.state.as_str(), "running" | "waiting" | "paused" | "failed" | "done") {
+            return Err(format!("{} is {}", t.title, t.state));
+        }
+        let p = self.project(&t.project).await?;
+        let hub = self.hub()?;
+        let own = crate::cluster::project_mixture(name, &p.slug);
+        let ty = if hub.cluster().spec.mixtures.contains_key(&own) { own } else { crate::cluster::mixture(name) };
+        let s = hub.upgrade(&root(), Self::agent_of(&t)?, true, Some(&ty)).await.map_err(|e| e.to_string())?;
+        self.store.set_agent(id, &s.id.to_string()).await.map_err(|e| e.to_string())?;
+        self.store.set_task_limits(id, name, &t.budget.0).await.map_err(|e| e.to_string())?;
+        // A failed agent's copy is failed too: retried there.
+        let failed = hub.list_agents().await.iter().any(|a| a.id == s.id && a.phase == "failed");
+        if failed || t.state == "failed" {
+            hub.op(&root(), Op::Resume { id: s.id, tree: true }).await?;
+            self.store.set_state(id, "running", None).await.map_err(|e| e.to_string())?;
+        }
+        self.errors_in_a_row.lock().unwrap().remove(id);
+        let t2 = self.task(id).await?;
+        self.notify("model", Some(&t2), &format!("{} now runs on {name}", t.title), &format!("from {}: {why}", t.profile)).await;
+        self.task_changed(id).await;
+        tracing::info!(task = %id, from = %t.profile, to = %name, why, "task moved onto another profile");
+        Ok(t2)
+    }
+
+    /// Where a task escalates: its kind's `escalate` profile.
+    pub fn escalation_for(&self, t: &Task) -> Option<String> {
+        t.kind.as_deref().and_then(|k| self.config.kind.get(k)).and_then(|k| k.escalate.clone()).filter(|e| *e != t.profile)
+    }
+
+    /// A tool result came in: tool errors in a row past the kind's
+    /// `escalate_after` move the task onto its escalation profile.
+    async fn tool_result(&self, agent: &str, is_error: bool) {
+        let Ok(t) = self.task_of_agent(agent).await else { return };
+        let n = {
+            let mut m = self.errors_in_a_row.lock().unwrap();
+            let n = m.entry(t.id.clone()).or_default();
+            *n = if is_error { *n + 1 } else { 0 };
+            *n
+        };
+        let after = t.kind.as_deref().and_then(|k| self.config.kind.get(k)).and_then(|k| k.escalate_after);
+        if let (Some(after), Some(to)) = (after, self.escalation_for(&t))
+            && n >= after
+        {
+            if let Err(e) = self.switch_profile(&t.id, &to, &format!("{n} tool errors in a row")).await {
+                tracing::warn!(task = %t.id, error = %e, "couldn't escalate");
+            }
+        }
+    }
+
+    /// A failed task whose profile has a fallback goes on there (once per profile).
+    async fn fall_back(&self, t: &Task, error: &str) -> bool {
+        let Some(to) = self.config.profile.get(&t.profile).and_then(|p| p.fallback.clone()) else { return false };
+        let fresh = {
+            let mut m = self.fell_back.lock().unwrap();
+            let tried = m.entry(t.id.clone()).or_default();
+            tried.insert(t.profile.clone()) && !tried.contains(&to)
+        };
+        if !fresh {
+            return false;
+        }
+        match self.switch_profile(&t.id, &to, &format!("{} failed: {}", t.profile, error.chars().take(200).collect::<String>())).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(task = %t.id, error = %e, "couldn't fall back");
+                false
+            }
+        }
     }
 
     /// Adds to a task's budget (tokens, cost, minutes; what it has none of stays unlimited).
@@ -784,6 +879,10 @@ impl App {
         if t.state == "cancelled" {
             return;
         }
+        // A failure on a profile with a fallback: it goes on there instead.
+        if kind == "failed" && self.fall_back(t, content).await {
+            return;
+        }
         self.record_usage(t).await;
         let _ = self.store.set_report(&t.id, content).await;
         if kind != "cancelled" {
@@ -852,6 +951,9 @@ impl App {
             if phase == "failed" {
                 if t.state != "failed" {
                     let error = a["error"].as_str().unwrap_or("failed").to_string();
+                    if self.fall_back(&t, &error).await {
+                        continue;
+                    }
                     let _ = self.store.set_report(&t.id, &format!("failed: {error}")).await;
                     let _ = self.store.set_state(&t.id, "failed", None).await;
                     self.task_changed(&t.id).await;
@@ -1019,6 +1121,13 @@ impl App {
             loop {
                 match rx.recv().await {
                     Ok(Notice::Agent { agent, event: Event::Compacted { summary, .. }, .. }) => me.checkpoint(&agent.to_string(), &summary).await,
+                    Ok(n @ Notice::Agent { event: Event::ToolResult { .. }, .. }) => {
+                        if let Notice::Agent { agent, event: Event::ToolResult { is_error, .. }, .. } = &n {
+                            let (me, agent, is_error) = (me.clone(), agent.to_string(), *is_error);
+                            tokio::spawn(async move { me.tool_result(&agent, is_error).await });
+                        }
+                        me.emit(json!({"kind": "agent", "notice": n}));
+                    }
                     Ok(n @ Notice::Agent { .. }) => me.emit(json!({"kind": "agent", "notice": n})),
                     Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(_)) => {}

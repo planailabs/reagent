@@ -50,6 +50,9 @@ pub struct Project {
     /// Which dev shell (`devShells.<attr>`; none: the default).
     #[serde(default)]
     pub devshell_attr: Option<String>,
+    /// Its tasks' kind when nothing else picks one.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 fn auto() -> String {
@@ -72,6 +75,7 @@ impl Project {
             created: now(),
             devshell: auto(),
             devshell_attr: None,
+            kind: None,
         }
     }
 }
@@ -125,6 +129,7 @@ pub struct Task {
     pub created: i64,
     pub updated: i64,
     pub finished: Option<i64>,
+    pub kind: Option<String>,
 }
 
 impl Task {
@@ -145,6 +150,7 @@ pub struct NewTask {
     pub profile: String,
     pub budget: Budget,
     pub skills: Vec<String>,
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -189,6 +195,8 @@ fn yes() -> bool {
 pub struct CronOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -327,10 +335,10 @@ impl Store {
     /// Adds a project, or changes one (by its slug).
     pub async fn put_project(&self, p: &Project) -> R<()> {
         sqlx::query(
-            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              on conflict (slug) do update set name = $2, path = $3, memory = $4, worktrees = $5, merge = $6,
-               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12",
+               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13",
         )
         .bind(&p.slug)
         .bind(&p.name)
@@ -344,6 +352,7 @@ impl Store {
         .bind(&p.env)
         .bind(&p.devshell)
         .bind(&p.devshell_attr)
+        .bind(&p.kind)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -395,8 +404,8 @@ impl Store {
     pub async fn add_task(&self, t: &NewTask) -> R<Task> {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "insert into tasks (id, project, parent, title, prompt, origin, cwd, profile, budget, skills)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "insert into tasks (id, project, parent, title, prompt, origin, cwd, profile, budget, skills, kind)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(&id)
         .bind(&t.project)
@@ -408,6 +417,7 @@ impl Store {
         .bind(&t.profile)
         .bind(Json(&t.budget))
         .bind(Json(&t.skills))
+        .bind(&t.kind)
         .execute(&self.pool)
         .await?;
         Ok(self.task(&id).await?.expect("just added"))

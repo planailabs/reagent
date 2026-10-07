@@ -27,6 +27,44 @@ pub struct Config {
     /// Tasks can search their whole history (subnet's search_history).
     #[serde(default = "yes")]
     pub search_history: bool,
+    /// Kinds of task: which profile, and where to escalate.
+    #[serde(default)]
+    pub kind: BTreeMap<String, Kind>,
+    /// The kind a task gets when nothing else picks one.
+    #[serde(default)]
+    pub default_kind: Option<String>,
+    /// Kinds by where a task comes from.
+    #[serde(default)]
+    pub routing: Routing,
+}
+
+/// A kind of task (research, chore, …).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Kind {
+    #[serde(default)]
+    pub description: String,
+    /// Its tasks' profile.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Where its tasks go when they escalate (themselves, the person, or after `escalate_after`).
+    #[serde(default)]
+    pub escalate: Option<String>,
+    /// Escalate by itself after this many tool errors in a row.
+    #[serde(default)]
+    pub escalate_after: Option<u32>,
+}
+
+/// Kinds for tasks by origin (a task's own choice and the project's default come first).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Routing {
+    #[serde(default)]
+    pub subtask: Option<String>,
+    #[serde(default)]
+    pub cron: Option<String>,
+    #[serde(default)]
+    pub mcp: Option<String>,
 }
 
 fn yes() -> bool {
@@ -91,6 +129,9 @@ pub struct Profile {
     /// This profile's cut-off for tool results (else the global one).
     #[serde(default)]
     pub grep_results: Option<GrepResults>,
+    /// Where a task goes when a model call fails here (an outage, rate limits).
+    #[serde(default)]
+    pub fallback: Option<String>,
 }
 
 fn context() -> u64 {
@@ -189,14 +230,50 @@ impl Config {
     pub fn check(&self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.profile.is_empty(), "reagent.hcl has no profile");
         anyhow::ensure!(self.profile.contains_key(&self.default_profile), "default_profile {:?} isn't a profile", self.default_profile);
+        self.check_kinds()?;
         for g in std::iter::once(&self.grep_results).chain(self.profile.values().filter_map(|p| p.grep_results.as_ref())) {
             anyhow::ensure!(g.over == 0 || g.over >= 500, "grep_results.over: 0 (off) or at least 500 characters");
         }
         for (name, p) in &self.profile {
+            if let Some(f) = &p.fallback {
+                anyhow::ensure!(self.profile.contains_key(f) && f != name, "profile {name:?}: fallback {f:?} isn't another profile");
+            }
             anyhow::ensure!(self.provider.contains_key(&p.provider), "profile {name:?}: no provider {:?}", p.provider);
             anyhow::ensure!(name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'), "profile {name:?}: letters, digits, - and _ only");
         }
         Ok(())
+    }
+
+    /// Checks the kinds and routing (after the profiles).
+    fn check_kinds(&self) -> anyhow::Result<()> {
+        for (name, k) in &self.kind {
+            for p in [&k.profile, &k.escalate].into_iter().flatten() {
+                anyhow::ensure!(self.profile.contains_key(p), "kind {name:?}: no profile {p:?}");
+            }
+        }
+        for k in [&self.default_kind, &self.routing.subtask, &self.routing.cron, &self.routing.mcp].into_iter().flatten() {
+            anyhow::ensure!(self.kind.contains_key(k), "no kind {k:?} (routing or default_kind)");
+        }
+        Ok(())
+    }
+
+    pub fn kind(&self, name: &str) -> Result<&Kind, String> {
+        self.kind.get(name).ok_or_else(|| format!("no kind {name:?} (there are: {})", self.kind.keys().cloned().collect::<Vec<_>>().join(", ")))
+    }
+
+    /// A task's kind: its own, else by origin, else the project's, else the default.
+    pub fn kind_for(&self, asked: Option<&str>, origin: &str, project_kind: Option<&str>) -> Result<Option<String>, String> {
+        if let Some(k) = asked {
+            self.kind(k)?;
+            return Ok(Some(k.to_string()));
+        }
+        let by_origin = match origin.split(':').next() {
+            Some("task") => self.routing.subtask.as_deref(),
+            Some("cron") => self.routing.cron.as_deref(),
+            Some("mcp") => self.routing.mcp.as_deref(),
+            _ => None,
+        };
+        Ok(by_origin.or(project_kind).or(self.default_kind.as_deref()).map(String::from))
     }
 
     pub fn profile(&self, name: Option<&str>) -> Result<(&str, &Profile), String> {
@@ -225,6 +302,22 @@ mod tests {
         assert_eq!((c.grep_results.over, c.search_history), (12000, true));
         let c = Config::parse(&format!("{EXAMPLE}\ngrep_results = {{ over = 100 }}\n").replace("grep_results = { over = 12000, except = [\"skills.skill_load\", \"fs.read\", \"shell.job_output\"] }\n", ""));
         assert!(c.unwrap_err().to_string().contains("at least 500"));
+    }
+
+    #[test]
+    fn kinds_route_tasks() {
+        let text = format!("{EXAMPLE}\nprofile \"big\" {{\n  provider = \"deepseek\"\n  model = \"deepseek-reasoner\"\n}}\nkind \"research\" {{\n  profile = \"big\"\n}}\nkind \"chore\" {{\n  profile = \"default\"\n  escalate = \"big\"\n  escalate_after = 3\n}}\ndefault_kind = \"chore\"\nrouting {{\n  cron = \"research\"\n}}\n");
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(c.kind_for(Some("research"), "ui", None).unwrap().as_deref(), Some("research"), "asked for");
+        assert_eq!(c.kind_for(None, "cron:3", Some("chore")).unwrap().as_deref(), Some("research"), "by origin");
+        assert_eq!(c.kind_for(None, "ui", Some("research")).unwrap().as_deref(), Some("research"), "the project's");
+        assert_eq!(c.kind_for(None, "task:x", None).unwrap().as_deref(), Some("chore"), "the default");
+        assert!(c.kind_for(Some("nope"), "ui", None).is_err());
+        assert_eq!(c.kind("chore").unwrap().escalate_after, Some(3));
+        assert!(Config::parse(&format!("{EXAMPLE}\nkind \"x\" {{\n  profile = \"nope\"\n}}\n")).unwrap_err().to_string().contains("no profile"));
+        assert!(Config::parse(&format!("{EXAMPLE}\nrouting {{\n  mcp = \"nope\"\n}}\n")).unwrap_err().to_string().contains("no kind"));
+        let fb = EXAMPLE.replace("  context  = 1000000", "  context  = 1000000\n  fallback = \"default\"");
+        assert!(Config::parse(&fb).unwrap_err().to_string().contains("isn't another profile"));
     }
 
     #[test]

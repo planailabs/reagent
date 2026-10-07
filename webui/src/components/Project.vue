@@ -17,7 +17,7 @@ const showAll = ref(false);
 const skills = ref([]);
 const config = ref(null);
 const error = ref("");
-const start = ref({ title: "", prompt: "", profile: "", skills: [], tokens: "", cost: "", minutes: "" });
+const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "" });
 const settings = ref(null);
 
 async function load() {
@@ -44,6 +44,7 @@ async function startTask() {
       title: start.value.title,
       prompt: start.value.prompt,
       profile: start.value.profile || undefined,
+      kind: start.value.kind || undefined,
       skills: start.value.skills,
       budget: budget(start.value),
     });
@@ -57,7 +58,7 @@ async function save() {
   error.value = "";
   try {
     const s = settings.value;
-    const body = { devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
+    const body = { kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
     p.value = await put(`/api/projects/${props.slug}`, body);
     error.value = "saved";
   } catch (e) {
@@ -103,6 +104,12 @@ watch(() => [props.slug, showAll.value, live.tick], load);
             <option v-for="pr in config?.profiles ?? []" :key="pr.name" :value="pr.name">{{ pr.name }} · {{ pr.model }}</option>
           </select>
         </label>
+        <label v-if="config?.kinds?.length">kind
+          <select v-model="start.kind" aria-label="kind">
+            <option value="">default ({{ p.kind || config?.default_kind || "none" }})</option>
+            <option v-for="k in config.kinds" :key="k.name" :value="k.name" :title="k.description">{{ k.name }}{{ k.profile ? ` · ${k.profile}` : "" }}</option>
+          </select>
+        </label>
         <label>tokens <input v-model="start.tokens" size="8" inputmode="numeric" aria-label="token budget" /></label>
         <label>cost <input v-model="start.cost" size="6" inputmode="decimal" aria-label="cost budget" /></label>
         <label>minutes <input v-model="start.minutes" size="5" inputmode="numeric" aria-label="time budget" /></label>
@@ -139,6 +146,9 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         <input v-model="settings.devshell_attr" size="10" placeholder="default" aria-label="dev shell" />
         <span class="dim">auto: when there's a flake.nix; commands and terminals run in `nix develop`</span></label>
       <label>calls no rule covers <select v-model="settings.default_action"><option>ask</option><option>allow</option><option>deny</option></select></label>
+      <label v-if="config?.kinds?.length">default kind
+        <select v-model="settings.kind"><option :value="null">none</option><option v-for="k in config.kinds" :key="k.name" :value="k.name">{{ k.name }}</option></select>
+      </label>
       <label>profile
         <select v-model="settings.profile"><option :value="null">default</option><option v-for="pr in config?.profiles ?? []" :key="pr.name" :value="pr.name">{{ pr.name }}</option></select>
       </label>

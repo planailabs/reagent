@@ -35,6 +35,8 @@ pub struct Start {
     pub skills: Vec<String>,
     /// Limits: {tokens?, cost?, minutes?}.
     pub budget: Option<Value>,
+    /// A kind of task from reagent's config (it picks the model).
+    pub kind: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -77,6 +79,14 @@ pub struct Raise {
     pub tokens: Option<u64>,
     pub cost: Option<f64>,
     pub minutes: Option<u64>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct Switch {
+    pub task: String,
+    /// A profile from reagent's config (`projects` doesn't list them; task_get shows the current one).
+    pub profile: String,
+    pub why: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -132,7 +142,7 @@ impl ReagentTools {
     #[tool(description = "Start a task in a project: it works on its own; task_get or task_wait follow it.")]
     async fn task_start(&self, Parameters(a): Parameters<Start>) -> Result<String, String> {
         let budget: Option<Budget> = a.budget.map(serde_json::from_value).transpose().map_err(|e| format!("budget: {e}"))?;
-        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()) }).await?;
+        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind }).await?;
         j(json!({"task": t.id, "state": t.state}))
     }
 
@@ -196,6 +206,12 @@ impl ReagentTools {
     async fn task_raise_budget(&self, Parameters(a): Parameters<Raise>) -> Result<String, String> {
         let t = self.0.raise_budget(&a.task, &Budget { tokens: a.tokens, cost: a.cost, minutes: a.minutes, daily_cost: None }).await?;
         j(json!({"budget": t.budget.0, "state": t.state}))
+    }
+
+    #[tool(description = "Move a task onto another profile (another model): its conversation goes on there; a failed one is retried there.")]
+    async fn task_switch_profile(&self, Parameters(a): Parameters<Switch>) -> Result<String, String> {
+        let t = self.0.switch_profile(&a.task, &a.profile, a.why.as_deref().unwrap_or("an agent outside moved it")).await?;
+        Ok(format!("{} runs on {} now", t.title, t.profile))
     }
 
     #[tool(description = "Approve or deny the call a task waits on.")]

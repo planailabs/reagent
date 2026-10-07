@@ -214,6 +214,17 @@ test("secrets are set, shown on demand and removed", async ({ page }) => {
   await expect(own.locator("tr", { hasText: "SITE_ONLY" })).toHaveCount(0);
 });
 
+test("a task moves onto another model", async ({ page }) => {
+  await startTask(page, "Switch me");
+  await expect(page.locator(".report")).toContainText("Done: Switch me");
+  await expect(page.locator(".row", { hasText: "Switch me" }).first()).toContainText("default");
+  await page.getByLabel("switch model").selectOption("big");
+  await page.getByRole("button", { name: "switch" }).click();
+  await expect(page.locator("main")).toContainText("· big ·");
+  const t = await (await page.request.get("/api/tasks?project=site&limit=50")).json();
+  expect(t.find((x) => x.title === "Switch me").profile).toBe("big");
+});
+
 test("logging out locks the API", async ({ page }) => {
   await page.getByRole("button", { name: "log out" }).click();
   await expect(page.getByLabel("password")).toBeVisible();

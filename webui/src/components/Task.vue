@@ -8,6 +8,12 @@ import Jobs from "./Jobs.vue";
 import Terminal from "./Terminal.vue";
 
 const props = defineProps({ id: { type: String, required: true } });
+const config = ref(null);
+const switchTo = ref("");
+async function switchProfile() {
+  if (!switchTo.value) return;
+  if ((await act("profile", { profile: switchTo.value })) !== undefined) switchTo.value = "";
+}
 const live = inject("live");
 const t = ref(null);
 const tr = ref(null);
@@ -79,7 +85,10 @@ const args = computed(() => {
   }
 });
 
-onMounted(load);
+onMounted(async () => {
+  load();
+  config.value = await get("/api/config").catch(() => null);
+});
 watch(() => props.id, load);
 watch(() => live.tasks[props.id], (x) => x && ((t.value = { ...t.value, ...x }), load()));
 watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
@@ -91,7 +100,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <span class="glyph big" :title="t.state">{{ glyph(t.state) }}</span>
       <h2 class="title">{{ t.title }}</h2>
       <a :href="`#/project/${t.project}`" class="dim">{{ t.project }}</a>
-      <span class="dim">{{ t.state }} · {{ t.profile }} · {{ t.tokens }} tokens · {{ money(t.cost) }} · {{ ago(t.created) }} ago · {{ t.origin }}</span>
+      <span class="dim">{{ t.state }} · {{ t.kind ? `${t.kind} · ` : "" }}{{ t.profile }} · {{ t.tokens }} tokens · {{ money(t.cost) }} · {{ ago(t.created) }} ago · {{ t.origin }}</span>
     </div>
     <div v-if="t.parent" class="dim">subtask of <a :href="`#/task/${t.parent}`">{{ t.parent.slice(0, 8) }}</a></div>
     <div class="dim">in {{ t.cwd }}<span v-if="t.worktree"> · worktree {{ t.worktree.branch }} (from {{ t.worktree.base }})</span></div>
@@ -103,6 +112,11 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <button v-if="t.state === 'failed'" @click="act('retry')">retry from the failure</button>
       <button :disabled="['done', 'cancelled'].includes(t.state)" @click="cancelTask">cancel</button>
       <button @click="openTerminal">open a terminal</button>
+      <select v-model="switchTo" aria-label="switch model">
+        <option value="">another model…</option>
+        <option v-for="p in (config?.profiles ?? []).filter((p) => p.name !== t.profile)" :key="p.name" :value="p.name">{{ p.name }} · {{ p.model }}</option>
+      </select>
+      <button :disabled="!switchTo" title="the conversation goes on there" @click="switchProfile">switch</button>
     </div>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 

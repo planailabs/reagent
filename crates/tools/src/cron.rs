@@ -59,6 +59,7 @@ pub async fn run(app: &App, c: &Cron) -> Result<Task, String> {
         skills: o.skills.clone(),
         parent: None,
         origin: Some(format!("cron:{}", c.id)),
+        kind: o.kind.clone(),
     })
     .await
 }

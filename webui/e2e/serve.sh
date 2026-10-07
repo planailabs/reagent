@@ -23,6 +23,13 @@ profile "default" {
   model    = "scripted"
   price    = { input = 1.0, output = 2.0 }
 }
+profile "big" {
+  provider = "mock"
+  model    = "scripted-big"
+}
+kind "research" {
+  profile = "big"
+}
 HCL
 cd "$tmp/project"
 git init -q -b main

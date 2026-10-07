@@ -138,6 +138,8 @@ pub struct Spawn {
     pub skills: Vec<String>,
     /// Limits: {tokens?, cost?, minutes?}.
     pub budget: Option<Value>,
+    /// A kind of task from reagent's config (it picks the model); default: by origin.
+    pub kind: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -186,6 +188,14 @@ pub struct CronAdd {
     pub profile: Option<String>,
     #[serde(default)]
     pub skills: Vec<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct Escalate {
+    /// Why: what you're stuck on (the person sees it).
+    pub why: String,
+    /// A profile (default: your kind's escalation profile).
+    pub profile: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -300,6 +310,7 @@ impl TaskTools {
                 skills: a.skills,
                 parent: Some(t.id.clone()),
                 origin: Some(format!("task:{}", t.id)),
+                kind: a.kind,
             })
             .await?;
         Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.title))
@@ -372,6 +383,25 @@ impl TaskTools {
         Ok(format!("{}{}", out.join("\n\n"), more(format!("{} tasks match; search_history(pattern, task: <id>) shows all of one", out.len()))))
     }
 
+    #[tool(description = "Move yourself onto a stronger model (your kind's escalation profile, or one named) when you're stuck: your conversation goes on there from your next step.")]
+    async fn task_escalate(&self, Parameters(a): Parameters<Escalate>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        let to = a.profile.clone().or_else(|| self.0.escalation_for(&t)).ok_or("there's no profile to escalate to (your kind has no escalate; name one)")?;
+        let (to, p) = self.0.config.profile(Some(&to))?;
+        if to == t.profile {
+            return Err(format!("you're on {to} already"));
+        }
+        let (app, id, to_name, why) = (self.0.clone(), t.id.clone(), to.to_string(), a.why);
+        // After this call's result is in: the switch copies a settled history.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if let Err(e) = app.switch_profile(&id, &to_name, &format!("the task asked: {why}")).await {
+                tracing::warn!(task = %id, error = %e, "couldn't escalate");
+            }
+        });
+        Ok(format!("moving onto {to} ({}): your next step runs there, with this whole conversation", p.model))
+    }
+
     #[tool(description = "This project's cron entries: schedule, task, next run.")]
     async fn cron_list(&self, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (_, p) = caller(&self.0, &ctx).await?;
@@ -396,7 +426,7 @@ impl TaskTools {
             tz: a.tz.unwrap_or_else(|| "UTC".into()),
             title: a.title,
             prompt: a.prompt,
-            options: Json(CronOptions { profile: a.profile, budget: None, skills: a.skills }),
+            options: Json(CronOptions { profile: a.profile, kind: None, budget: None, skills: a.skills }),
             overlap: a.overlap.unwrap_or_else(|| "skip".into()),
             catch_up: true,
             enabled: true,
