@@ -152,16 +152,35 @@ test("an API token is made and revoked", async ({ page }) => {
 });
 
 test("an MCP server is added, reported and removed", async ({ page }) => {
-  await page.goto("/#/settings");
-  await page.getByLabel("server name").fill("nowhere");
-  await page.getByLabel("server url").fill("http://127.0.0.1:9/mcp");
-  await page.getByRole("button", { name: "save and apply" }).click();
-  await expect(page.getByRole("alert")).toContainText("doesn't run", { timeout: 30_000 });
+  await page.goto("/#/mcp");
+  const every = page.getByLabel("mcp servers for every task");
+  await every.getByLabel("server name").fill("nowhere");
+  await every.getByLabel("server url").fill("http://127.0.0.1:9/mcp");
+  await every.getByRole("button", { name: "save and apply" }).click();
+  await expect(every.getByRole("alert")).toContainText("doesn't run", { timeout: 30_000 });
   const row = page.locator("tr", { hasText: "nowhere" });
   await expect(row).toContainText("lazy");
   page.once("dialog", (d) => d.accept());
   await row.getByRole("button", { name: "remove" }).click();
   await expect(page.locator("tr", { hasText: "nowhere" })).toHaveCount(0);
+});
+
+test("a project's own MCP server is managed on its tab", async ({ page }) => {
+  await page.goto("/#/project/site/mcp");
+  await page.getByLabel("server name").fill("site-only");
+  await page.getByLabel("server url").fill("http://127.0.0.1:9/mcp");
+  await page.getByRole("button", { name: "save and apply" }).click();
+  await expect(page.getByRole("alert")).toContainText("doesn't run", { timeout: 30_000 });
+  const mine = await (await page.request.get("/api/mcp?project=site")).json();
+  expect(mine.map((m) => m.name)).toEqual(["site-only"]);
+  const global = await (await page.request.get("/api/mcp?project=global")).json();
+  expect(global.map((m) => m.name)).not.toContain("site-only");
+  await page.goto("/#/mcp");
+  await page.locator("summary", { hasText: "Site" }).click();
+  await expect(page.locator("details", { hasText: "Site" })).toContainText("site-only");
+  page.once("dialog", (d) => d.accept());
+  await page.locator("details", { hasText: "Site" }).locator("tr", { hasText: "site-only" }).getByRole("button", { name: "remove" }).click();
+  await expect(page.locator("tr", { hasText: "site-only" })).toHaveCount(0);
 });
 
 test("logging out locks the API", async ({ page }) => {

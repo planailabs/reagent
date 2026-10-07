@@ -28,6 +28,11 @@ pub fn mixture(profile: &str) -> String {
     format!("task-{profile}")
 }
 
+/// The mixture of a project with servers of its own.
+pub fn project_mixture(profile: &str, project: &str) -> String {
+    format!("task-{profile}--{project}")
+}
+
 fn hcl_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -107,7 +112,12 @@ fn custom_block(m: &reagent_store::McpServer) -> String {
 pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], join: &[String]) -> String {
     let custom: Vec<&reagent_store::McpServer> = custom.iter().filter(|m| m.enabled && check_mcp(m).is_ok()).collect();
     let mut out = String::from("# Made by reagent from reagent.hcl at each start; edits here are lost.\nnode \"local\" {\n  capacity = 256\n}\n\n");
-    let names: Vec<&str> = SERVERS.iter().map(|(n, _)| *n).chain(custom.iter().map(|m| m.name.as_str()).filter(|n| join.iter().any(|j| j == n))).collect();
+    let joined = |m: &&&reagent_store::McpServer| join.iter().any(|j| *j == m.name);
+    let names: Vec<&str> = SERVERS.iter().map(|(n, _)| *n).chain(custom.iter().filter(joined).filter(|m| m.project.is_none()).map(|m| m.name.as_str())).collect();
+    // Projects with servers of their own (running ones): a mixture each, per profile.
+    let mut projects: Vec<&str> = custom.iter().filter(joined).filter_map(|m| m.project.as_deref()).collect();
+    projects.sort();
+    projects.dedup();
     for (name, p) in &c.profile {
         let prov = &c.provider[&p.provider];
         let env = prov.key_env.as_deref().map(|e| format!("\n    env      = {}", hcl_str(e))).unwrap_or_default();
@@ -135,6 +145,11 @@ pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], j
             mix = hcl_str(&mixture(name)),
             mcps = names.iter().map(|n| hcl_str(n)).collect::<Vec<_>>().join(", "),
         ));
+        for proj in &projects {
+            let own = custom.iter().filter(joined).filter(|m| m.project.as_deref() == Some(proj)).map(|m| m.name.as_str());
+            let all: Vec<String> = names.iter().copied().chain(own).map(hcl_str).collect();
+            out.push_str(&format!("mixture {} {{\n  agent = \"model-{name}\"\n  mcp = [{}]\n}}\n\n", hcl_str(&project_mixture(name, proj)), all.join(", ")));
+        }
     }
     for (name, idem) in SERVERS.iter().map(|(n, i)| (*n, *i)).chain(std::iter::once(("hooks", &["policy", "context", "checkpoint"][..]))) {
         out.push_str(&format!(
@@ -212,6 +227,25 @@ mod tests {
         assert_eq!(k.env["KEY"], "$CALC_KEY", "an env reference stays for the node");
         assert!(!spec.mcps.contains_key("off"));
         assert!(!spec.mcps["fs"].lazy, "reagent's own stay eager");
+    }
+
+    #[test]
+    fn a_projects_own_servers_go_to_its_tasks_only() {
+        let c = Config::parse(crate::config::EXAMPLE).unwrap();
+        let all = [
+            server(serde_json::json!({"name": "web", "url": "https://w/mcp"})),
+            server(serde_json::json!({"name": "db", "url": "https://d/mcp", "project": "site"})),
+            server(serde_json::json!({"name": "cms", "url": "https://c/mcp", "project": "site"})),
+            server(serde_json::json!({"name": "docs-search", "url": "https://s/mcp", "project": "docs"})),
+        ];
+        let join: Vec<String> = ["web", "db", "cms"].iter().map(|s| s.to_string()).collect();
+        let spec = subnet_cluster::Cluster::parse(&[("cluster.hcl", &render(&c, "http://x", &all, &join))]).unwrap();
+        let default = &spec.mixtures["task-default"].mcp;
+        assert!(default.contains(&"web".into()) && !default.contains(&"db".into()), "{default:?}");
+        let site = &spec.mixtures["task-default--site"].mcp;
+        assert!(site.contains(&"fs".into()) && site.contains(&"web".into()) && site.contains(&"db".into()) && site.contains(&"cms".into()), "{site:?}");
+        assert!(!spec.mixtures.contains_key("task-default--docs"), "its server didn't start: no mixture");
+        assert!(spec.mcps.contains_key("docs-search"), "but it's declared (to see whether it runs)");
     }
 
     #[test]

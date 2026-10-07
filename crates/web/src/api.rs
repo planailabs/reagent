@@ -491,8 +491,21 @@ async fn search(State(s): State<S>, Query(q): Query<SearchQ>) -> R {
 
 // --- added MCP servers ----------------------------------------------------
 
-async fn mcp_servers(State(s): State<S>) -> R {
-    let list = db(s.w.app.store.mcp_servers().await)?;
+#[derive(Deserialize)]
+struct McpQ {
+    /// A project's servers; `global` the ones every task gets; none: all.
+    project: Option<String>,
+}
+
+async fn mcp_servers(State(s): State<S>, Query(q): Query<McpQ>) -> R {
+    let list: Vec<_> = db(s.w.app.store.mcp_servers().await)?
+        .into_iter()
+        .filter(|m| match q.project.as_deref() {
+            None => true,
+            Some("global") => m.project.is_none(),
+            Some(p) => m.project.as_deref() == Some(p),
+        })
+        .collect();
     let status = s.w.app.mcp_status.lock().unwrap().clone();
     Ok(Json(json!(list.iter().map(|m| {
         let mut v = json!(m);
@@ -506,6 +519,9 @@ async fn put_mcp(State(s): State<S>, Path(name): Path<String>, Json(mut m): Json
     m["name"] = json!(name);
     let m: reagent_store::McpServer = serde_json::from_value(m).map_err(|e| E(StatusCode::BAD_REQUEST, e.to_string()))?;
     reagent_tools::cluster::check_mcp(&m)?;
+    if let Some(p) = &m.project {
+        s.w.app.project(p).await?;
+    }
     db(s.w.app.store.put_mcp_server(&m).await)?;
     s.w.app.apply_cluster().await?;
     let status = s.w.app.mcp_status.lock().unwrap().get(&m.name).cloned().unwrap_or_default();

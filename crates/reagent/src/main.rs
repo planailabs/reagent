@@ -75,6 +75,9 @@ enum McpCmd {
         /// Added but not given to tasks.
         #[arg(long)]
         disabled: bool,
+        /// Only this project's tasks get it (default: every task).
+        #[arg(long)]
+        project: Option<String>,
         /// The command and its arguments.
         #[arg(last = true)]
         command: Vec<String>,
@@ -154,7 +157,10 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             std::fs::create_dir_all(&data)?;
             let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
             match cmd {
-                McpCmd::Add { name, url, header_env, header, prefix, env, eager, idempotent, description, disabled, command } => {
+                McpCmd::Add { name, url, header_env, header, prefix, env, eager, idempotent, description, disabled, project, command } => {
+                    if let Some(p) = &project {
+                        anyhow::ensure!(store.project(p).await?.is_some(), "no project {p:?}");
+                    }
                     let env = env
                         .iter()
                         .map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).ok_or_else(|| anyhow::anyhow!("--env {kv:?}: KEY=VALUE")))
@@ -170,6 +176,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                         idempotent: sqlx_json(idempotent),
                         enabled: !disabled,
                         created: 0,
+                        project,
                     };
                     reagent_tools::cluster::check_mcp(&m).map_err(anyhow::Error::msg)?;
                     store.put_mcp_server(&m).await?;
@@ -178,7 +185,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 McpCmd::List => {
                     for m in store.mcp_servers().await? {
                         let what = m.url.clone().unwrap_or_else(|| m.command.as_ref().map(|c| c.0.join(" ")).unwrap_or_default());
-                        println!("{}\t{}\t{}{}", m.name, what, if m.lazy { "lazy" } else { "eager" }, if m.enabled { "" } else { "\toff" });
+                        println!("{}\t{}\t{}\t{}{}", m.name, m.project.as_deref().unwrap_or("(every task)"), what, if m.lazy { "lazy" } else { "eager" }, if m.enabled { "" } else { "\toff" });
                     }
                 }
                 McpCmd::Remove { name } => {

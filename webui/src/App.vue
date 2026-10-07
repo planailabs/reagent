@@ -9,6 +9,7 @@ import Project from "./components/Project.vue";
 import Task from "./components/Task.vue";
 import Search from "./components/Search.vue";
 import Settings from "./components/Settings.vue";
+import Mcp from "./components/Mcp.vue";
 
 // Hash routes: #/inbox, #/projects, #/project/<slug>, #/task/<id>, #/search, #/settings.
 const route = ref(location.hash.slice(1) || "/inbox");
@@ -88,6 +89,7 @@ onUnmounted(() => {
       <a href="#/inbox" :class="{ on: page === 'inbox' }">inbox<span v-if="live.waiting" class="badge">{{ live.waiting }}</span></a>
       <a href="#/projects" :class="{ on: page === 'projects' || page === 'project' }">projects</a>
       <a href="#/search" :class="{ on: page === 'search' }">search</a>
+      <a href="#/mcp" :class="{ on: page === 'mcp' }">mcp</a>
       <a href="#/settings" :class="{ on: page === 'settings' }">settings</a>
       <span class="grow"></span>
       <button @click="logout">log out</button>
@@ -99,6 +101,7 @@ onUnmounted(() => {
       <Task v-else-if="page === 'task'" :id="arg" />
       <Search v-else-if="page === 'search'" />
       <Settings v-else-if="page === 'settings'" />
+      <Mcp v-else-if="page === 'mcp'" />
       <p v-else class="dim">nothing here: <a href="#/inbox">the inbox</a></p>
     </main>
   </template>

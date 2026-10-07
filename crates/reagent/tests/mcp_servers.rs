@@ -112,3 +112,30 @@ async fn a_change_written_by_the_cli_is_applied_by_the_running_reagent() {
     }
     assert!(ok, "applied within seconds");
 }
+
+#[tokio::test]
+async fn a_projects_own_server_reaches_only_its_tasks() {
+    let r = start().await;
+    let other = tempfile::tempdir().unwrap();
+    r.run.app.put_project(reagent_store::Project::new("other", "Other", &other.path().display().to_string())).await.unwrap();
+    let url = extra_server().await;
+    r.run.app.store.put_mcp_server(&server(json!({"name": "siteonly", "url": url, "lazy": false, "project": "site"}))).await.unwrap();
+    r.run.app.apply_cluster().await.unwrap();
+    r.push("Here", |b| {
+        assert!(tool_names(b).contains(&"siteonly__echo".into()), "{:?}", tool_names(b));
+        text("seen")
+    });
+    r.push("Elsewhere", |b| {
+        assert!(!tool_names(b).iter().any(|n| n.starts_with("siteonly")), "{:?}", tool_names(b));
+        assert!(tool_names(b).contains(&"fs__read".into()));
+        text("not seen")
+    });
+    let here = r.start_task("Here", "x").await;
+    let elsewhere = r.run.app.start_task(reagent_tools::app::StartTask { project: "other".into(), title: "Elsewhere".into(), prompt: "x".into(), ..Default::default() }).await.unwrap();
+    r.done(&here.id).await;
+    r.done(&elsewhere.id).await;
+    // The project goes, its server with it; tasks start from the shared mixture again.
+    r.run.app.store.remove_mcp_server("siteonly").await.unwrap();
+    r.run.app.apply_cluster().await.unwrap();
+    assert!(!r.run.app.hub().unwrap().cluster().spec.mixtures.contains_key("task-default--site"));
+}

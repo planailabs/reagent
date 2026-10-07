@@ -2,6 +2,8 @@
 import { inject, onMounted, ref, watch } from "vue";
 import { del, get, put } from "../lib/api.js";
 
+// A project's own servers, or (none) the ones every task gets.
+const props = defineProps({ project: { type: String, default: null } });
 const live = inject("live");
 const servers = ref([]);
 const error = ref("");
@@ -10,7 +12,7 @@ const blank = () => ({ name: "", description: "", kind: "url", url: "", command:
 const form = ref(blank());
 
 async function load() {
-  servers.value = await get("/api/mcp").catch((e) => ((error.value = e.message), []));
+  servers.value = await get(`/api/mcp?project=${encodeURIComponent(props.project ?? "global")}`).catch((e) => ((error.value = e.message), []));
 }
 
 function edit(m) {
@@ -43,6 +45,7 @@ async function save() {
     lazy: f.lazy,
     idempotent: f.idempotent.split(",").map((s) => s.trim()).filter(Boolean),
     enabled: f.enabled,
+    project: props.project,
   };
   try {
     const r = await put(`/api/mcp/${encodeURIComponent(f.name)}`, body);
@@ -65,12 +68,12 @@ async function remove(m) {
 }
 
 onMounted(load);
-watch(() => live.tick, load);
+watch(() => [live.tick, props.project], load);
 </script>
 
 <template>
-  <section>
-    <p class="dim">Every task gets these servers' tools as <code>&lt;name&gt;.&lt;tool&gt;</code>: lazily (it sees their names and loads what it needs) unless eager. The project's policy decides each call.</p>
+  <section :aria-label="project ? `mcp servers of ${project}` : 'mcp servers for every task'">
+    <p class="dim">{{ project ? `This project's tasks get these servers' tools` : "Every task gets these servers' tools" }} as <code>&lt;name&gt;.&lt;tool&gt;</code>: lazily (it sees their names and loads what it needs) unless eager. The project's policy decides each call. Names are unique across all projects.</p>
     <table>
       <tr><th>server</th><th>where</th><th>tools</th><th>state</th><th></th></tr>
       <tr v-for="m in servers" :key="m.name">

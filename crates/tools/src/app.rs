@@ -376,7 +376,10 @@ impl App {
             req.prompt.trim(),
             if preload.is_empty() { String::new() } else { format!("\n\n# Skills loaded for this task{preload}") }
         );
-        let spawned = match self.hub()?.op(&root(), Op::Spawn { ty: crate::cluster::mixture(&profile), prompt: first, tenant: None }).await {
+        // A project with servers of its own has its own mixture.
+        let own = crate::cluster::project_mixture(&profile, &p.slug);
+        let ty = if self.hub()?.cluster().spec.mixtures.contains_key(&own) { own } else { crate::cluster::mixture(&profile) };
+        let spawned = match self.hub()?.op(&root(), Op::Spawn { ty, prompt: first, tenant: None }).await {
             Ok(v) => v,
             Err(e) => {
                 let _ = self.store.set_state(&t.id, "failed", None).await;

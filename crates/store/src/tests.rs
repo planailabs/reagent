@@ -110,6 +110,13 @@ async fn mcp_servers_are_kept_and_changes_noted() {
     assert_ne!(s.setting("mcp_changed").await.unwrap().unwrap(), first);
     assert!(s.remove_mcp_server("web").await.unwrap());
     assert!(!s.remove_mcp_server("web").await.unwrap());
+    // One project's own: gone with the project.
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    s.put_mcp_server(&McpServer { project: Some("site".into()), ..m }).await.unwrap();
+    assert_eq!(s.mcp_servers().await.unwrap()[0].project.as_deref(), Some("site"));
+    assert!(s.put_mcp_server(&McpServer { name: "x".into(), project: Some("nope".into()), ..s.mcp_servers().await.unwrap()[0].clone() }).await.is_err(), "only a project there is");
+    s.remove_project("site").await.unwrap();
+    assert!(s.mcp_servers().await.unwrap().is_empty());
 }
 
 #[tokio::test]

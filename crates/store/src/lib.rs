@@ -220,6 +220,9 @@ pub struct McpServer {
     pub enabled: bool,
     #[serde(default)]
     pub created: i64,
+    /// Only this project's tasks get it (none: every task).
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -298,7 +301,13 @@ impl Store {
     }
 
     pub async fn remove_project(&self, slug: &str) -> R<bool> {
-        Ok(sqlx::query("delete from projects where slug = $1").bind(slug).execute(&self.pool).await?.rows_affected() > 0)
+        let had_servers = self.mcp_servers().await?.iter().any(|m| m.project.as_deref() == Some(slug));
+        let gone = sqlx::query("delete from projects where slug = $1").bind(slug).execute(&self.pool).await?.rows_affected() > 0;
+        // Its own MCP servers went with it.
+        if had_servers {
+            self.mcp_changed().await?;
+        }
+        Ok(gone)
     }
 
     // --- rules ----------------------------------------------------------
@@ -575,8 +584,8 @@ impl Store {
     /// Adds or changes a server (by name); the change is noted for a running reagent.
     pub async fn put_mcp_server(&self, m: &McpServer) -> R<()> {
         sqlx::query(
-            "insert into mcp_servers (name, description, url, command, env, credential, lazy, idempotent, enabled) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             on conflict (name) do update set description = $2, url = $3, command = $4, env = $5, credential = $6, lazy = $7, idempotent = $8, enabled = $9",
+            "insert into mcp_servers (name, description, url, command, env, credential, lazy, idempotent, enabled, project) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             on conflict (name) do update set description = $2, url = $3, command = $4, env = $5, credential = $6, lazy = $7, idempotent = $8, enabled = $9, project = $10",
         )
         .bind(&m.name)
         .bind(&m.description)
@@ -587,6 +596,7 @@ impl Store {
         .bind(m.lazy)
         .bind(&m.idempotent)
         .bind(m.enabled)
+        .bind(&m.project)
         .execute(&self.pool)
         .await?;
         self.mcp_changed().await
