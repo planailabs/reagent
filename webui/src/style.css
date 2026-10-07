@@ -75,3 +75,9 @@ main { padding: 12px; max-width: 1400px; }
 .xterm-box { height: 60vh; border: 1px solid var(--line); padding: 4px; background: #000; }
 .rules input { width: 100%; }
 code { color: var(--hi); }
+.todos { margin: 8px 0; }
+.todo { padding: 1px 0; }
+.todo .mark { color: var(--hi); }
+.todo.done { color: var(--dim); text-decoration: line-through; }
+.todo.cancelled { color: var(--dim); }
+.todo.in_progress { color: var(--hi); }

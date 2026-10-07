@@ -17,6 +17,7 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("skills", &["skill_list", "skill_load"]),
     ("tasks", &["task_list", "cron_list"]),
     ("ask", &[]),
+    ("todo", &["todo_list"]),
 ];
 
 /// The env var the node reads the MCP servers' token from.

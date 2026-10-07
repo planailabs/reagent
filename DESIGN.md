@@ -130,6 +130,8 @@ Commands get the project's env, `REAGENT_TASK`, `REAGENT_PROJECT`, and `PAGER=ca
 
 **Asking (`ask`)**: `ask(question, options?)`: the task waits for the answer (a notification goes out).
 
+**Todos (`todo`)**: `todo_list()`, `todo_add(items)`, `todo_update(id, status?, text?)` (`pending`, `in_progress`, `done`, `cancelled`), `todo_clear()`: the task's own plan, kept in `reagent.db` (`todos`), so restarts and summaries don't lose it. The context hook shows the list again whenever it changed; the task view shows it live, and the API and the MCP API's `task_get` give it.
+
 **Added servers.** The person adds MCP servers every task gets, in the settings page or with `reagent mcp add <name> (--url <url> [--header-env VAR --header H --prefix P] | -- <command…> [--env K=V]) [--eager] [--idempotent a,b] [--description …] [--disabled]` (`mcp list`, `mcp remove`). They're kept in `reagent.db` (`mcp_servers`); a header's value or an env value can come from reagent's environment (`$VAR`, the `.env`), so no secret is stored. Their tools are `<name>.<tool>`, **lazy** by default (subnet's lazy tools: a task sees their names in `load_tools` and loads what it needs; a first call of an unloaded one loads it and asks to call again), or offered from the start (`lazy = false`, `--eager`). Applying (at start, when the web API changes one, and within seconds of a change the CLI wrote) declares them in the cluster, waits until the node runs each or reports why not, then puts the running ones into every task's mixture: a server that doesn't start is reported (the settings page shows each one's state) and never blocks tasks. Task agents whose servers changed move onto the new version; new servers reach tasks started after. Names of reagent's own servers are taken. The policy judges their calls like any other.
 
 ## Policy
@@ -159,7 +161,7 @@ tasks/<id>.md             a task's checkpoints
 | `memory_search(pattern, scope?)` | regex over both scopes' files |
 | `memory_remove(scope, file)` | |
 
-`scope` is `global` or `project`; paths are relative markdown paths (`INDEX.md` itself is the tools'). The `context` hook (pre_model) injects the global and the project index, `AGENTS.md` and the skills list when the task hasn't seen them as they are now (what changed is shown again). The UI has an editor for both memories.
+`scope` is `global` or `project`; paths are relative markdown paths (`INDEX.md` itself is the tools'). The `context` hook (pre_model) injects the global and the project index, `AGENTS.md`, the task's todo list and the skills list when the task hasn't seen them as they are now (what changed is shown again). The UI has an editor for both memories.
 
 ## Skills
 
@@ -175,7 +177,7 @@ Vue + Parcel (`webui/`), served by `reagent up`; live over SSE (`/api/events`).
 
 - **Inbox:** waiting tasks (approvals, questions, merges, budgets), failed ones, tasks going on, new notifications.
 - **Projects:** the list and adding one; a project's tabs: tasks (a tree, subtasks under their parent), new task (profile, budget, skills), cron, policy (the rules, ordered), memory, skills, settings.
-- **Task:** state, usage and cost; pause, pause after this turn, resume, retry, cancel, open a terminal; what it waits for (approve once / always / deny with the call's arguments; answer with an option or text; merge with the diff, or send back; raise the budget); its report; a message box; subtasks; tabs: the transcript (the whole conversation, summarised parts folded, the answer streaming), jobs (live output, to background, stop, kill), terminals (xterm.js over a WebSocket), the worktree's diff.
+- **Task:** state, usage and cost; its todo list (live); pause, pause after this turn, resume, retry, cancel, open a terminal; what it waits for (approve once / always / deny with the call's arguments; answer with an option or text; merge with the diff, or send back; raise the budget); its report; a message box; subtasks; tabs: the transcript (the whole conversation, summarised parts folded, the answer streaming), jobs (live output, to background, stop, kill), terminals (xterm.js over a WebSocket), the worktree's diff.
 - **Search:** every task's conversation.
 - **Settings:** push on this browser, the profiles, added MCP servers (URL or command, header from env, env, lazy or eager, idempotent tools, on/off; whether each runs), API tokens (make: shown once; revoke), the global memory.
 

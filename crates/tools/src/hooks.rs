@@ -73,6 +73,11 @@ pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String
             break;
         }
     }
+    // The todo list, so a summary or a restart never loses the plan.
+    let todos = app.store.todos(&task.id).await.unwrap_or_default();
+    if !todos.is_empty() {
+        parts.push(("todos".into(), format!("Your todo list (todo.todo_update keeps it current):\n{}", crate::mcp::misc::todo_text(&todos))));
+    }
     let skills = app.skills_for(Path::new(&task.cwd), &p);
     if !skills.is_empty() {
         parts.push(("skills".into(), format!("Skills you have (load one with skills.skill_load):\n{}", crate::skills::listing(&skills))));

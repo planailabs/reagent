@@ -67,6 +67,8 @@ async function openTerminal() {
   }
 }
 
+const todos = computed(() => live.todos[props.id] ?? t.value?.todos ?? []);
+const todoMark = (s) => ({ in_progress: "[~]", done: "[x]", cancelled: "[-]" })[s] ?? "[ ]";
 const streaming = computed(() => (t.value?.agent ? live.streams[t.value.agent] : ""));
 const call = computed(() => t.value?.wait?.kind === "approval" ? t.value.wait.call : null);
 const args = computed(() => {
@@ -157,6 +159,11 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <input v-model="msg" class="grow" :placeholder="['done', 'failed'].includes(t.state) ? 'a message goes on with the task' : 'a message (read before its next step)'" aria-label="message" />
       <button type="submit">send</button>
     </form>
+
+    <div v-if="todos.length" class="todos" aria-label="todo list">
+      <h2>todo <span class="dim">{{ todos.filter((x) => x.status === "done").length }} of {{ todos.filter((x) => x.status !== "cancelled").length }} done</span></h2>
+      <div v-for="x in todos" :key="x.id" :class="['todo', x.status]"><span class="mark">{{ todoMark(x.status) }}</span> {{ x.text }}</div>
+    </div>
 
     <div v-if="t.subtasks?.length">
       <h2>subtasks</h2>

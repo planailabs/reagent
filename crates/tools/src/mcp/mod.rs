@@ -123,6 +123,7 @@ pub fn router(app: Arc<App>) -> axum::Router {
         .nest_service("/mcp/skills", service(misc::SkillTools(app.clone())))
         .nest_service("/mcp/tasks", service(misc::TaskTools(app.clone())))
         .nest_service("/mcp/ask", service(misc::AskTools(app.clone())))
+        .nest_service("/mcp/todo", service(misc::TodoTools(app.clone())))
         .nest_service("/mcp/hooks", service(crate::hooks::HookTools(app)))
         .layer(axum::middleware::from_fn(auth))
 }

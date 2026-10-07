@@ -278,3 +278,41 @@ async fn raising_the_budget_lets_a_paused_task_go_on() {
     let d = r.done(&t.id).await;
     assert_eq!(d.report.as_deref(), Some("finished after all"));
 }
+
+#[tokio::test]
+async fn a_task_keeps_a_todo_list_in_view() {
+    let r = start().await;
+    r.push("Plan", |b| {
+        assert!(tool_names(b).contains(&"todo__todo_add".into()), "the todo tools are there");
+        call("c1", "todo.todo_add", json!({"items": ["read the code", "fix the bug", "run the tests"]}))
+    });
+    r.push("Plan", |b| {
+        assert!(last_result(b).starts_with("[ ] 1 read the code\n[ ] 2 fix the bug\n[ ] 3 run the tests\n(3 open of 3)"), "{}", last_result(b));
+        // Shown in the context, as it is now.
+        assert!(all_text(b).contains("Your todo list"), "{}", all_text(b));
+        call("c2", "todo.todo_update", json!({"id": 1, "status": "done"}))
+    });
+    r.push("Plan", |_| call("c3", "todo.todo_update", json!({"id": 2, "status": "in_progress", "text": "fix the off-by-one"})));
+    r.push("Plan", |b| {
+        assert!(last_result(b).contains("[x] 1 read the code\n[~] 2 fix the off-by-one"), "{}", last_result(b));
+        let shown = all_text(b);
+        assert!(shown.contains("[~] 2 fix the off-by-one"), "the changed list is shown again");
+        call("c4", "todo.todo_update", json!({"id": 7, "status": "done"}))
+    });
+    r.push("Plan", |b| {
+        assert!(last_result(b).contains("no item 7"), "{}", last_result(b));
+        call("c5", "todo.todo_update", json!({"id": 3, "status": "maybe"}))
+    });
+    r.push("Plan", |b| {
+        assert!(last_result(b).contains("pending, in_progress, done or cancelled"), "{}", last_result(b));
+        text("planned")
+    });
+    let t = r.start_task("Plan", "x").await;
+    r.done(&t.id).await;
+    let todos = r.run.app.store.todos(&t.id).await.unwrap();
+    assert_eq!(todos.iter().map(|x| x.status.as_str()).collect::<Vec<_>>(), ["done", "in_progress", "pending"]);
+}
+
+fn tool_names(body: &serde_json::Value) -> Vec<String> {
+    body["tools"].as_array().map(|t| t.iter().map(|t| t["function"]["name"].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
+}

@@ -20,6 +20,11 @@ function reply(body) {
   const tools = msgs.filter((m) => m.role === "tool");
   const last = tools[tools.length - 1]?.content || "";
   const all = msgs.map((m) => m.content || "").join("\n");
+  if (title.startsWith("Todo")) {
+    if (!tools.length) return call("p1", "todo__todo_add", { items: ["look around", "do the thing"] });
+    if (tools.length === 1) return call("p2", "todo__todo_update", { id: 1, status: "done" });
+    return text("planned and started");
+  }
   if (title.startsWith("Ask")) {
     if (!tools.length) return call("q1", "ask__ask", { question: "which color?", options: ["red", "blue"] });
     return text(`you chose ${last}`);

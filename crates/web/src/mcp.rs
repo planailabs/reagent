@@ -142,12 +142,13 @@ impl ReagentTools {
         j(v.iter().map(|t| json!({"task": t.id, "title": t.title, "project": t.project, "state": t.state, "waits_for": t.wait.as_ref().map(|w| w.0["kind"].clone()), "parent": t.parent})).collect::<Vec<_>>())
     }
 
-    #[tool(description = "A task: its state, what it waits for (an approval's call, a question, a merge, its budget), its report, usage, worktree, subtasks.")]
+    #[tool(description = "A task: its state, what it waits for (an approval's call, a question, a merge, its budget), its report, usage, worktree, subtasks, todo list.")]
     async fn task_get(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
         let t = self.0.task(&a.task).await?;
         let kids = self.0.store.tasks(None, Some(&a.task), false, 100).await.map_err(|e| e.to_string())?;
         let mut v = json!(t);
         v["subtasks"] = json!(kids.iter().map(|k| json!({"task": k.id, "title": k.title, "state": k.state})).collect::<Vec<_>>());
+        v["todos"] = json!(self.0.store.todos(&a.task).await.map_err(|e| e.to_string())?);
         j(v)
     }
 

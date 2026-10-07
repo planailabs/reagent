@@ -24,6 +24,44 @@ pub struct SkillTools(pub Arc<App>);
 pub struct TaskTools(pub Arc<App>);
 #[derive(Clone)]
 pub struct AskTools(pub Arc<App>);
+#[derive(Clone)]
+pub struct TodoTools(pub Arc<App>);
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct TodoAdd {
+    /// The items, in order (each a short line).
+    pub items: Vec<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct TodoUpdate {
+    pub id: i64,
+    /// pending, in_progress, done or cancelled.
+    pub status: Option<String>,
+    /// A new text for it.
+    pub text: Option<String>,
+}
+
+/// A todo list as text: `[ ] 1 …`, `[~]` in progress, `[x]` done, `[-]` cancelled.
+pub fn todo_text(todos: &[reagent_store::Todo]) -> String {
+    if todos.is_empty() {
+        return "(the list is empty)".into();
+    }
+    let open = todos.iter().filter(|t| t.status == "pending" || t.status == "in_progress").count();
+    let lines: Vec<String> = todos
+        .iter()
+        .map(|t| {
+            let mark = match t.status.as_str() {
+                "in_progress" => "[~]",
+                "done" => "[x]",
+                "cancelled" => "[-]",
+                _ => "[ ]",
+            };
+            format!("{mark} {} {}", t.id, t.text)
+        })
+        .collect();
+    format!("{}\n({open} open of {})", lines.join("\n"), todos.len())
+}
 
 #[derive(Deserialize, schemars::JsonSchema, Clone, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -379,5 +417,49 @@ impl AskTools {
     async fn ask(&self, Parameters(a): Parameters<Ask>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, _) = caller(&self.0, &ctx).await?;
         self.0.ask(&t.id, &a.question, &a.options).await
+    }
+}
+
+#[tool_router(server_handler)]
+impl TodoTools {
+    #[tool(description = "Your todo list: each item with its id and state ([ ] pending, [~] in progress, [x] done, [-] cancelled).")]
+    async fn todo_list(&self, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        Ok(todo_text(&self.0.store.todos(&t.id).await.map_err(|e| e.to_string())?))
+    }
+
+    #[tool(description = "Add items to your todo list (at the end): plan multi-step work here and keep it current. It's kept across restarts and summaries, and the person sees it.")]
+    async fn todo_add(&self, Parameters(a): Parameters<TodoAdd>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        let items: Vec<String> = a.items.iter().map(|i| i.trim().to_string()).filter(|i| !i.is_empty()).collect();
+        if items.is_empty() {
+            return Err("nothing to add".into());
+        }
+        self.0.store.add_todos(&t.id, &items).await.map_err(|e| e.to_string())?;
+        self.0.todos_changed(&t.id).await;
+        Ok(todo_text(&self.0.store.todos(&t.id).await.map_err(|e| e.to_string())?))
+    }
+
+    #[tool(description = "Change an item: its state (pending, in_progress, done, cancelled) and/or its text. Mark one in_progress when you start it, done when it's done.")]
+    async fn todo_update(&self, Parameters(a): Parameters<TodoUpdate>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        if let Some(s) = &a.status
+            && !reagent_store::TODO_STATES.contains(&s.as_str())
+        {
+            return Err(format!("{s:?}: pending, in_progress, done or cancelled"));
+        }
+        if !self.0.store.update_todo(&t.id, a.id, a.status.as_deref(), a.text.as_deref()).await.map_err(|e| e.to_string())? {
+            return Err(format!("there's no item {} (todo_list shows them)", a.id));
+        }
+        self.0.todos_changed(&t.id).await;
+        Ok(todo_text(&self.0.store.todos(&t.id).await.map_err(|e| e.to_string())?))
+    }
+
+    #[tool(description = "Empty your todo list (to plan afresh).")]
+    async fn todo_clear(&self, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        self.0.store.clear_todos(&t.id).await.map_err(|e| e.to_string())?;
+        self.0.todos_changed(&t.id).await;
+        Ok("emptied".into())
     }
 }

@@ -369,6 +369,7 @@ async fn task(State(s): State<S>, Path(id): Path<String>) -> R {
     let mut v = json!(t);
     v["subtasks"] = json!(kids);
     v["waits_for_merge"] = json!(s.w.app.waits_for_merge(&id));
+    v["todos"] = json!(db(s.w.app.store.todos(&id).await)?);
     Ok(Json(v))
 }
 

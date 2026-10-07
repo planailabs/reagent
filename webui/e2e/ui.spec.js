@@ -61,6 +61,15 @@ test("a call the policy asks about is approved from the inbox", async ({ page })
   await expect(page.locator(".report")).toContainText("touched");
 });
 
+test("a task's todo list shows", async ({ page }) => {
+  await startTask(page, "Todo list");
+  await expect(page.locator(".report")).toContainText("planned and started");
+  const list = page.getByLabel("todo list");
+  await expect(list).toContainText("1 of 2 done");
+  await expect(list.locator(".todo.done")).toContainText("look around");
+  await expect(list.locator(".todo.pending")).toContainText("do the thing");
+});
+
 test("a question is answered with an option", async ({ page }) => {
   await startTask(page, "Ask a color");
   const box = page.getByLabel("question");

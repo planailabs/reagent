@@ -19,7 +19,7 @@ const arg = computed(() => decodeURIComponent(parts.value[1] || ""));
 
 const session = ref(null);
 // What everyone shares: live events, streamed text, the inbox count.
-const live = reactive({ tick: 0, tasks: {}, streams: {}, agentTick: {}, notifications: [], waiting: 0 });
+const live = reactive({ tick: 0, tasks: {}, streams: {}, agentTick: {}, todos: {}, notifications: [], waiting: 0 });
 provide("live", live);
 let stop = null;
 
@@ -47,6 +47,8 @@ function start() {
     } else if (e.kind === "agent") {
       const n = e.notice;
       if (applyAgent(live.streams, n)) live.agentTick[n.agent] = (live.agentTick[n.agent] || 0) + 1;
+    } else if (e.kind === "todos") {
+      live.todos[e.task] = e.todos;
     } else if (e.kind === "job" || e.kind === "project") {
       live.tick++;
     }

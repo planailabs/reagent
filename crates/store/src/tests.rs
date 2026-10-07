@@ -111,3 +111,19 @@ async fn mcp_servers_are_kept_and_changes_noted() {
     assert!(s.remove_mcp_server("web").await.unwrap());
     assert!(!s.remove_mcp_server("web").await.unwrap());
 }
+
+#[tokio::test]
+async fn a_tasks_todos() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let t = s.add_task(&NewTask { project: "site".into(), title: "T".into(), prompt: "p".into(), origin: "ui".into(), cwd: "/".into(), profile: "default".into(), ..Default::default() }).await.unwrap();
+    assert_eq!(s.add_todos(&t.id, &["read".into(), "fix".into()]).await.unwrap(), [1, 2]);
+    assert_eq!(s.add_todos(&t.id, &["test".into()]).await.unwrap(), [3]);
+    assert!(s.update_todo(&t.id, 2, Some("in_progress"), None).await.unwrap());
+    assert!(s.update_todo(&t.id, 3, None, Some("run the tests")).await.unwrap());
+    assert!(!s.update_todo(&t.id, 9, Some("done"), None).await.unwrap());
+    let v = s.todos(&t.id).await.unwrap();
+    assert_eq!(v.iter().map(|t| (t.id, t.text.as_str(), t.status.as_str())).collect::<Vec<_>>(), [(1, "read", "pending"), (2, "fix", "in_progress"), (3, "run the tests", "pending")]);
+    s.clear_todos(&t.id).await.unwrap();
+    assert!(s.todos(&t.id).await.unwrap().is_empty());
+}

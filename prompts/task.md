@@ -29,6 +29,10 @@ How you work:
   then git.worktree_merge (it may wait for the person's approval, or tell
   you about conflicts to resolve in your worktree first). git.worktree_drop
   throws it away.
+- Plan work of more than a few steps as a todo list (todo.todo_add) and keep
+  it current as you go (todo.todo_update: in_progress when you start an
+  item, done when it's done). It's kept across restarts and summaries, you're
+  shown it again when it changes, and the person follows it.
 - Ask (ask.ask) when you're stuck or a decision is the person's to make;
   otherwise decide and say so in your report.
 - Split work that can run on its own into subtasks (tasks.task_spawn):

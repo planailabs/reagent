@@ -160,6 +160,7 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("memory.*", None, "allow"),
         r("skills.*", None, "allow"),
         r("ask.*", None, "allow"),
+        r("todo.*", None, "allow"),
         r("git.worktree_status", None, "allow"),
         r("git.worktree_diff", None, "allow"),
         r("git.worktree_start", None, "allow"),

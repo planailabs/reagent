@@ -223,6 +223,17 @@ pub struct McpServer {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Todo {
+    pub id: i64,
+    pub text: String,
+    /// pending, in_progress, done or cancelled.
+    pub status: String,
+    pub updated: i64,
+}
+
+pub const TODO_STATES: [&str; 4] = ["pending", "in_progress", "done", "cancelled"];
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Notification {
     pub id: i64,
     pub at: i64,
@@ -591,6 +602,45 @@ impl Store {
 
     async fn mcp_changed(&self) -> R<()> {
         self.set_setting("mcp_changed", &chrono::Utc::now().timestamp_micros().to_string()).await
+    }
+
+    // --- todos ----------------------------------------------------------
+
+    pub async fn todos(&self, task: &str) -> R<Vec<Todo>> {
+        sqlx::query_as("select id, text, status, updated from todos where task = $1 order by id").bind(task).fetch_all(&self.pool).await
+    }
+
+    /// Adds items at the end; their ids.
+    pub async fn add_todos(&self, task: &str, items: &[String]) -> R<Vec<i64>> {
+        let mut tx = self.pool.begin().await?;
+        let mut next: i64 = sqlx::query_scalar("select coalesce(max(id), 0) + 1 from todos where task = $1").bind(task).fetch_one(&mut *tx).await?;
+        let mut ids = vec![];
+        for t in items {
+            sqlx::query("insert into todos (task, id, text) values ($1, $2, $3)").bind(task).bind(next).bind(t).execute(&mut *tx).await?;
+            ids.push(next);
+            next += 1;
+        }
+        tx.commit().await?;
+        Ok(ids)
+    }
+
+    /// Changes an item's status and/or text; false: there's no such item.
+    pub async fn update_todo(&self, task: &str, id: i64, status: Option<&str>, text: Option<&str>) -> R<bool> {
+        Ok(sqlx::query("update todos set status = coalesce($3, status), text = coalesce($4, text), updated = unixepoch() where task = $1 and id = $2")
+            .bind(task)
+            .bind(id)
+            .bind(status)
+            .bind(text)
+            .execute(&self.pool)
+            .await?
+            .rows_affected()
+            > 0)
+    }
+
+    /// Empties a task's list.
+    pub async fn clear_todos(&self, task: &str) -> R<()> {
+        sqlx::query("delete from todos where task = $1").bind(task).execute(&self.pool).await?;
+        Ok(())
     }
 
     // --- notifications --------------------------------------------------

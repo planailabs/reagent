@@ -566,6 +566,12 @@ impl App {
         Ok(json!({"pattern": pattern, "tasks": out}))
     }
 
+    /// A task's todo list changed: the UI hears it.
+    pub async fn todos_changed(&self, id: &str) {
+        let todos = self.store.todos(id).await.unwrap_or_default();
+        self.emit(json!({"kind": "todos", "task": id, "todos": todos}));
+    }
+
     // --- questions and merges waiting for the person ---------------------
 
     /// A task asks; this waits for the answer.
