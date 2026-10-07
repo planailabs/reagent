@@ -16,6 +16,7 @@ This is the target design. The Status section at the end says what's built.
 | Worktrees | The agent decides: tools to start a worktree, see its diff, merge it back, drop it. Merging is auto or needs approval, per project. |
 | Commands | Foreground (blocks the task), background jobs, and PTY terminals. A foreground command can be moved to the background from the UI or by its timeout. |
 | Memory | Markdown: an `INDEX.md` per scope (global, each project) linking topic files and folder files. Stored centrally by default, or in the project's repo, per project. The indexes are injected; tools read and change the files. |
+| Skills | The generic layout: `.agents/skills/<name>/SKILL.md` in the project (and `.agent/skills/`), and globally in `~/.agents/skills/`. Names and descriptions are injected; a tool loads one. The project's `AGENTS.md` is injected too. |
 | Cron | Per project, in reagent's database, managed in the UI (and by tasks through a tool). |
 | Storage | SQLite for everything: reagent's own data, and subnet's hub through a new SQLite backend in subnet (Postgres stays as subnet's other backend). |
 | Notifications | Web Push and the apprise CLI. |
@@ -132,6 +133,8 @@ git is run as the `git` CLI (merges, rebases and worktrees aren't covered by git
 
 **Tasks and cron (`tasks`)**: `task_spawn(title, prompt, project?, profile?, budget?, worktree?)`, `task_list(project?)`, `task_message(task, text)`, `task_wait(task, timeout?)`; `cron_list()`, `cron_add(expr, title, prompt, options?)`, `cron_remove(id)` (in its own project).
 
+**Skills (`skills`)**: `skill_list()`, `skill_load(name)` (see Skills).
+
 **Asking (`ask`)**: `ask(question, options?)`: the task waits for your answer (a notification goes out); your answer is the result.
 
 ## Policy
@@ -170,7 +173,24 @@ tasks/<task>.md           # a task's checkpoints
 | `memory_search(pattern, scope?)` | regex over both scopes' files |
 | `memory_remove(scope, file)` | |
 
-`scope` is `global` or `project`. A `pre_model` hook (`context`) injects the global and the project index at the start and again whenever one changed since it last did, so the task always knows what's there without reading it. Memory is plain files: you can edit it in the UI (a file tree and an editor) or with any editor, and a project's memory kept in the repo is versioned with it.
+`scope` is `global` or `project`. A `pre_model` hook (`context`) injects the global and the project index (with the skills list and `AGENTS.md`, see Skills) at the start and again whenever one changed since it last did, so the task always knows what's there without reading it. Memory is plain files: you can edit it in the UI (a file tree and an editor) or with any editor, and a project's memory kept in the repo is versioned with it.
+
+## Skills
+
+Skills are the generic agent skills: a folder with a `SKILL.md` (YAML frontmatter `name` and `description`, then the instructions) and any files it refers to (scripts, references, templates).
+
+Where they're found, the nearer one winning on a name clash:
+1. the task's working directory: `.agents/skills/*/SKILL.md` (a worktree has the branch's skills), and `.agent/skills/` as well;
+2. the project folder, the same (when the task works in a worktree, the folder's own skills still count, for skills not committed yet);
+3. global: `~/.agents/skills/` (and `<data>/skills/`).
+
+They're read when needed (a skill added or changed while a task runs is seen at its next model call), never copied.
+
+- **Listed, not loaded:** the `context` hook injects one line per skill (`name — description`) with the memory indexes, again when the list changed, so a task knows what it has without paying for the bodies.
+- **Loaded by the task:** `skill_load(name)` returns the `SKILL.md` body with the paths of the skill's other files; the task reads those with `fs.read` and runs its scripts with `shell.exec` (a skill's folder is readable even when it's global, outside the project).
+- **Started with a skill:** a task (or a cron job) can be started with skills preloaded (`skills = ["deploy"]`): their bodies go into its first message.
+- **Instructions:** the project's `AGENTS.md` (in the working directory, else the project folder; it may link skills) is injected at the start like the indexes, and again when it changed.
+- In the UI: a project's page lists its skills and the global ones (where each comes from), and shows a skill's files.
 
 ## Cron
 
@@ -226,7 +246,7 @@ Secrets come from the environment (a `.env` in the data dir is read at start).
 ```
 crates/reagent      the binary: up, supervisor, passwd, status; wiring
 crates/supervisor   the process/PTY daemon and its client (jobs, PTYs, logs, the socket protocol)
-crates/tools        the MCP servers (fs, shell, pty, git, memory, tasks, ask) and the hooks (policy, context, checkpoint)
+crates/tools        the MCP servers (fs, shell, pty, git, memory, skills, tasks, ask) and the hooks (policy, context, checkpoint)
 crates/store        reagent.db (sqlx, SQLite, migrations): projects, tasks, cron, policies, sessions, push
 crates/web          axum: API, SSE, auth, static UI
 webui/              Vue + Parcel
@@ -235,7 +255,7 @@ prompts/task.md     the task agent's system prompt
 
 ## Testing
 
-- Unit tests per crate (policy matching, memory index upkeep, edits, cron next-run, path scoping).
+- Unit tests per crate (policy matching, memory index upkeep, edits, cron next-run, path scoping, skill discovery and precedence).
 - The supervisor: real processes and PTYs (a job outlives a client restart; process-group kill; "to background").
 - End to end: `reagent up` against a scripted OpenAI-compatible model (as subnet's and Vesper's tests do): a task edits a file in a worktree, runs a test in the foreground and a server in the background, asks for approval, merges; cron starts a run; a restart in the middle keeps the job and resumes the task.
 - subnet: its whole suite on both store backends.
@@ -246,7 +266,7 @@ prompts/task.md     the task agent's system prompt
 1. subnet: SQLite store backend (both suites green), committed to subnet.
 2. reagent skeleton: workspace, config, `reagent up` with hub + node on SQLite, one `task` type, starting a task from the CLI.
 3. Supervisor + `shell` + `pty`.
-4. `fs`, `memory` (+ context hook), policy hook + approvals.
+4. `fs`, `memory`, skills and `AGENTS.md` (+ context hook), policy hook + approvals.
 5. `git` worktrees and merging.
 6. Tasks API, subtasks, budgets, checkpoints.
 7. Cron.
