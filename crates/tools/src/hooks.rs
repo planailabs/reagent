@@ -94,7 +94,9 @@ impl HookTools {
         if !tool.contains('.') {
             return Ok(json!({"decision": "allow"}).to_string());
         }
-        let d = policy::decide(&rules, default, &Call { tool: &tool, command: command_of(&tool, args), target: target_of(&tool, args) });
+        // A subtask without a project is in this one.
+        let target = target_of(&tool, args).or((tool == "tasks.task_spawn").then_some(p.slug.as_str()));
+        let d = policy::decide(&rules, default, &Call { tool: &tool, command: command_of(&tool, args), target });
         let why = match (&d.rule, &d.piece) {
             (Some(r), Some(piece)) => format!("the rule {} {}{} (for `{piece}`)", r.tool, r.command.as_deref().map(|c| format!("`{c}` ")).unwrap_or_default(), r.action),
             (Some(r), None) => format!("the rule {} {}{}", r.tool, r.command.as_deref().map(|c| format!("`{c}` ")).unwrap_or_default(), r.action),
@@ -113,6 +115,8 @@ impl HookTools {
         let Ok(t) = self.0.task_of_agent(&q.agent.id).await else {
             return Ok(json!({"decision": "allow"}).to_string());
         };
+        // Over budget: paused before this call (and the person hears it).
+        self.0.check_budget(&t).await;
         let parts = context_parts(&self.0, &t).await;
         let mut inject = vec![];
         {

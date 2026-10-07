@@ -151,8 +151,9 @@ pub fn decide(rules: &[Rule], default: Action, call: &Call) -> Decision {
 }
 
 /// The rules a new project starts with: its files and reading are free,
-/// common read-only commands too; everything else asks.
-pub fn starter_rules() -> Vec<Rule> {
+/// common read-only commands too, subtasks in the project itself;
+/// everything else asks.
+pub fn starter_rules(slug: &str) -> Vec<Rule> {
     let r = |tool: &str, command: Option<&str>, action: &str| Rule { id: 0, project: String::new(), pos: 0, tool: tool.into(), command: command.map(Into::into), target: None, action: action.into() };
     vec![
         r("fs.*", None, "allow"),
@@ -163,7 +164,13 @@ pub fn starter_rules() -> Vec<Rule> {
         r("git.worktree_diff", None, "allow"),
         r("git.worktree_start", None, "allow"),
         r("git.worktree_merge", None, "allow"),
+        Rule { target: Some(slug.into()), ..r("tasks.task_spawn", None, "allow") },
         r("tasks.task_list", None, "allow"),
+        r("tasks.task_message", None, "allow"),
+        r("tasks.search_history", None, "allow"),
+        r("git.worktree_drop", None, "allow"),
+        r("pty.ptys", None, "allow"),
+        r("shell.jobs", None, "allow"),
         r("tasks.task_wait", None, "allow"),
         r("tasks.cron_list", None, "allow"),
         r("shell.jobs", None, "allow"),
@@ -238,7 +245,9 @@ mod tests {
 
     #[test]
     fn starter_rules_are_sensible() {
-        let rules = starter_rules();
+        let rules = starter_rules("site");
+        assert_eq!(decide(&rules, Action::Ask, &Call { tool: "tasks.task_spawn", command: None, target: Some("site") }).action, Action::Allow);
+        assert_eq!(decide(&rules, Action::Ask, &Call { tool: "tasks.task_spawn", command: None, target: Some("other") }).action, Action::Ask);
         assert_eq!(act(&rules, "fs.edit", None), Action::Allow);
         assert_eq!(act(&rules, "shell.exec", Some("cargo test -p x")), Action::Allow);
         assert_eq!(act(&rules, "shell.exec", Some("git push --force")), Action::Ask);

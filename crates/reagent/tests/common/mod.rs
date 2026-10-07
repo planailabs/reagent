@@ -129,6 +129,13 @@ impl R {
         self.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), title: title.into(), prompt: prompt.into(), ..Default::default() }).await.unwrap()
     }
 
+    /// What no rule covers is allowed (the deny rules still hold).
+    pub async fn allow_all(&self) {
+        let mut p = self.run.app.project("site").await.unwrap();
+        p.default_action = "allow".into();
+        self.run.app.put_project(p).await.unwrap();
+    }
+
     pub async fn task(&self, id: &str) -> reagent_store::Task {
         self.run.app.task(id).await.unwrap()
     }

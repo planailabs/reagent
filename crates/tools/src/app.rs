@@ -150,7 +150,7 @@ impl App {
         let new = self.store.project(&p.slug).await.map_err(|e| e.to_string())?.is_none();
         self.store.put_project(&p).await.map_err(|e| e.to_string())?;
         if new {
-            self.store.set_rules(&p.slug, &crate::policy::starter_rules()).await.map_err(|e| e.to_string())?;
+            self.store.set_rules(&p.slug, &crate::policy::starter_rules(&p.slug)).await.map_err(|e| e.to_string())?;
         }
         self.emit(json!({"kind": "project", "project": p}));
         Ok(p)
@@ -445,13 +445,18 @@ impl App {
             return;
         }
         self.record_usage(t).await;
+        // A task paused over its budget stays so: its answer was its last step.
+        if t.wait.as_ref().is_some_and(|w| w.0["kind"] == "budget") {
+            let _ = self.store.set_report(&t.id, content).await;
+            return;
+        }
         let _ = self.store.set_report(&t.id, content).await;
-        let _ = self.store.set_state(&t.id, state, None).await;
-        self.task_changed(&t.id).await;
-        tracing::info!(task = %t.id, state, "task reported");
         if kind != "cancelled" {
             self.notify(kind, Some(t), &format!("{} — {state}", t.title), &content.chars().take(400).collect::<String>()).await;
         }
+        let _ = self.store.set_state(&t.id, state, None).await;
+        self.task_changed(&t.id).await;
+        tracing::info!(task = %t.id, state, "task reported");
         if let Some(parent) = &t.parent
             && let Ok(p) = self.task(parent).await
             && p.is_active()
@@ -459,6 +464,26 @@ impl App {
             let _ = self.message(parent, &format!("[subtask {} ({}) {state}]\n{content}", t.title, t.id)).await;
         }
         crate::cron::task_ended(self, t).await;
+    }
+
+    /// Pauses a task over its budget (quick: before its next step) and says so.
+    pub async fn check_budget(&self, t: &Task) {
+        self.record_usage(t).await;
+        let Ok(t) = self.task(&t.id).await else { return };
+        let b = &t.budget.0;
+        let minutes = (chrono::Utc::now().timestamp() - t.created) / 60;
+        let over = b.tokens.is_some_and(|l| t.tokens as u64 > l) || b.cost.is_some_and(|l| t.cost > l) || b.minutes.is_some_and(|l| minutes as u64 > l);
+        if !over {
+            return;
+        }
+        let (Ok(hub), Ok(agent)) = (self.hub(), Self::agent_of(&t)) else { return };
+        let _ = hub.op(&root(), Op::Pause { id: agent, mode: PauseMode::Quick, tree: true }).await;
+        let wait = json!({"kind": "budget", "tokens": t.tokens, "cost": t.cost, "minutes": minutes, "budget": b});
+        if self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
+            self.notify("budget", Some(&t), &format!("{} is over budget", t.title), &format!("{} tokens, {:.2} spent, {minutes} min: paused", t.tokens, t.cost)).await;
+        }
+        let _ = self.store.set_state(&t.id, "waiting", Some(&wait)).await;
+        self.task_changed(&t.id).await;
     }
 
     /// A task's tokens and cost, from its agent's usage.
