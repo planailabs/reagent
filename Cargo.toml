@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/store", "crates/supervisor"]
+members = ["crates/store", "crates/supervisor", "crates/tools"]
 
 [workspace.package]
 edition = "2024"
@@ -56,7 +56,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 vt100 = "0.16"
-web-push = "0.11"
+web-push-native = "0.4"
 
 [profile.dev]
 debug = "line-tables-only"
