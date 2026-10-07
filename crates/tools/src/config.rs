@@ -157,7 +157,7 @@ profile "default" {
   provider = "deepseek"
   model    = "deepseek-chat"
   price    = { input = 0.27, output = 1.10 }   # per million tokens, for budgets
-  context  = 128000
+  context  = 1000000                           # compaction at three quarters
 }
 
 # Tool results longer than `over` characters reach the model cut, with a note;
@@ -207,7 +207,7 @@ mod tests {
         let c = Config::parse(EXAMPLE).unwrap();
         assert_eq!(c.listen, "127.0.0.1:8800");
         let (name, p) = c.profile(None).unwrap();
-        assert_eq!((name, p.model.as_str(), p.context), ("default", "deepseek-chat", 128000));
+        assert_eq!((name, p.model.as_str(), p.context), ("default", "deepseek-chat", 1_000_000));
         assert!((p.price.cost(1_000_000, 1_000_000) - 1.37).abs() < 1e-9);
         assert!(c.notify.wants("done"));
         assert_eq!((c.grep_results.over, c.search_history), (12000, true));

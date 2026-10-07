@@ -206,7 +206,7 @@ profile "default" {
   provider = "deepseek"
   model    = "deepseek-chat"
   price    = { input = 0.27, output = 1.10 }   # per million tokens, for budgets
-  context  = 128000                            # compaction at three quarters
+  context  = 1000000                           # compaction at three quarters
   # params = { temperature = 0.2 }
   # grep_results = { over = 8000 }             # this profile's own cut-off
 }
