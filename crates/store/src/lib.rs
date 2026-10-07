@@ -720,6 +720,22 @@ impl Store {
         Ok(all)
     }
 
+    // --- notification action tokens -------------------------------------
+
+    pub async fn add_action_token(&self, hash: &str, task: &str, action: &serde_json::Value, expires: i64) -> R<()> {
+        sqlx::query("insert into action_tokens (hash, task, action, expires) values ($1, $2, $3, $4)").bind(hash).bind(task).bind(Json(action)).bind(expires).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Takes a token (once): its task and action, if it's unused and not expired.
+    pub async fn take_action_token(&self, hash: &str) -> R<Option<(String, serde_json::Value)>> {
+        let row: Option<(String, Json<serde_json::Value>)> = sqlx::query_as("update action_tokens set used = true where hash = $1 and not used and expires > unixepoch() returning task, action")
+            .bind(hash)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(t, a)| (t, a.0)))
+    }
+
     // --- todos ----------------------------------------------------------
 
     pub async fn todos(&self, task: &str) -> R<Vec<Todo>> {

@@ -45,7 +45,8 @@ pub fn session_of(headers: &axum::http::HeaderMap) -> Option<String> {
 /// Logged in for everything under /api but login; writes must come from this site.
 async fn guard(State(s): State<S>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    if !path.starts_with("/api/") || path == "/api/login" || path == "/api/session" {
+    // A notification's button carries its own one-time token.
+    if !path.starts_with("/api/") || path == "/api/login" || path == "/api/session" || path == "/api/action" {
         return next.run(req).await;
     }
     if req.method() != Method::GET && req.method() != Method::HEAD {

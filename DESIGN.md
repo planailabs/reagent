@@ -195,7 +195,7 @@ Agents outside use reagent at `/mcp` (streamable HTTP) with `Authorization: Bear
 
 Events: `done`, `failed`, `waiting` (an approval, a question, a merge), `budget`, `cron` (a run that couldn't start). Every one is kept (the inbox shows them) and sent, as `notify.events` asks (default all):
 
-- **Web Push:** VAPID keys made once (in the settings table), a browser subscribes from the settings page (a service worker); sent encrypted with `web-push-native` (pure Rust); a click opens the task. Gone subscriptions are forgotten.
+- **Web Push:** VAPID keys made once (in the settings table), a browser subscribes from the settings page (a service worker); sent encrypted with `web-push-native` (pure Rust); a click opens the task. Gone subscriptions are forgotten. A notification that waits for the person has **buttons**: an approval "Allow once" and "Deny", a question its first two options, a merge "Merge". Each is a one-time token (32 random bytes, kept hashed in `action_tokens`, good for a day); the service worker posts it to `/api/action` (no login: the token is the authority), which does it only if the task still waits for exactly that (the same call, question or branch), and shows a notification saying whether it was done.
 - **apprise:** `apprise -t <title> -b <body and a link> <urls…>` with `notify.apprise` and `notify.apprise_env`'s URLs; it's a Python CLI, run, not linked.
 
 ## Config

@@ -166,3 +166,17 @@ async fn secrets_are_encrypted_and_a_projects_own_win() {
     assert_eq!(s.secrets_for("site").await.unwrap()[0].value, "ghp_global");
     s.remove_project("site").await.unwrap();
 }
+
+#[tokio::test]
+async fn action_tokens_are_taken_once_and_expire() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let t = s.add_task(&NewTask { project: "site".into(), title: "T".into(), prompt: "p".into(), origin: "ui".into(), cwd: "/".into(), profile: "default".into(), ..Default::default() }).await.unwrap();
+    s.add_action_token("h1", &t.id, &serde_json::json!({"kind": "approve", "call_id": "c1"}), now() + 60).await.unwrap();
+    s.add_action_token("h2", &t.id, &serde_json::json!({"kind": "deny"}), now() - 1).await.unwrap();
+    let (task, a) = s.take_action_token("h1").await.unwrap().unwrap();
+    assert_eq!((task.as_str(), a["call_id"].as_str()), (t.id.as_str(), Some("c1")));
+    assert!(s.take_action_token("h1").await.unwrap().is_none(), "once");
+    assert!(s.take_action_token("h2").await.unwrap().is_none(), "expired");
+    assert!(s.take_action_token("nope").await.unwrap().is_none());
+}

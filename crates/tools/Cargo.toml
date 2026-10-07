@@ -30,6 +30,7 @@ tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 sqlx.workspace = true
+sha2.workspace = true
 web-push-native.workspace = true
 axum.workspace = true
 subnet-cluster.workspace = true

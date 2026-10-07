@@ -94,6 +94,12 @@ fn usage_of(u: &Value) -> (u64, u64, u64) {
     (u["prompt_tokens"].as_u64().unwrap_or(0), u["completion_tokens"].as_u64().unwrap_or(0), u["cached_prompt_tokens"].as_u64().unwrap_or(0))
 }
 
+/// What's kept of a token: its sha256 (hex).
+pub fn token_hash(t: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(t.as_bytes()).iter().map(|x| format!("{x:02x}")).collect()
+}
+
 fn root() -> Addr {
     Addr::root()
 }
@@ -624,7 +630,9 @@ impl App {
         // Asked again after a restart: the person already heard it.
         if stored.is_none() {
             let t = self.task(id).await?;
-            self.notify("waiting", Some(&t), &format!("{} asks", t.title), question).await;
+            // Buttons for the first two options (a notification shows at most two).
+            let buttons = options.iter().take(2).map(|o| (o.clone(), json!({"kind": "answer", "question": question, "answer": o}))).collect();
+            self.notify_actions("waiting", Some(&t), &format!("{} asks", t.title), question, buttons).await;
         }
         let answer = rx.await.map_err(|_| "the question went unanswered (the task was cancelled)".to_string());
         self.done_waiting(id).await;
@@ -668,7 +676,8 @@ impl App {
         self.task_changed(id).await;
         if stored.is_none() {
             let t = self.task(id).await?;
-            self.notify("waiting", Some(&t), &format!("{}: ready to merge", t.title), wait["branch"].as_str().unwrap_or("")).await;
+            let merge = vec![("Merge".to_string(), json!({"kind": "merge", "branch": wait["branch"]}))];
+            self.notify_actions("waiting", Some(&t), &format!("{}: ready to merge", t.title), wait["branch"].as_str().unwrap_or(""), merge).await;
         }
         let a = rx.await.map_err(|_| "the merge went unanswered (the task was cancelled)".to_string());
         self.done_waiting(id).await;
@@ -702,9 +711,56 @@ impl App {
     // --- following tasks ------------------------------------------------
 
     pub async fn notify(&self, kind: &str, t: Option<&Task>, title: &str, body: &str) {
+        self.notify_actions(kind, t, title, body, vec![]).await
+    }
+
+    /// A notification with buttons: each gets a one-time token (good for a
+    /// day) that does its action without a login (`act`).
+    pub async fn notify_actions(&self, kind: &str, t: Option<&Task>, title: &str, body: &str, actions: Vec<(String, Value)>) {
         let id = self.store.add_notification(kind, t.map(|t| t.id.as_str()), title, body).await.ok();
-        self.emit(json!({"kind": "notification", "id": id, "type": kind, "task": t.map(|t| &t.id), "title": title, "body": body}));
-        self.notifier.send(self, kind, t.map(|t| t.id.as_str()), title, body).await;
+        let mut buttons = vec![];
+        if let Some(t) = t {
+            for (label, action) in actions {
+                let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+                if self.store.add_action_token(&token_hash(&token), &t.id, &action, chrono::Utc::now().timestamp() + 86_400).await.is_ok() {
+                    buttons.push(json!({"title": label, "token": token}));
+                }
+            }
+        }
+        self.emit(json!({"kind": "notification", "id": id, "type": kind, "task": t.map(|t| &t.id), "title": title, "body": body, "actions": buttons}));
+        self.notifier.send(self, kind, t.map(|t| t.id.as_str()), title, body, &buttons).await;
+    }
+
+    /// A notification's button: its action, if the task still waits for it.
+    pub async fn act(&self, token: &str) -> Result<String, String> {
+        let (id, a) = self.store.take_action_token(&token_hash(token)).await.map_err(|e| e.to_string())?.ok_or("this button was used, or has expired")?;
+        let t = self.task(&id).await?;
+        let w = t.wait.as_ref().map(|w| w.0.clone()).unwrap_or_default();
+        let gone = || Err(format!("{} no longer waits for that", t.title));
+        match a["kind"].as_str() {
+            Some(k @ ("approve" | "deny")) => {
+                if w["kind"] != "approval" || w["call"]["id"] != a["call_id"] {
+                    return gone();
+                }
+                self.approve(&id, a["call_id"].as_str().unwrap_or_default(), k == "approve", false).await?;
+                Ok(if k == "approve" { "allowed".into() } else { "denied".into() })
+            }
+            Some("answer") => {
+                if w["kind"] != "question" || w["question"] != a["question"] {
+                    return gone();
+                }
+                self.answer(&id, a["answer"].as_str().unwrap_or_default()).await?;
+                Ok(format!("answered {}", a["answer"].as_str().unwrap_or_default()))
+            }
+            Some("merge") => {
+                if w["kind"] != "merge" || w["branch"] != a["branch"] {
+                    return gone();
+                }
+                self.decide_merge(&id, MergeAnswer::Merge).await?;
+                Ok("merging".into())
+            }
+            _ => Err("an unknown action".into()),
+        }
     }
 
     /// Reports in root's mailbox: a task ended (or failed).
@@ -834,7 +890,8 @@ impl App {
                 let key = (t.id.clone(), format!("approval:{call_id}"));
                 if self.notified.lock().unwrap().insert(key) {
                     let tool = call["function"]["name"].as_str().unwrap_or("").replace("__", ".");
-                    self.notify("waiting", Some(&t), &format!("{} needs approval", t.title), &format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or(""))).await;
+                    let buttons = vec![("Allow once".to_string(), json!({"kind": "approve", "call_id": call_id})), ("Deny".to_string(), json!({"kind": "deny", "call_id": call_id}))];
+                    self.notify_actions("waiting", Some(&t), &format!("{} needs approval", t.title), &format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or("")), buttons).await;
                 }
             } else if a["paused"] == true {
                 // Paused while it waits for the person (a stop, say): it still waits.

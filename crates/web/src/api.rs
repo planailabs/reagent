@@ -90,6 +90,7 @@ pub fn routes() -> Router<S> {
         .route("/api/ptys/{id}", get(pty_ws).delete(pty_close))
         .route("/api/mcp", get(mcp_servers))
         .route("/api/mcp/{name}", put(put_mcp).delete(remove_mcp))
+        .route("/api/action", post(action))
         .route("/api/secrets", get(secrets).put(set_secret).delete(remove_secret))
         .route("/api/tokens", get(tokens).post(add_token))
         .route("/api/tokens/{name}", delete(revoke_token))
@@ -535,6 +536,21 @@ async fn remove_mcp(State(s): State<S>, Path(name): Path<String>) -> R {
         s.w.app.apply_cluster().await?;
     }
     Ok(Json(json!({"removed": gone})))
+}
+
+// --- notification buttons ---------------------------------------------------
+
+#[derive(Deserialize)]
+struct Action {
+    token: String,
+}
+
+/// A notification's button: the token is its authority (no login).
+async fn action(State(s): State<S>, Json(a): Json<Action>) -> R {
+    match s.w.app.act(&a.token).await {
+        Ok(done) => Ok(Json(json!({"ok": true, "done": done}))),
+        Err(e) => Err(E(StatusCode::GONE, e)),
+    }
 }
 
 // --- secrets ----------------------------------------------------------------

@@ -43,7 +43,8 @@ impl Notifier {
         Notifier { cfg, http: reqwest::Client::new() }
     }
 
-    pub async fn send(&self, app: &App, kind: &str, task: Option<&str>, title: &str, body: &str) {
+    /// `actions`: the buttons, `{title, token}` (Web Push shows them; apprise gets the link).
+    pub async fn send(&self, app: &App, kind: &str, task: Option<&str>, title: &str, body: &str, actions: &[serde_json::Value]) {
         if !self.cfg.wants(kind) {
             return;
         }
@@ -73,7 +74,7 @@ impl Notifier {
             return;
         }
         let Ok(kp) = vapid(&app.store).await else { return };
-        let payload = json!({"title": title, "body": body, "task": task, "kind": kind}).to_string();
+        let payload = json!({"title": title, "body": body, "task": task, "kind": kind, "actions": actions}).to_string();
         for s in subs {
             if let Err(e) = self.push(&kp, &s, &payload).await {
                 tracing::warn!(endpoint = %s["endpoint"], error = %e, "web push failed");
