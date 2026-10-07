@@ -1,0 +1,7 @@
+/target
+node_modules
+/webui/dist
+/webui/.parcel-cache
+/webui/test-results
+/webui/playwright-report
+.env

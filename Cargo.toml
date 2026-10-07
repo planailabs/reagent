@@ -1,0 +1,64 @@
+[workspace]
+resolver = "3"
+members = ["crates/store"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+reagent-store = { path = "crates/store" }
+reagent-supervisor = { path = "crates/supervisor" }
+reagent-tools = { path = "crates/tools" }
+reagent-web = { path = "crates/web" }
+# subagent-net: the hub, the node and the agents reagent runs on.
+subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4a24261f8f4771cfa55250f113dcaaec0f67a554" }
+subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4a24261f8f4771cfa55250f113dcaaec0f67a554" }
+subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4a24261f8f4771cfa55250f113dcaaec0f67a554" }
+subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4a24261f8f4771cfa55250f113dcaaec0f67a554" }
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+croner = { version = "4", features = ["chrono"] }
+directories = "6"
+dotenvy = "0.15"
+futures = "0.3"
+globset = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+hcl-rs = "0.19"
+ignore = "0.4"
+portable-pty = "0.9"
+rand = "0.9"
+regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rmcp = { version = "3", features = ["client", "server", "macros", "transport-streamable-http-client-reqwest", "transport-streamable-http-server"] }
+rpassword = "7"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+sha2 = "0.10"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "json", "migrate", "macros", "uuid", "chrono"] }
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
+tower-http = { version = "0.6", features = ["fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+vt100 = "0.16"
+web-push = "0.11"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
