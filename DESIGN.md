@@ -89,7 +89,7 @@ A task is a subnet agent spawned (as root) from the mixture `task-<profile>`, wi
 
 - **Starting:** from the UI, the API, the MCP API, cron, or a task (`tasks.task_spawn`). The first message says the task, the project and the working directory, then the prompt, then the bodies of the skills asked for. A project over its daily cost starts nothing.
 - **Steering:** a message (read before its next model call; a finished task goes on with it), pause (quick: running calls finish; safe: after this turn), resume, cancel (its jobs and terminals end too), approve or deny a call (or "always": a rule allowing the tool with that command goes in front), answer a question, merge or send back a worktree, retry a failed task (subnet resumes it where it failed: the model call again), raise its budget (a task paused over it goes on), change its profile or budget (a new profile applies when it next starts: subnet keeps an agent's type).
-- **Following:** reports come to root's mailbox (a task is done, failed or cancelled); a loop every 1.5 s reads the agents' phases, the call waiting for approval, usage (cost from the profile's prices) and budgets. Job ends become messages to their task (which wakes it), except for a foreground command a tool still waits for. A subtask's report becomes a message to its parent.
+- **Following:** reports come to root's mailbox (a task is done, failed or cancelled); a loop every 1.5 s reads the agents' phases, the call waiting for approval, usage (cost from the profile's prices: cached prompt tokens at `price.cached`) and budgets. Job ends become messages to their task (which wakes it), except for a foreground command a tool still waits for. A subtask's report becomes a message to its parent.
 - **Long runs:** compaction at three quarters of the profile's context; the `checkpoint` hook (pre_compact) asks for a summary someone could pick the work up from, and reagent writes each summary into the project's memory (`tasks/<id>.md`, linked from the index). The budget is checked before every model call (the `context` hook pauses a task over it, which holds the call) and by the follower.
 - **Long calls:** reagent's MCP sessions have no idle timeout (rmcp's default of 5 minutes ended a session with a question still open in it, and the node waited for an answer that couldn't come); the MCP API's sessions end after 6 idle hours.
 - **Waiting across a restart:** a question or a merge waits in the tool call; after a restart that call has been aborted, the task hears so and may ask again. An approval survives (it's subnet's).
@@ -211,7 +211,7 @@ provider "deepseek" {
 profile "default" {
   provider = "deepseek"
   model    = "deepseek-chat"
-  price    = { input = 0.27, output = 1.10 }   # per million tokens, for budgets
+  price    = { input = 0.27, cached = 0.07, output = 1.10 }   # per million tokens, for budgets; cached: input served from the provider's cache (none: the input price)
   context  = 1000000                           # compaction at three quarters
   # params = { temperature = 0.2 }
   # grep_results = { over = 8000 }             # this profile's own cut-off

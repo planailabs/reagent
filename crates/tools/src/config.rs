@@ -104,11 +104,18 @@ pub struct Price {
     pub input: f64,
     #[serde(default)]
     pub output: f64,
+    /// Input the provider served from its cache (DeepSeek: about a tenth of
+    /// `input`); none: counted at the input price (never under-counts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached: Option<f64>,
 }
 
 impl Price {
-    pub fn cost(&self, input: u64, output: u64) -> f64 {
-        (input as f64 * self.input + output as f64 * self.output) / 1_000_000.0
+    /// What `input` prompt tokens (of which `cached` came from the cache)
+    /// and `output` completion tokens cost.
+    pub fn cost(&self, input: u64, cached: u64, output: u64) -> f64 {
+        let cached = cached.min(input);
+        ((input - cached) as f64 * self.input + cached as f64 * self.cached.unwrap_or(self.input) + output as f64 * self.output) / 1_000_000.0
     }
 }
 
@@ -156,7 +163,7 @@ provider "deepseek" {
 profile "default" {
   provider = "deepseek"
   model    = "deepseek-chat"
-  price    = { input = 0.27, output = 1.10 }   # per million tokens, for budgets
+  price    = { input = 0.27, cached = 0.07, output = 1.10 }   # per million tokens (cached: input from the provider's cache), for budgets
   context  = 1000000                           # compaction at three quarters
 }
 
@@ -208,7 +215,12 @@ mod tests {
         assert_eq!(c.listen, "127.0.0.1:8800");
         let (name, p) = c.profile(None).unwrap();
         assert_eq!((name, p.model.as_str(), p.context), ("default", "deepseek-chat", 1_000_000));
-        assert!((p.price.cost(1_000_000, 1_000_000) - 1.37).abs() < 1e-9);
+        assert!((p.price.cost(1_000_000, 0, 1_000_000) - 1.37).abs() < 1e-9);
+        // Cache hits at the cached price; without one, at the input price.
+        assert!((p.price.cost(1_000_000, 900_000, 0) - (0.1 * 0.27 + 0.9 * 0.07)).abs() < 1e-9);
+        let no_cache_price = Price { cached: None, ..p.price };
+        assert!((no_cache_price.cost(1_000_000, 900_000, 0) - 0.27).abs() < 1e-9);
+        assert!((p.price.cost(10, 99, 0) - 10.0 * 0.07 / 1e6).abs() < 1e-12, "cached never exceeds input");
         assert!(c.notify.wants("done"));
         assert_eq!((c.grep_results.over, c.search_history), (12000, true));
         let c = Config::parse(&format!("{EXAMPLE}\ngrep_results = {{ over = 100 }}\n").replace("grep_results = { over = 12000, except = [\"skills.skill_load\", \"fs.read\", \"shell.job_output\"] }\n", ""));

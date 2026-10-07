@@ -89,6 +89,11 @@ pub struct App {
     applying: tokio::sync::Mutex<()>,
 }
 
+/// Prompt, completion and cached prompt tokens from an agent's usage.
+fn usage_of(u: &Value) -> (u64, u64, u64) {
+    (u["prompt_tokens"].as_u64().unwrap_or(0), u["completion_tokens"].as_u64().unwrap_or(0), u["cached_prompt_tokens"].as_u64().unwrap_or(0))
+}
+
 fn root() -> Addr {
     Addr::root()
 }
@@ -223,7 +228,7 @@ impl App {
             if !a.outdated || a.superseded_by.is_some() {
                 continue;
             }
-            match hub.upgrade(&root(), id, true).await {
+            match hub.upgrade(&root(), id, true, None).await {
                 Ok(s) => {
                     let _ = self.store.set_agent(&t.id, &s.id.to_string()).await;
                     tracing::info!(task = %t.id, "task moved onto the current version");
@@ -699,9 +704,9 @@ impl App {
         let (Ok(hub), Some(agent)) = (self.hub(), t.agent.as_deref()) else { return };
         let Ok(list) = serde_json::to_value(hub.list_agents().await) else { return };
         let Some(a) = list.as_array().and_then(|l| l.iter().find(|a| a["id"] == agent)) else { return };
-        let (input, output) = (a["usage"]["prompt_tokens"].as_u64().unwrap_or(0), a["usage"]["completion_tokens"].as_u64().unwrap_or(0));
+        let (input, output, cached) = usage_of(&a["usage"]);
         let price = self.config.profile.get(&t.profile).map(|p| p.price).unwrap_or_default();
-        let _ = self.store.set_usage(&t.id, (input + output) as i64, price.cost(input, output)).await;
+        let _ = self.store.set_usage(&t.id, (input + output) as i64, price.cost(input, cached, output)).await;
     }
 
     /// Follows the agents: phases, approvals, usage and budgets.
@@ -713,9 +718,9 @@ impl App {
             let Some(a) = t.agent.as_deref().and_then(|id| by_id.get(id)) else { continue };
             // Usage and cost.
             let u = &a["usage"];
-            let (input, output) = (u["prompt_tokens"].as_u64().unwrap_or(0), u["completion_tokens"].as_u64().unwrap_or(0));
+            let (input, output, cached) = usage_of(u);
             let price = self.config.profile.get(&t.profile).map(|p| p.price).unwrap_or_default();
-            let cost = price.cost(input, output);
+            let cost = price.cost(input, cached, output);
             if (input + output) as i64 != t.tokens {
                 let _ = self.store.set_usage(&t.id, (input + output) as i64, cost).await;
             }

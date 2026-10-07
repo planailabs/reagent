@@ -12,10 +12,10 @@ reagent-supervisor = { path = "crates/supervisor" }
 reagent-tools = { path = "crates/tools" }
 reagent-web = { path = "crates/web" }
 # subagent-net: the hub, the node and the agents reagent runs on.
-subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "b9dc78da69c39b89a884c1311569c40f9925f8b6" }
-subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "b9dc78da69c39b89a884c1311569c40f9925f8b6" }
-subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "b9dc78da69c39b89a884c1311569c40f9925f8b6" }
-subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "b9dc78da69c39b89a884c1311569c40f9925f8b6" }
+subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
+subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
+subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
+subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
 anyhow = "1"
 argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
