@@ -140,7 +140,10 @@ async fn resume_paused(app: &App, hub: &Hub) {
         let Some(agent) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
         match hub.resume(&Addr::root(), agent, true).await {
             Ok(_) => {
-                let _ = app.store.set_state(&t.id, "running", None).await;
+                // A question or merge it waited for stays: its call runs again and finds it.
+                if !t.wait.as_ref().is_some_and(|w| w.0["kind"] == "question" || w.0["kind"] == "merge") {
+                    let _ = app.store.set_state(&t.id, "running", None).await;
+                }
                 tracing::info!(task = %t.id, "task resumed");
             }
             Err(e) => tracing::warn!(task = %t.id, error = %e, "couldn't resume a task paused at the last stop"),
@@ -163,7 +166,16 @@ pub async fn stop(r: &Running) {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
         let agents = r.hub.list_agents().await;
-        let busy = paused.iter().filter(|(_, id)| agents.iter().any(|a| a.id == *id && !a.paused && !matches!(a.phase.as_str(), "failed" | "cancelled"))).count();
+        // A task waiting for the person (a question, a merge) isn't busy: its call runs again after the start.
+        let mut waiting_for_person = std::collections::HashSet::new();
+        for (t, _) in &paused {
+            if let Ok(Some(task)) = r.app.store.task(t).await
+                && task.wait.as_ref().is_some_and(|w| w.0["kind"] == "question" || w.0["kind"] == "merge")
+            {
+                waiting_for_person.insert(t.clone());
+            }
+        }
+        let busy = paused.iter().filter(|(t, id)| !waiting_for_person.contains(t) && agents.iter().any(|a| a.id == *id && !a.paused && !matches!(a.phase.as_str(), "failed" | "cancelled"))).count();
         if busy == 0 || tokio::time::Instant::now() > deadline {
             tracing::info!(tasks = paused.len(), still_busy = busy, "tasks paused for the stop");
             break;

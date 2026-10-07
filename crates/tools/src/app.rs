@@ -596,22 +596,43 @@ impl App {
 
     // --- questions and merges waiting for the person ---------------------
 
-    /// A task asks; this waits for the answer.
+    /// What a task waits for, as stored, when it's of `kind`.
+    async fn stored_wait(&self, id: &str, kind: &str) -> Option<Value> {
+        self.task(id).await.ok()?.wait.map(|w| w.0).filter(|w| w["kind"] == kind)
+    }
+
+    async fn done_waiting(&self, id: &str) {
+        let _ = self.store.set_state(id, "running", None).await;
+        self.task_changed(id).await;
+    }
+
+    /// A task asks; this waits for the answer. The question is stored, and
+    /// so is an answer given while nothing waits (reagent was restarting):
+    /// `ask` runs again after a restart (it's idempotent) and finds it.
     pub async fn ask(&self, id: &str, question: &str, options: &[String]) -> Result<String, String> {
+        let stored = self.stored_wait(id, "question").await.filter(|w| w["question"] == question);
+        if let Some(a) = stored.as_ref().and_then(|w| w["answer"].as_str()) {
+            let a = a.to_string();
+            self.done_waiting(id).await;
+            return Ok(a);
+        }
         let (tx, rx) = oneshot::channel();
         self.questions.lock().unwrap().insert(id.into(), tx);
         let wait = json!({"kind": "question", "question": question, "options": options});
         self.store.set_state(id, "waiting", Some(&wait)).await.map_err(|e| e.to_string())?;
         self.task_changed(id).await;
-        let t = self.task(id).await?;
-        self.notify("waiting", Some(&t), &format!("{} asks", t.title), question).await;
-        let answer = rx.await.map_err(|_| "the question went unanswered (the task was cancelled, or reagent restarted)".to_string());
-        let _ = self.store.set_state(id, "running", None).await;
-        self.task_changed(id).await;
+        // Asked again after a restart: the person already heard it.
+        if stored.is_none() {
+            let t = self.task(id).await?;
+            self.notify("waiting", Some(&t), &format!("{} asks", t.title), question).await;
+        }
+        let answer = rx.await.map_err(|_| "the question went unanswered (the task was cancelled)".to_string());
+        self.done_waiting(id).await;
         answer
     }
 
-    /// The person's answer: to the waiting question, else as a message.
+    /// The person's answer: to the waiting question; when nothing waits
+    /// (a restart in between), kept for it; with no question, a message.
     pub async fn answer(&self, id: &str, text: &str) -> Result<(), String> {
         let waiter = self.questions.lock().unwrap().remove(id);
         if let Some(tx) = waiter
@@ -619,32 +640,63 @@ impl App {
         {
             return Ok(());
         }
+        if let Some(mut w) = self.stored_wait(id, "question").await {
+            w["answer"] = json!(text);
+            self.store.set_state(id, "waiting", Some(&w)).await.map_err(|e| e.to_string())?;
+            self.task_changed(id).await;
+            return Ok(());
+        }
         self.message(id, &format!("[an answer to your question] {text}")).await
     }
 
-    /// A worktree merge waits for the person (`merge = "approve"`).
+    /// A worktree merge waits for the person (`merge = "approve"`); stored
+    /// like a question, and found again when the call runs again.
     pub async fn wait_merge(&self, id: &str, summary: Value) -> Result<MergeAnswer, String> {
+        let stored = self.stored_wait(id, "merge").await.filter(|w| w["branch"] == summary["branch"]);
+        if let Some(d) = stored.as_ref().map(|w| w["decision"].clone()).filter(|d| !d.is_null()) {
+            self.done_waiting(id).await;
+            return Ok(match d.as_str() {
+                Some("merge") => MergeAnswer::Merge,
+                _ => MergeAnswer::Reject(d["reject"].as_str().unwrap_or("not now").to_string()),
+            });
+        }
         let (tx, rx) = oneshot::channel();
         self.merges.lock().unwrap().insert(id.into(), tx);
         let mut wait = summary;
         wait["kind"] = json!("merge");
         self.store.set_state(id, "waiting", Some(&wait)).await.map_err(|e| e.to_string())?;
         self.task_changed(id).await;
-        let t = self.task(id).await?;
-        self.notify("waiting", Some(&t), &format!("{}: ready to merge", t.title), wait["branch"].as_str().unwrap_or("")).await;
-        let a = rx.await.map_err(|_| "the merge went unanswered (the task was cancelled, or reagent restarted)".to_string());
-        let _ = self.store.set_state(id, "running", None).await;
-        self.task_changed(id).await;
+        if stored.is_none() {
+            let t = self.task(id).await?;
+            self.notify("waiting", Some(&t), &format!("{}: ready to merge", t.title), wait["branch"].as_str().unwrap_or("")).await;
+        }
+        let a = rx.await.map_err(|_| "the merge went unanswered (the task was cancelled)".to_string());
+        self.done_waiting(id).await;
         a
     }
 
-    pub fn decide_merge(&self, id: &str, a: MergeAnswer) -> Result<(), String> {
-        let tx = self.merges.lock().unwrap().remove(id).ok_or("the task doesn't wait for a merge")?;
-        tx.send(a).map_err(|_| "the task stopped waiting".to_string())
+    /// The person decides a merge: to the waiting call; kept when nothing waits.
+    pub async fn decide_merge(&self, id: &str, a: MergeAnswer) -> Result<(), String> {
+        let waiter = self.merges.lock().unwrap().remove(id);
+        let stored = match waiter {
+            Some(tx) => match tx.send(a) {
+                Ok(()) => return Ok(()),
+                Err(a) => a,
+            },
+            None => a,
+        };
+        let mut w = self.stored_wait(id, "merge").await.ok_or("the task doesn't wait for a merge")?;
+        w["decision"] = match stored {
+            MergeAnswer::Merge => json!("merge"),
+            MergeAnswer::Reject(m) => json!({"reject": m}),
+        };
+        self.store.set_state(id, "waiting", Some(&w)).await.map_err(|e| e.to_string())?;
+        self.task_changed(id).await;
+        Ok(())
     }
 
-    pub fn waits_for_merge(&self, id: &str) -> bool {
-        self.merges.lock().unwrap().contains_key(id)
+    pub async fn waits_for_merge(&self, id: &str) -> bool {
+        self.merges.lock().unwrap().contains_key(id) || self.stored_wait(id, "merge").await.is_some()
     }
 
     // --- following tasks ------------------------------------------------
@@ -759,6 +811,21 @@ impl App {
                 continue;
             }
             let held = self.questions.lock().unwrap().contains_key(&t.id) || self.merges.lock().unwrap().contains_key(&t.id);
+            // A stored question or merge: its call still runs (or runs again after a
+            // restart). When it's gone, what was decided goes to the task as a message.
+            let stored = wait.as_ref().filter(|w| w["kind"] == "question" || w["kind"] == "merge").cloned();
+            let held = held || (stored.is_some() && (phase == "tools" || a["paused"] == true));
+            if let Some(w) = stored.filter(|_| !held && (phase == "idle" || phase == "thinking")) {
+                let note = match (w["kind"].as_str(), w["answer"].as_str(), &w["decision"]) {
+                    (Some("question"), Some(ans), _) => Some(format!("[the answer to your question \"{}\"] {ans}", w["question"].as_str().unwrap_or(""))),
+                    (Some("merge"), _, d) if d == "merge" => Some(format!("[the person approved merging {}: call git.worktree_merge again]", w["branch"].as_str().unwrap_or(""))),
+                    (Some("merge"), _, d) if !d.is_null() => Some(format!("[the person sent the merge of {} back: {}]", w["branch"].as_str().unwrap_or(""), d["reject"].as_str().unwrap_or(""))),
+                    _ => None,
+                };
+                if let Some(n) = note {
+                    let _ = self.message(&t.id, &n).await;
+                }
+            }
             if !a["awaiting_approval"].is_null() {
                 let call = a["awaiting_approval"].get("call").cloned().unwrap_or(a["awaiting_approval"].clone());
                 let call_id = call["id"].as_str().unwrap_or_default().to_string();
@@ -770,7 +837,10 @@ impl App {
                     self.notify("waiting", Some(&t), &format!("{} needs approval", t.title), &format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or(""))).await;
                 }
             } else if a["paused"] == true {
-                if wait.as_ref().is_none_or(|w| w["kind"] != "budget") {
+                // Paused while it waits for the person (a stop, say): it still waits.
+                if wait.as_ref().is_some_and(|w| w["kind"] == "question" || w["kind"] == "merge") {
+                    state = "waiting".into();
+                } else if wait.as_ref().is_none_or(|w| w["kind"] != "budget") {
                     state = "paused".into();
                     wait = None;
                 }

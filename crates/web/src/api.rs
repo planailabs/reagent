@@ -369,7 +369,7 @@ async fn task(State(s): State<S>, Path(id): Path<String>) -> R {
     let kids = db(s.w.app.store.tasks(None, Some(&id), false, 100).await)?;
     let mut v = json!(t);
     v["subtasks"] = json!(kids);
-    v["waits_for_merge"] = json!(s.w.app.waits_for_merge(&id));
+    v["waits_for_merge"] = json!(s.w.app.waits_for_merge(&id).await);
     v["todos"] = json!(db(s.w.app.store.todos(&id).await)?);
     Ok(Json(v))
 }
@@ -461,7 +461,7 @@ struct MergeQ {
 }
 
 async fn merge(State(s): State<S>, Path(id): Path<String>, Json(m): Json<MergeQ>) -> R {
-    s.w.app.decide_merge(&id, if m.merge { MergeAnswer::Merge } else { MergeAnswer::Reject(if m.message.is_empty() { "not now".into() } else { m.message }) })?;
+    s.w.app.decide_merge(&id, if m.merge { MergeAnswer::Merge } else { MergeAnswer::Reject(if m.message.is_empty() { "not now".into() } else { m.message }) }).await?;
     Ok(Json(json!({"ok": true})))
 }
 

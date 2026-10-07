@@ -12,11 +12,13 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("fs", &["read", "grep", "glob", "ls"]),
     ("shell", &["jobs", "job_output"]),
     ("pty", &["pty_screen", "ptys"]),
-    ("git", &["worktree_status", "worktree_diff"]),
+    // worktree_merge and ask run again after a restart: a merge already made is
+    // "nothing to merge", and a stored question or decision is found again.
+    ("git", &["worktree_status", "worktree_diff", "worktree_merge"]),
     ("memory", &["memory_read", "memory_search"]),
     ("skills", &["skill_list", "skill_load"]),
     ("tasks", &["task_list", "cron_list"]),
-    ("ask", &[]),
+    ("ask", &["ask"]),
     ("todo", &["todo_list"]),
     ("secrets", &["secrets_list", "secrets_get"]),
 ];

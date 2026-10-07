@@ -213,7 +213,7 @@ impl ReagentTools {
     #[tool(description = "Decide a merge a task waits for: merge, or send it back with a message.")]
     async fn task_merge(&self, Parameters(a): Parameters<Merge>) -> Result<String, String> {
         let ans = if a.merge { MergeAnswer::Merge } else { MergeAnswer::Reject(a.message.unwrap_or_else(|| "not now".into())) };
-        self.0.decide_merge(&a.task, ans)?;
+        self.0.decide_merge(&a.task, ans).await?;
         Ok("decided".into())
     }
 

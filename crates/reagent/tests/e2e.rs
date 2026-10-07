@@ -127,7 +127,7 @@ async fn a_worktree_is_merged_once_the_person_approves() {
     let w = r.until(&t.id, "the merge to wait", |t| t.wait.as_ref().is_some_and(|w| w.0["kind"] == "merge")).await;
     assert!(w.wait.unwrap().0["stat"].as_str().unwrap().contains("feature.txt"));
     assert!(!r.project.path().join("feature.txt").exists(), "not merged before the approval");
-    r.run.app.decide_merge(&t.id, reagent_tools::app::MergeAnswer::Merge).unwrap();
+    r.run.app.decide_merge(&t.id, reagent_tools::app::MergeAnswer::Merge).await.unwrap();
     let t = r.done(&t.id).await;
     assert_eq!(std::fs::read_to_string(r.project.path().join("feature.txt")).unwrap(), "new\n");
     assert!(t.worktree.is_none() && t.cwd == r.project.path().canonicalize().unwrap().display().to_string(), "back in the project");
