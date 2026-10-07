@@ -39,6 +39,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: McpCmd,
     },
+    /// Secrets tasks' commands get as environment variables (every project's, or one project's with --project).
+    Secret {
+        #[command(subcommand)]
+        cmd: SecretCmd,
+    },
     /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
     Token {
         #[command(subcommand)]
@@ -84,6 +89,33 @@ enum McpCmd {
     },
     List,
     Remove { name: String },
+}
+
+#[derive(Subcommand)]
+enum SecretCmd {
+    /// Set one: its value from stdin (one line, or all of it with --multiline).
+    Set {
+        name: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        multiline: bool,
+    },
+    List {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Print one's value.
+    Get {
+        name: String,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    Remove {
+        name: String,
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -190,6 +222,41 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 }
                 McpCmd::Remove { name } => {
                     anyhow::ensure!(store.remove_mcp_server(&name).await?, "no server called {name:?}");
+                    println!("removed {name}");
+                }
+            }
+            Ok(())
+        }
+        Cmd::Secret { cmd } => {
+            std::fs::create_dir_all(&data)?;
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let check = |p: &Option<String>| p.clone();
+            match cmd {
+                SecretCmd::Set { name, project, multiline } => {
+                    if let Some(p) = &project {
+                        anyhow::ensure!(store.project(p).await?.is_some(), "no project {p:?}");
+                    }
+                    let mut value = String::new();
+                    if multiline {
+                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut value)?;
+                    } else {
+                        std::io::stdin().read_line(&mut value)?;
+                        value = value.trim_end_matches(['\r', '\n']).to_string();
+                    }
+                    store.set_secret(check(&project).as_deref(), &name, &value).await.map_err(anyhow::Error::msg)?;
+                    println!("set {name}{}", project.map(|p| format!(" for {p}")).unwrap_or_default());
+                }
+                SecretCmd::List { project } => {
+                    for s in store.secrets(project.as_deref()).await.map_err(anyhow::Error::msg)? {
+                        println!("{}\t{}", s.name, s.project.as_deref().unwrap_or("(every project)"));
+                    }
+                }
+                SecretCmd::Get { name, project } => {
+                    let s = store.secrets(project.as_deref()).await.map_err(anyhow::Error::msg)?.into_iter().find(|s| s.name == name).ok_or_else(|| anyhow::anyhow!("no secret {name:?}"))?;
+                    println!("{}", s.value);
+                }
+                SecretCmd::Remove { name, project } => {
+                    anyhow::ensure!(store.remove_secret(project.as_deref(), &name).await?, "no secret {name:?}");
                     println!("removed {name}");
                 }
             }

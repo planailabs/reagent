@@ -90,6 +90,7 @@ pub fn routes() -> Router<S> {
         .route("/api/ptys/{id}", get(pty_ws).delete(pty_close))
         .route("/api/mcp", get(mcp_servers))
         .route("/api/mcp/{name}", put(put_mcp).delete(remove_mcp))
+        .route("/api/secrets", get(secrets).put(set_secret).delete(remove_secret))
         .route("/api/tokens", get(tokens).post(add_token))
         .route("/api/tokens/{name}", delete(revoke_token))
 }
@@ -536,6 +537,47 @@ async fn remove_mcp(State(s): State<S>, Path(name): Path<String>) -> R {
     Ok(Json(json!({"removed": gone})))
 }
 
+// --- secrets ----------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SecretQ {
+    /// A project's own; none or `global`: every project's.
+    project: Option<String>,
+    name: Option<String>,
+}
+
+fn scope(p: &Option<String>) -> Option<&str> {
+    p.as_deref().filter(|p| *p != "global" && !p.is_empty())
+}
+
+/// The person sees them all, values too.
+async fn secrets(State(s): State<S>, Query(q): Query<SecretQ>) -> R {
+    if let Some(p) = scope(&q.project) {
+        s.w.app.project(p).await?;
+    }
+    Ok(Json(json!(s.w.app.store.secrets(scope(&q.project)).await?)))
+}
+
+#[derive(Deserialize)]
+struct SetSecret {
+    project: Option<String>,
+    name: String,
+    value: String,
+}
+
+async fn set_secret(State(s): State<S>, Json(b): Json<SetSecret>) -> R {
+    if let Some(p) = scope(&b.project) {
+        s.w.app.project(p).await?;
+    }
+    s.w.app.store.set_secret(scope(&b.project), b.name.trim(), &b.value).await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn remove_secret(State(s): State<S>, Query(q): Query<SecretQ>) -> R {
+    let name = q.name.as_deref().ok_or_else(|| E(StatusCode::BAD_REQUEST, "which secret?".into()))?;
+    Ok(Json(json!({"removed": db(s.w.app.store.remove_secret(scope(&q.project), name).await)?})))
+}
+
 // --- API tokens (the MCP API) ---------------------------------------------
 
 async fn tokens(State(s): State<S>) -> R {
@@ -577,19 +619,47 @@ struct OutQ {
     pattern: Option<String>,
 }
 
+/// The project whose secrets a job's output is masked with.
+async fn job_project(s: &S, job: &str) -> Option<String> {
+    let owner = s.w.app.sup.job(job).await.ok()?.owner?;
+    Some(s.w.app.task(&owner).await.ok()?.project)
+}
+
 async fn job_output(State(s): State<S>, Path(id): Path<String>, Query(q): Query<OutQ>) -> R {
-    Ok(Json(sup::output(&s.w.app.paths.data, &id, q.from, q.to, q.tail, q.pattern.as_deref())?))
+    let mut v = sup::output(&s.w.app.paths.data, &id, q.from, q.to, q.tail, q.pattern.as_deref())?;
+    // Secret values never leave as they are.
+    if let Some(p) = job_project(&s, &id).await {
+        for key in ["text", "matches"] {
+            for l in v[key].as_array_mut().into_iter().flatten() {
+                if let Some(t) = l["text"].as_str() {
+                    l["text"] = json!(s.w.app.mask(&p, t).await);
+                }
+            }
+        }
+    }
+    Ok(Json(v))
 }
 
 /// A job's output as it comes (SSE), ending with its end.
 async fn job_stream(State(s): State<S>, Path(id): Path<String>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, E> {
     let rx = sup::client::stream(&s.w.app.paths.socket, Some(&id), None).await?;
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|e| async move {
+    let project = job_project(&s, &id).await;
+    let app = s.w.app.clone();
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |e| {
+        let (app, project) = (app.clone(), project.clone());
+        async move {
         match e.ok()? {
-            sup::Event::Output { text, .. } => Some(Ok(Event::default().event("output").data(json!({"text": text}).to_string()))),
+            sup::Event::Output { text, .. } => {
+                let text = match &project {
+                    Some(p) => app.mask(p, &text).await,
+                    None => text,
+                };
+                Some(Ok(Event::default().event("output").data(json!({"text": text}).to_string())))
+            }
             sup::Event::Exit { job } => Some(Ok(Event::default().event("exit").data(json!(job).to_string()))),
             sup::Event::Backgrounded { job } => Some(Ok(Event::default().event("backgrounded").data(json!({"job": job}).to_string()))),
             _ => None,
+        }
         }
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
@@ -626,7 +696,7 @@ async fn pty_open(State(s): State<S>, Path(id): Path<String>, Json(o): Json<PtyO
     let t = s.w.app.task(&id).await?;
     let p = s.w.app.project(&t.project).await?;
     let cmd = reagent_tools::devshell::wrap_terminal(&p, std::path::Path::new(&t.cwd), o.cmd.as_deref(), o.devshell.unwrap_or(true));
-    let m = s.w.app.sup.pty_open(sup::PtyArgs { cmd, cwd: t.cwd.clone(), env: std::env::var("PATH").ok().map(|p| ("PATH".to_string(), p)).into_iter().chain([("REAGENT_TASK".to_string(), t.id.clone())]).collect(), owner: Some(t.id), cols: o.cols.unwrap_or(120), rows: o.rows.unwrap_or(32) }).await?;
+    let m = s.w.app.sup.pty_open(sup::PtyArgs { cmd, cwd: t.cwd.clone(), env: reagent_tools::mcp::shell::env(&s.w.app, &t, &p).await, owner: Some(t.id), cols: o.cols.unwrap_or(120), rows: o.rows.unwrap_or(32) }).await?;
     Ok(Json(json!(m)))
 }
 

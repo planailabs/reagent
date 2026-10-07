@@ -18,6 +18,7 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("tasks", &["task_list", "cron_list"]),
     ("ask", &[]),
     ("todo", &["todo_list"]),
+    ("secrets", &["secrets_list", "secrets_get"]),
 ];
 
 /// The env var the node reads the MCP servers' token from.
@@ -131,7 +132,7 @@ pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], j
             format!("  params = {{ {} }}\n", kv.join(", "))
         };
         out.push_str(&format!(
-            "agent \"model-{name}\" {{\n  description = {desc}\n  credential {{\n    base_url = {url}{env}\n  }}\n  model = {model}\n{params}  system_prompt = {prompt}\n  executor {{ internal = true }}\n  nodes = [\"local\"]\n  spawns = []\n{history}{grep}  hooks = [\"policy\", \"context\", \"checkpoint\"]\n  compact = {{ at_tokens = {at}, keep = 8 }}\n}}\n\nmixture {mix} {{\n  agent = \"model-{name}\"\n  mcp = [{mcps}]\n}}\n\n",
+            "agent \"model-{name}\" {{\n  description = {desc}\n  credential {{\n    base_url = {url}{env}\n  }}\n  model = {model}\n{params}  system_prompt = {prompt}\n  executor {{ internal = true }}\n  nodes = [\"local\"]\n  spawns = []\n{history}{grep}  hooks = [\"policy\", \"mask\", \"context\", \"checkpoint\"]\n  compact = {{ at_tokens = {at}, keep = 8 }}\n}}\n\nmixture {mix} {{\n  agent = \"model-{name}\"\n  mcp = [{mcps}]\n}}\n\n",
             desc = hcl_str(&format!("a reagent task on {}", p.model)),
             url = hcl_str(&prov.base_url),
             model = hcl_str(&p.model),
@@ -151,7 +152,7 @@ pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], j
             out.push_str(&format!("mixture {} {{\n  agent = \"model-{name}\"\n  mcp = [{}]\n}}\n\n", hcl_str(&project_mixture(name, proj)), all.join(", ")));
         }
     }
-    for (name, idem) in SERVERS.iter().map(|(n, i)| (*n, *i)).chain(std::iter::once(("hooks", &["policy", "context", "checkpoint"][..]))) {
+    for (name, idem) in SERVERS.iter().map(|(n, i)| (*n, *i)).chain(std::iter::once(("hooks", &["policy", "mask", "context", "checkpoint"][..]))) {
         out.push_str(&format!(
             "mcp {n} {{\n  url = {url}\n  credential = {{ header = \"Authorization\", env = \"{TOKEN_ENV}\", prefix = \"Bearer \" }}\n  nodes = [\"local\"]\n  idempotent = [{idem}]\n  lazy = false\n}}\n\n",
             n = hcl_str(name),
@@ -165,6 +166,7 @@ pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], j
     out.push_str(
         "hook \"policy\" {\n  on = \"pre_tool\"\n  run { mcp = { server = \"hooks\", tool = \"policy\" } }\n  timeout = \"30s\"\n  on_lost = \"deny\"\n  idempotent = true\n}\n\n\
          hook \"context\" {\n  on = \"pre_model\"\n  run { mcp = { server = \"hooks\", tool = \"context\" } }\n  timeout = \"15s\"\n  on_lost = \"allow\"\n  idempotent = true\n}\n\n\
+         hook \"mask\" {\n  on = \"post_tool\"\n  run { mcp = { server = \"hooks\", tool = \"mask\" } }\n  timeout = \"15s\"\n  on_lost = \"allow\"\n  idempotent = true\n}\n\n\
          hook \"checkpoint\" {\n  on = \"pre_compact\"\n  run { mcp = { server = \"hooks\", tool = \"checkpoint\" } }\n  timeout = \"15s\"\n  on_lost = \"allow\"\n  idempotent = true\n}\n",
     );
     out
@@ -182,7 +184,7 @@ mod tests {
         let spec = subnet_cluster::Cluster::parse(&[("cluster.hcl", &text)]).unwrap_or_else(|e| panic!("{e}\n{text}"));
         let a = &spec.agents["model-default"];
         assert_eq!(a.model, "deepseek-chat");
-        assert_eq!(a.hooks, ["policy", "context", "checkpoint"]);
+        assert_eq!(a.hooks, ["policy", "mask", "context", "checkpoint"]);
         assert!(a.search_history && a.system_prompt.contains("You are a task in reagent"));
         assert_eq!(spec.mixtures["task-default"].mcp.len(), SERVERS.len());
         assert_eq!(spec.mcps["fs"].url.as_deref(), Some("http://127.0.0.1:9999/mcp/fs"));

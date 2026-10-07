@@ -134,3 +134,35 @@ async fn a_tasks_todos() {
     s.clear_todos(&t.id).await.unwrap();
     assert!(s.todos(&t.id).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn secrets_are_encrypted_and_a_projects_own_win() {
+    let (s, d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    s.set_secret(None, "GH_TOKEN", "ghp_global").await.unwrap();
+    s.set_secret(None, "NPM_TOKEN", "npm_1").await.unwrap();
+    s.set_secret(Some("site"), "GH_TOKEN", "ghp_site").await.unwrap();
+    s.set_secret(Some("site"), "GH_TOKEN", "ghp_site_2").await.unwrap();
+    assert!(s.set_secret(None, "1BAD", "x").await.is_err() && s.set_secret(None, "A-B", "x").await.is_err());
+    let all = s.secrets_for("site").await.unwrap();
+    assert_eq!(all.iter().map(|x| (x.name.as_str(), x.value.as_str(), x.project.as_deref())).collect::<Vec<_>>(), [("GH_TOKEN", "ghp_site_2", Some("site")), ("NPM_TOKEN", "npm_1", None)]);
+    assert_eq!(s.secrets(None).await.unwrap()[0].value, "ghp_global");
+    // Not readable in the database file, and the key file is the owner's only.
+    let raw = std::fs::read(d.path().join("reagent.db")).unwrap_or_default();
+    let wal = std::fs::read(d.path().join("reagent.db-wal")).unwrap_or_default();
+    assert!(!String::from_utf8_lossy(&raw).contains("ghp_site_2") && !String::from_utf8_lossy(&wal).contains("ghp_site_2"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(d.path().join("secret.key")).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    // The same key next time; another key can't read them.
+    let again = Store::open(&d.path().join("reagent.db")).await.unwrap();
+    assert_eq!(again.secrets(Some("site")).await.unwrap()[0].value, "ghp_site_2");
+    std::fs::write(d.path().join("secret.key"), [7u8; 32]).unwrap();
+    let wrong = Store::open(&d.path().join("reagent.db")).await.unwrap();
+    assert!(wrong.secrets(None).await.unwrap_err().contains("can't be decrypted"));
+    assert!(s.remove_secret(Some("site"), "GH_TOKEN").await.unwrap());
+    assert_eq!(s.secrets_for("site").await.unwrap()[0].value, "ghp_global");
+    s.remove_project("site").await.unwrap();
+}

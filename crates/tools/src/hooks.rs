@@ -73,6 +73,12 @@ pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String
             break;
         }
     }
+    // The secrets its commands get (names only).
+    if let Ok(s) = app.store.secrets_for(&p.slug).await
+        && !s.is_empty()
+    {
+        parts.push(("secrets".into(), format!("Environment variables your commands get (secrets; secrets.secrets_get reads one; values in tool results show as ***): {}", s.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))));
+    }
     // The todo list, so a summary or a restart never loses the plan.
     let todos = app.store.todos(&task.id).await.unwrap_or_default();
     if !todos.is_empty() {
@@ -113,6 +119,20 @@ impl HookTools {
             Action::Deny => json!({"decision": "deny", "reason": format!("not allowed in {}: {why}", p.name)}),
         }
         .to_string())
+    }
+
+    #[tool(description = "post_tool: secret values in a result become *** (the secrets tools' own results stay).")]
+    async fn mask(&self, Parameters(q): Parameters<Question>) -> Result<String, String> {
+        let tool = q.input["tool"].as_str().unwrap_or_default().replace("__", ".");
+        let Ok(t) = self.0.task_of_agent(&q.agent.id).await else {
+            return Ok(json!({"decision": "allow"}).to_string());
+        };
+        let result = q.input["result"].as_str().unwrap_or_default();
+        if tool.starts_with("secrets.") || result.is_empty() {
+            return Ok(json!({"decision": "allow"}).to_string());
+        }
+        let masked = self.0.mask(&t.project, result).await;
+        Ok(if masked == result { json!({"decision": "allow"}) } else { json!({"decision": "rewrite", "text": masked}) }.to_string())
     }
 
     #[tool(description = "pre_model: the memory indexes, AGENTS.md and the skills list, when they're new to the task.")]

@@ -95,7 +95,7 @@ A task is a subnet agent spawned (as root) from the mixture `task-<profile>`, wi
 - **Long calls:** reagent's MCP sessions have no idle timeout (rmcp's default of 5 minutes ended a session with a question still open in it, and the node waited for an answer that couldn't come); the MCP API's sessions end after 6 idle hours.
 - **Waiting across a restart:** a question or a merge waits in the tool call; after a restart that call has been aborted, the task hears so and may ask again. An approval survives (it's subnet's).
 
-**The agent type.** reagent writes the cluster from `reagent.hcl` at every start: node `local`; per profile an agent `model-<profile>` (its provider's URL and key env, model, params, the system prompt `prompts/task.md`, `search_history`, `grep_results`, hooks `policy`, `context`, `checkpoint`, compaction) and a mixture `task-<profile>` with reagent's servers; the servers (`url`, a bearer token from `REAGENT_MCP_TOKEN`, their idempotent tools); the hooks. `spawns = []`: tasks start subtasks through reagent, not subnet's `spawn_agent`.
+**The agent type.** reagent writes the cluster from `reagent.hcl` at every start: node `local`; per profile an agent `model-<profile>` (its provider's URL and key env, model, params, the system prompt `prompts/task.md`, `search_history`, `grep_results`, hooks `policy`, `mask`, `context`, `checkpoint`, compaction) and a mixture `task-<profile>` with reagent's servers; the servers (`url`, a bearer token from `REAGENT_MCP_TOKEN`, their idempotent tools); the hooks. `spawns = []`: tasks start subtasks through reagent, not subnet's `spawn_agent`.
 
 ## Tools
 
@@ -130,6 +130,8 @@ Commands get the project's env, `REAGENT_TASK`, `REAGENT_PROJECT`, and `PAGER=ca
 **Tasks (`tasks`)**: `task_spawn(title, prompt, project?, profile?, skills?, budget?)`, `task_list(project?, all?)`, `task_message(task, text)`, `task_wait(task, timeout?)`, `search_history(pattern, task?, project?, page?)` (other tasks' whole conversations: one task paged, or every task of a project or of all, a few hits each), `cron_list()`, `cron_add(expr, title, prompt, tz?, overlap?, profile?, skills?)`, `cron_remove(id)`.
 
 **Asking (`ask`)**: `ask(question, options?)`: the task waits for the answer (a notification goes out).
+
+**Secrets (`secrets`)**: `secrets_list()` (names, and whose), `secrets_get(name)` (the value). The person keeps secrets (tokens, keys) for every project and per project (a project's own win over every project's of the same name) in the web UI (settings: every project's; a project's **secrets** tab), the API (`/api/secrets`, values included: the person sees all) and `reagent secret set|list|get|remove [--project]`. They're encrypted in `reagent.db` (XChaCha20-Poly1305) with `secret.key` next to it (made once, the owner's only); a backup of the database alone doesn't give them away. A task's commands and terminals (and the person's terminals for it) get them as environment variables; the context names them; values in any other tool result are replaced by `***` (the `mask` hook, post_tool), and so are they in job-end messages and job logs served by the API (the log on disk keeps them).
 
 **Todos (`todo`)**: `todo_list()`, `todo_add(items)`, `todo_update(id, status?, text?)` (`pending`, `in_progress`, `done`, `cancelled`), `todo_clear()`: the task's own plan, kept in `reagent.db` (`todos`), so restarts and summaries don't lose it. The context hook shows the list again whenever it changed; the task view shows it live, and the API and the MCP API's `task_get` give it.
 

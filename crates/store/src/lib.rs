@@ -262,6 +262,40 @@ pub struct Notification {
 #[derive(Clone)]
 pub struct Store {
     pub pool: SqlitePool,
+    /// The key secrets are encrypted with (`secret.key` next to the database).
+    key: [u8; 32],
+}
+
+/// A secret as the person sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Secret {
+    pub name: String,
+    pub value: String,
+    /// The project it's for (none: every project).
+    pub project: Option<String>,
+    pub updated: i64,
+}
+
+/// An environment variable's name: letters, digits and _, not first a digit.
+pub fn check_secret_name(n: &str) -> Result<(), String> {
+    let ok = !n.is_empty() && n.len() <= 100 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !n.starts_with(|c: char| c.is_ascii_digit());
+    if ok { Ok(()) } else { Err(format!("{n:?}: an environment variable's name (letters, digits, _)")) }
+}
+
+/// The key file: made the first time (32 random bytes, only the owner may read it).
+fn load_key(path: &Path) -> anyhow::Result<[u8; 32]> {
+    if let Ok(b) = std::fs::read(path) {
+        return b.try_into().map_err(|_| anyhow::anyhow!("{}: not a key (32 bytes)", path.display()));
+    }
+    use chacha20poly1305::aead::{KeyInit, OsRng};
+    let key: [u8; 32] = chacha20poly1305::XChaCha20Poly1305::generate_key(&mut OsRng).into();
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?.write_all(&key)?;
+    }
+    Ok(key)
 }
 
 type R<T> = Result<T, sqlx::Error>;
@@ -276,7 +310,8 @@ impl Store {
         // ponytail: one connection, every query serialised; plenty for one user.
         let pool = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Store { pool })
+        let key = load_key(&path.with_file_name("secret.key"))?;
+        Ok(Store { pool, key })
     }
 
     // --- projects -------------------------------------------------------
@@ -626,6 +661,63 @@ impl Store {
 
     async fn mcp_changed(&self) -> R<()> {
         self.set_setting("mcp_changed", &chrono::Utc::now().timestamp_micros().to_string()).await
+    }
+
+    // --- secrets --------------------------------------------------------
+
+    fn cipher(&self) -> chacha20poly1305::XChaCha20Poly1305 {
+        use chacha20poly1305::KeyInit;
+        chacha20poly1305::XChaCha20Poly1305::new((&self.key).into())
+    }
+
+    /// Sets a secret (every project's, or one project's).
+    pub async fn set_secret(&self, project: Option<&str>, name: &str, value: &str) -> Result<(), String> {
+        use chacha20poly1305::aead::{Aead, AeadCore, OsRng};
+        check_secret_name(name)?;
+        let nonce = chacha20poly1305::XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let enc = self.cipher().encrypt(&nonce, value.as_bytes()).map_err(|e| e.to_string())?;
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx::query("delete from secrets where coalesce(project, '') = coalesce($1, '') and name = $2").bind(project).bind(name).execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        sqlx::query("insert into secrets (project, name, nonce, value) values ($1, $2, $3, $4)")
+            .bind(project)
+            .bind(name)
+            .bind(nonce[..].to_vec())
+            .bind(enc)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+
+    pub async fn remove_secret(&self, project: Option<&str>, name: &str) -> R<bool> {
+        Ok(sqlx::query("delete from secrets where coalesce(project, '') = coalesce($1, '') and name = $2").bind(project).bind(name).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    /// The secrets of one scope: every project's (`None`) or one project's own.
+    pub async fn secrets(&self, project: Option<&str>) -> Result<Vec<Secret>, String> {
+        use chacha20poly1305::aead::Aead;
+        let rows: Vec<(Option<String>, String, Vec<u8>, Vec<u8>, i64)> = sqlx::query_as("select project, name, nonce, value, updated from secrets where coalesce(project, '') = coalesce($1, '') order by name")
+            .bind(project)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(|(project, name, nonce, value, updated)| {
+                let plain = self.cipher().decrypt(nonce.as_slice().into(), value.as_slice()).map_err(|_| format!("{name}: can't be decrypted (another secret.key?)"))?;
+                Ok(Secret { name, value: String::from_utf8_lossy(&plain).into_owned(), project, updated })
+            })
+            .collect()
+    }
+
+    /// What a project's commands get: every project's secrets, its own over them.
+    pub async fn secrets_for(&self, project: &str) -> Result<Vec<Secret>, String> {
+        let mut all = self.secrets(None).await?;
+        for own in self.secrets(Some(project)).await? {
+            all.retain(|s| s.name != own.name);
+            all.push(own);
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(all)
     }
 
     // --- todos ----------------------------------------------------------

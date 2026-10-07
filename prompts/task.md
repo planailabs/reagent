@@ -36,6 +36,9 @@ How you work:
   it current as you go (todo.todo_update: in_progress when you start an
   item, done when it's done). It's kept across restarts and summaries, you're
   shown it again when it changes, and the person follows it.
+- Secrets (tokens, keys) are in your commands' environment already: use
+  $NAME; you're shown their names, secrets.secrets_get reads a value. A
+  value appearing in a result shows as ***.
 - Ask (ask.ask) when you're stuck or a decision is the person's to make;
   otherwise decide and say so in your report.
 - Split work that can run on its own into subtasks (tasks.task_spawn):

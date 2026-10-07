@@ -118,8 +118,13 @@ async fn place(app: &App, t: &Task, p: &Project, tool: &str, cwd: Option<&str>) 
     Ok(resolve(app, t, p, tool, cwd.unwrap_or("."), false).await?.display().to_string())
 }
 
-fn env(t: &Task, p: &Project) -> Vec<(String, String)> {
+/// What a task's commands get: the project's env, its secrets, reagent's PATH, who it is.
+pub async fn env(app: &App, t: &Task, p: &Project) -> Vec<(String, String)> {
     let mut e: Vec<(String, String)> = p.env.0.iter().map(|(k, v)| (k.clone(), v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))).collect();
+    match app.store.secrets_for(&p.slug).await {
+        Ok(secrets) => e.extend(secrets.into_iter().map(|s| (s.name, s.value))),
+        Err(err) => tracing::error!(project = %p.slug, error = %err, "secrets can't be read: commands run without them"),
+    }
     // reagent's PATH as it is now: the supervisor may be older (it outlives
     // restarts) and its own PATH stale.
     if let Ok(path) = std::env::var("PATH") {
@@ -160,15 +165,22 @@ impl ShellTools {
         let cwd = place(&self.0, &t, &p, "shell.exec", a.cwd.as_deref()).await?;
         let started = std::time::Instant::now();
         let cmd = crate::devshell::wrap(&p, std::path::Path::new(&cwd), &a.cmd, a.devshell.unwrap_or(true));
-        let j = self.0.sup.spawn(SpawnArgs { cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), name: Some(a.cmd.clone()), fg: true, stdin: a.stdin }).await?;
+        let j = self.0.sup.spawn(SpawnArgs { cmd, cwd, env: env(&self.0, &t, &p).await, owner: Some(t.id.clone()), name: Some(a.cmd.clone()), fg: true, stdin: a.stdin }).await?;
         self.0.fg_waiting.lock().unwrap().insert(j.id.clone());
         let r = self.0.sup.wait(&j.id, a.timeout.unwrap_or(FG_TIMEOUT).clamp(1, 24 * 3600) * 1000).await;
-        self.0.fg_waiting.lock().unwrap().remove(&j.id);
-        let (w, m) = r?;
+        let (w, m) = match r {
+            Ok(x) => x,
+            Err(e) => {
+                self.0.fg_waiting.lock().unwrap().remove(&j.id);
+                return Err(e);
+            }
+        };
         let secs = started.elapsed().as_secs_f32();
         match w {
             Waited::Exited => {
+                // Acknowledged before it stops counting as waited for: its end isn't also a message.
                 let _ = self.0.sup.ack(&j.id).await;
+                self.0.fg_waiting.lock().unwrap().remove(&j.id);
                 let how = match (m.exit, m.signal) {
                     (Some(c), _) => format!("exit {c}"),
                     (_, Some(s)) => format!("killed by signal {s}"),
@@ -180,6 +192,8 @@ impl ShellTools {
                 if w == Waited::Timeout {
                     let _ = self.0.sup.background(&j.id).await;
                 }
+                // In the background now: its end comes as a message.
+                self.0.fg_waiting.lock().unwrap().remove(&j.id);
                 Ok(format!(
                     "still running after {secs:.0}s: it goes on in the background as job {} (you get a message when it ends; shell.job_output reads it, shell.job_kill stops it)\noutput so far:\n{}",
                     j.id,
@@ -195,7 +209,7 @@ impl ShellTools {
         let cwd = place(&self.0, &t, &p, "shell.exec_bg", a.cwd.as_deref()).await?;
         let cmd = crate::devshell::wrap(&p, std::path::Path::new(&cwd), &a.cmd, a.devshell.unwrap_or(true));
         let name = a.name.or_else(|| (cmd != a.cmd).then(|| a.cmd.clone()));
-        let j = self.0.sup.spawn(SpawnArgs { cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), name, fg: false, stdin: None }).await?;
+        let j = self.0.sup.spawn(SpawnArgs { cmd, cwd, env: env(&self.0, &t, &p).await, owner: Some(t.id.clone()), name, fg: false, stdin: None }).await?;
         Ok(format!("started job {} (pid {})", j.id, j.pid.unwrap_or(0)))
     }
 
@@ -294,7 +308,7 @@ impl PtyTools {
         let (t, p) = caller(&self.0, &ctx).await?;
         let cwd = place(&self.0, &t, &p, "pty.pty_open", a.cwd.as_deref()).await?;
         let cmd = crate::devshell::wrap_terminal(&p, std::path::Path::new(&cwd), a.cmd.as_deref(), a.devshell.unwrap_or(true));
-        let m = self.0.sup.pty_open(PtyArgs { cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), cols: a.cols.unwrap_or(120), rows: a.rows.unwrap_or(32) }).await?;
+        let m = self.0.sup.pty_open(PtyArgs { cmd, cwd, env: env(&self.0, &t, &p).await, owner: Some(t.id.clone()), cols: a.cols.unwrap_or(120), rows: a.rows.unwrap_or(32) }).await?;
         let screen = self.0.sup.pty_screen(&m.id, 500, 0).await?;
         Ok(format!("terminal {} ({}x{})\n{}", m.id, m.cols, m.rows, screen_text(&screen)))
     }

@@ -574,6 +574,20 @@ impl App {
         Ok(json!({"pattern": pattern, "tasks": out}))
     }
 
+    /// `text` with a project's secret values (4 characters or longer) as ***.
+    pub async fn mask(&self, project: &str, text: &str) -> String {
+        let mut values: Vec<String> = self.store.secrets_for(project).await.unwrap_or_default().into_iter().map(|s| s.value).filter(|v| v.chars().count() >= 4).collect();
+        // Longest first: one value inside another is masked whole.
+        values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+        let mut out = text.to_string();
+        for v in values {
+            if out.contains(&v) {
+                out = out.replace(&v, "***");
+            }
+        }
+        out
+    }
+
     /// A task's todo list changed: the UI hears it.
     pub async fn todos_changed(&self, id: &str) {
         let todos = self.store.todos(id).await.unwrap_or_default();
@@ -789,6 +803,10 @@ impl App {
         if j.acked || self.fg_waiting.lock().unwrap().contains(&j.id) {
             return;
         }
+        // The event may be older than the tool's acknowledgement: as it is now.
+        if self.sup.job(&j.id).await.is_ok_and(|now| now.acked) {
+            return;
+        }
         let Some(owner) = &j.owner else { return };
         let Ok(t) = self.task(owner).await else { return };
         let how = match (j.exit, j.signal, j.lost) {
@@ -797,7 +815,7 @@ impl App {
             (_, Some(s), _) => format!("was ended by signal {s}"),
             _ => "ended".to_string(),
         };
-        let tail = sup::tail(&self.paths.data, &j.id, 20);
+        let tail = self.mask(&t.project, &sup::tail(&self.paths.data, &j.id, 20)).await;
         if t.is_active() || t.state == "done" {
             let _ = self.message(&t.id, &format!("[job {} ({}) {how}]\nlast lines:\n{tail}", j.id, j.name.as_deref().unwrap_or(&j.cmd))).await;
         }

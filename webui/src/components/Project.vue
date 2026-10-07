@@ -7,6 +7,7 @@ import Rules from "./Rules.vue";
 import Cron from "./Cron.vue";
 import Memory from "./Memory.vue";
 import McpServers from "./McpServers.vue";
+import Secrets from "./Secrets.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -82,7 +83,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
   <section v-if="p">
     <h2>{{ p.name }} <span class="dim">{{ p.path }}</span></h2>
     <nav class="row tabs">
-      <a v-for="t in ['tasks', 'new', 'cron', 'policy', 'memory', 'skills', 'mcp', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
+      <a v-for="t in ['tasks', 'new', 'cron', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
     </nav>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
@@ -117,6 +118,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
     <Rules v-else-if="tab === 'policy'" :slug="slug" />
     <Memory v-else-if="tab === 'memory'" :scope="slug" />
     <McpServers v-else-if="tab === 'mcp'" :project="slug" />
+    <Secrets v-else-if="tab === 'secrets'" :project="slug" />
 
     <template v-else-if="tab === 'skills'">
       <div v-if="!skills.length" class="dim">no skills: they live in <code>.agents/skills/&lt;name&gt;/SKILL.md</code> (here, or in ~/.agents/skills)</div>

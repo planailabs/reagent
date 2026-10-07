@@ -26,6 +26,13 @@ pub struct TaskTools(pub Arc<App>);
 pub struct AskTools(pub Arc<App>);
 #[derive(Clone)]
 pub struct TodoTools(pub Arc<App>);
+#[derive(Clone)]
+pub struct SecretTools(pub Arc<App>);
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct SecretName {
+    pub name: String,
+}
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct TodoAdd {
@@ -461,5 +468,21 @@ impl TodoTools {
         self.0.store.clear_todos(&t.id).await.map_err(|e| e.to_string())?;
         self.0.todos_changed(&t.id).await;
         Ok("emptied".into())
+    }
+}
+
+#[tool_router(server_handler)]
+impl SecretTools {
+    #[tool(description = "The secrets your commands get as environment variables (names, and whether they're the project's own or every project's). Values: secrets_get.")]
+    async fn secrets_list(&self, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (_, p) = caller(&self.0, &ctx).await?;
+        let s = self.0.store.secrets_for(&p.slug).await?;
+        Ok(if s.is_empty() { "no secrets (the person sets them in reagent's web UI)".into() } else { s.iter().map(|s| format!("{} ({})", s.name, if s.project.is_some() { "this project's" } else { "every project's" })).collect::<Vec<_>>().join("\n") })
+    }
+
+    #[tool(description = "A secret's value. Your commands already get it as an environment variable (use $NAME there); a value appearing in other tool results is shown as ***.")]
+    async fn secrets_get(&self, Parameters(a): Parameters<SecretName>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (_, p) = caller(&self.0, &ctx).await?;
+        self.0.store.secrets_for(&p.slug).await?.into_iter().find(|s| s.name == a.name).map(|s| s.value).ok_or_else(|| format!("no secret {:?} (secrets_list lists them)", a.name))
     }
 }

@@ -192,6 +192,28 @@ test("a project's own MCP server is managed on its tab", async ({ page }) => {
   await expect(page.locator("tr", { hasText: "site-only" })).toHaveCount(0);
 });
 
+test("secrets are set, shown on demand and removed", async ({ page }) => {
+  await page.goto("/#/settings");
+  const every = page.getByLabel("secrets for every project");
+  await every.getByLabel("secret name").fill("SHARED_TOKEN");
+  await every.getByLabel("secret value").fill("s3cr3t-everywhere");
+  await every.getByRole("button", { name: "save" }).click();
+  const row = every.locator("tr", { hasText: "SHARED_TOKEN" });
+  await expect(row).toContainText("••••");
+  await expect(row).not.toContainText("s3cr3t-everywhere");
+  await row.getByRole("button", { name: "show" }).click();
+  await expect(row).toContainText("s3cr3t-everywhere");
+  await page.goto("/#/project/site/secrets");
+  const own = page.getByLabel("secrets of site");
+  await own.getByLabel("secret name").fill("SITE_ONLY");
+  await own.getByLabel("secret value").fill("for-site");
+  await own.getByRole("button", { name: "save" }).click();
+  await expect(own.locator("tr", { hasText: "SITE_ONLY" })).toHaveCount(1);
+  page.once("dialog", (d) => d.accept());
+  await own.locator("tr", { hasText: "SITE_ONLY" }).getByRole("button", { name: "remove" }).click();
+  await expect(own.locator("tr", { hasText: "SITE_ONLY" })).toHaveCount(0);
+});
+
 test("logging out locks the API", async ({ page }) => {
   await page.getByRole("button", { name: "log out" }).click();
   await expect(page.getByLabel("password")).toBeVisible();
