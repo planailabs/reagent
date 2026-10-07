@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod mcp;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -70,7 +71,9 @@ pub fn router(w: Arc<Web>) -> Router {
     let s: S = Arc::new(St { w, attempts: Default::default() });
     let index = dist.join("index.html");
     let files = tower_http::services::ServeDir::new(&dist).fallback(tower_http::services::ServeFile::new(index));
+    let mcp = axum::Router::new().nest_service("/mcp", mcp::service(s.w.app.clone())).layer(axum::middleware::from_fn_with_state(s.clone(), mcp::auth));
     api::routes()
+        .merge(mcp.with_state(s.clone()))
         .fallback_service(files)
         .layer(axum::middleware::from_fn_with_state(s.clone(), guard))
         .with_state(s)

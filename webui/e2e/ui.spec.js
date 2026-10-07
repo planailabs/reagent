@@ -123,6 +123,25 @@ test("policy, memory and cron are edited, and conversations searched", async ({ 
   await expect(page.locator(".card").first()).toContainText("Searchable one");
 });
 
+test("an API token is made and revoked", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("token name").fill("ci-agent");
+  await page.getByRole("button", { name: "make a token" }).click();
+  const shown = page.getByLabel("new token");
+  await expect(shown).toContainText("rgt_");
+  const token = (await shown.locator("code").first().textContent()).trim();
+  const r = await page.request.post("/mcp", {
+    headers: { authorization: `Bearer ${token}`, accept: "application/json, text/event-stream", "content-type": "application/json" },
+    data: { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } },
+  });
+  expect(r.status()).toBe(200);
+  page.once("dialog", (d) => d.accept());
+  await page.locator("tr", { hasText: "ci-agent" }).getByRole("button", { name: "revoke" }).click();
+  await expect(page.locator("tr", { hasText: "ci-agent" })).toHaveCount(0);
+  const denied = await page.request.post("/mcp", { headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, data: {} });
+  expect(denied.status()).toBe(401);
+});
+
 test("logging out locks the API", async ({ page }) => {
   await page.getByRole("button", { name: "log out" }).click();
   await expect(page.getByLabel("password")).toBeVisible();

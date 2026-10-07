@@ -4099,6 +4099,8 @@ dependencies = [
  "reagent-supervisor",
  "reagent-tools",
  "reqwest 0.13.5",
+ "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",

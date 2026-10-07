@@ -495,6 +495,27 @@ impl Store {
         Ok(())
     }
 
+    // --- API tokens -----------------------------------------------------
+
+    pub async fn add_api_token(&self, name: &str, hash: &str) -> R<()> {
+        sqlx::query("insert into api_tokens (hash, name) values ($1, $2)").bind(hash).bind(name).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// The name of the token with this hash (and it counts as used now).
+    pub async fn api_token(&self, hash: &str) -> R<Option<String>> {
+        sqlx::query_scalar("update api_tokens set last_used = unixepoch() where hash = $1 returning name").bind(hash).fetch_optional(&self.pool).await
+    }
+
+    /// Names, when made and last used.
+    pub async fn api_tokens(&self) -> R<Vec<(String, i64, Option<i64>)>> {
+        sqlx::query_as("select name, created, last_used from api_tokens order by name").fetch_all(&self.pool).await
+    }
+
+    pub async fn revoke_api_token(&self, name: &str) -> R<bool> {
+        Ok(sqlx::query("delete from api_tokens where name = $1").bind(name).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
     // --- notifications --------------------------------------------------
 
     pub async fn add_notification(&self, kind: &str, task: Option<&str>, title: &str, body: &str) -> R<i64> {

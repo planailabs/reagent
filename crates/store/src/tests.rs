@@ -82,6 +82,13 @@ async fn cron_settings_sessions_and_notifications() {
 
     s.add_push_subscription("https://push/1", &serde_json::json!({"endpoint": "https://push/1"})).await.unwrap();
     assert_eq!(s.push_subscriptions().await.unwrap().len(), 1);
+    s.add_api_token("ci", "h1").await.unwrap();
+    assert!(s.add_api_token("ci", "h2").await.is_err(), "one token per name");
+    assert_eq!(s.api_token("h1").await.unwrap().as_deref(), Some("ci"));
+    assert_eq!(s.api_token("nope").await.unwrap(), None);
+    assert!(s.api_tokens().await.unwrap()[0].2.is_some(), "last used");
+    assert!(s.revoke_api_token("ci").await.unwrap());
+    assert_eq!(s.api_token("h1").await.unwrap(), None);
     let n = s.add_notification("done", None, "Fix", "fixed").await.unwrap();
     s.mark_seen(n).await.unwrap();
     assert!(s.notifications(10).await.unwrap()[0].seen);

@@ -1,11 +1,36 @@
 <script setup>
 import { onMounted, ref } from "vue";
-import { get, post } from "../lib/api.js";
+import { del, get, post } from "../lib/api.js";
 import Memory from "./Memory.vue";
 
 const config = ref(null);
 const push = ref("");
+const origin = location.origin;
 const error = ref("");
+const tokens = ref([]);
+const tokenName = ref("");
+const newToken = ref(null);
+
+async function loadTokens() {
+  tokens.value = await get("/api/tokens").catch(() => []);
+}
+
+async function addToken() {
+  error.value = "";
+  try {
+    newToken.value = await post("/api/tokens", { name: tokenName.value });
+    tokenName.value = "";
+    await loadTokens();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function revoke(name) {
+  if (!confirm(`Revoke ${name}? Agents using it lose access.`)) return;
+  await del(`/api/tokens/${encodeURIComponent(name)}`).catch((e) => (error.value = e.message));
+  await loadTokens();
+}
 
 async function load() {
   config.value = await get("/api/config").catch((e) => ((error.value = e.message), null));
@@ -46,7 +71,10 @@ async function disablePush() {
   push.value = "off";
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  loadTokens();
+});
 </script>
 
 <template>
@@ -71,6 +99,24 @@ onMounted(load);
     </table>
     <p class="dim">tool results over {{ config.grep_results.over || "∞" }} characters reach a task cut (grep_result reads the rest)</p>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
+    <h2>API tokens <span class="dim">(for agents using reagent's MCP API at {{ origin }}/mcp)</span></h2>
+    <table>
+      <tr><th>name</th><th>made</th><th>last used</th><th></th></tr>
+      <tr v-for="t in tokens" :key="t.name">
+        <td class="hi">{{ t.name }}</td>
+        <td class="dim">{{ new Date(t.created * 1000).toLocaleString() }}</td>
+        <td class="dim">{{ t.last_used ? new Date(t.last_used * 1000).toLocaleString() : "never" }}</td>
+        <td><button @click="revoke(t.name)">revoke</button></td>
+      </tr>
+    </table>
+    <form class="row" @submit.prevent="addToken">
+      <input v-model="tokenName" placeholder="a name (who uses it)" aria-label="token name" required />
+      <button type="submit">make a token</button>
+    </form>
+    <div v-if="newToken" class="err" aria-label="new token">
+      the token for <span class="hi">{{ newToken.name }}</span> (shown only now): <code>{{ newToken.token }}</code>
+      <div class="dim">send it as <code>Authorization: Bearer …</code></div>
+    </div>
     <h2>global memory</h2>
     <Memory scope="global" />
   </section>

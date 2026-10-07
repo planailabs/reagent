@@ -34,6 +34,19 @@ enum Cmd {
     },
     /// Whether the supervisor runs, and its jobs.
     Status,
+    /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
+    Token {
+        #[command(subcommand)]
+        cmd: TokenCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum TokenCmd {
+    /// Make a token (printed once).
+    Add { name: String },
+    List,
+    Revoke { name: String },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -93,6 +106,28 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             store.set_setting("password", &reagent_web::auth::hash(&a)?).await?;
             store.end_all_sessions().await?;
             println!("password set; every session ended");
+            Ok(())
+        }
+        Cmd::Token { cmd } => {
+            std::fs::create_dir_all(&data)?;
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            match cmd {
+                TokenCmd::Add { name } => {
+                    let token = format!("rgt_{}", reagent_web::auth::new_token());
+                    store.add_api_token(&name, &reagent_web::auth::token_hash(&token)).await.map_err(|_| anyhow::anyhow!("there's a token called {name:?}"))?;
+                    println!("{token}");
+                    eprintln!("an MCP client reaches reagent at <reagent's URL>/mcp with the header `Authorization: Bearer <this token>`; it isn't shown again");
+                }
+                TokenCmd::List => {
+                    for (n, created, used) in store.api_tokens().await? {
+                        println!("{n}\tmade {created}\tlast used {}", used.map(|u| u.to_string()).unwrap_or("never".into()));
+                    }
+                }
+                TokenCmd::Revoke { name } => {
+                    anyhow::ensure!(store.revoke_api_token(&name).await?, "no token called {name:?}");
+                    println!("revoked {name}");
+                }
+            }
             Ok(())
         }
         Cmd::Status => {

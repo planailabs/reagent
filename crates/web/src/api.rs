@@ -88,6 +88,8 @@ pub fn routes() -> Router<S> {
         .route("/api/jobs/{id}/background", post(job_background))
         .route("/api/jobs/{id}/kill", post(job_kill))
         .route("/api/ptys/{id}", get(pty_ws).delete(pty_close))
+        .route("/api/tokens", get(tokens).post(add_token))
+        .route("/api/tokens/{name}", delete(revoke_token))
 }
 
 // --- login --------------------------------------------------------------
@@ -482,6 +484,33 @@ struct SearchQ {
 /// Across tasks' conversations.
 async fn search(State(s): State<S>, Query(q): Query<SearchQ>) -> R {
     Ok(Json(s.w.app.search(&q.q, q.task.as_deref(), q.project.as_deref(), None, q.page.unwrap_or(1)).await?))
+}
+
+// --- API tokens (the MCP API) ---------------------------------------------
+
+async fn tokens(State(s): State<S>) -> R {
+    let v = db(s.w.app.store.api_tokens().await)?;
+    Ok(Json(json!(v.iter().map(|(n, c, u)| json!({"name": n, "created": c, "last_used": u})).collect::<Vec<_>>())))
+}
+
+#[derive(Deserialize)]
+struct Name {
+    name: String,
+}
+
+/// A new token: shown once.
+async fn add_token(State(s): State<S>, Json(n): Json<Name>) -> R {
+    let name = n.name.trim();
+    if name.is_empty() {
+        return Err(E(StatusCode::BAD_REQUEST, "a token needs a name".into()));
+    }
+    let token = format!("rgt_{}", auth::new_token());
+    s.w.app.store.add_api_token(name, &auth::token_hash(&token)).await.map_err(|_| E(StatusCode::CONFLICT, format!("there's a token called {name:?}")))?;
+    Ok(Json(json!({"name": name, "token": token})))
+}
+
+async fn revoke_token(State(s): State<S>, Path(name): Path<String>) -> R {
+    Ok(Json(json!({"revoked": db(s.w.app.store.revoke_api_token(&name).await)?})))
 }
 
 // --- jobs and terminals ---------------------------------------------------
