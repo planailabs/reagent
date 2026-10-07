@@ -1,0 +1,189 @@
+//! `reagent up`: the store, the supervisor, subnet's hub (on SQLite) and a
+//! node, reagent's MCP servers, the followers, cron and the web server.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use reagent_store::Store;
+use reagent_tools::app::{App, Paths};
+use reagent_tools::config::{self, Config};
+use subnet::hub::db::ClusterFile;
+use subnet::hub::{Hub, http};
+use subnet::node::{Node, attach};
+use subnet_core::addr::Addr;
+use subnet_core::agent::PauseMode;
+
+/// Tasks the last stop paused, resumed at the next start.
+const PAUSED_FILE: &str = "paused-at-stop.json";
+
+pub struct Opts {
+    pub data: PathBuf,
+    /// Where the web interface listens (else reagent.hcl's `listen`).
+    pub listen: Option<String>,
+    /// Run the supervisor inside this process (tests): jobs end with it.
+    pub in_process_supervisor: bool,
+    /// The reagent binary (to start the supervisor).
+    pub exe: PathBuf,
+    pub dist: PathBuf,
+}
+
+pub struct Running {
+    pub app: Arc<App>,
+    pub hub: Arc<Hub>,
+    pub hub_url: String,
+    pub admin_token: String,
+    pub web_url: String,
+}
+
+/// The data folder: `REAGENT_DATA`, else the platform's (`~/.local/share/reagent`).
+pub fn data_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("REAGENT_DATA") {
+        return PathBuf::from(d);
+    }
+    directories::ProjectDirs::from("", "", "reagent").map(|d| d.data_dir().to_path_buf()).unwrap_or_else(|| PathBuf::from(".reagent"))
+}
+
+/// reagent.hcl (an example one is written the first time).
+pub fn load_config(data: &Path) -> anyhow::Result<Config> {
+    let file = data.join("reagent.hcl");
+    if !file.exists() {
+        std::fs::create_dir_all(data)?;
+        std::fs::write(&file, config::EXAMPLE)?;
+        tracing::info!(file = %file.display(), "wrote an example reagent.hcl: set your providers and profiles there");
+    }
+    Config::parse(&std::fs::read_to_string(&file)?).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))
+}
+
+pub async fn up(o: Opts) -> anyhow::Result<Running> {
+    std::fs::create_dir_all(&o.data)?;
+    let config = load_config(&o.data)?;
+    let paths = Paths::new(&o.data);
+    let store = Store::open(&o.data.join("reagent.db")).await?;
+    let sup = if o.in_process_supervisor {
+        let s = reagent_supervisor::server::Supervisor::new(&o.data)?;
+        let socket = paths.socket.clone();
+        tokio::spawn(async move {
+            if let Err(e) = s.serve(&socket).await {
+                tracing::error!(error = %e, "supervisor stopped");
+            }
+        });
+        let c = reagent_supervisor::Client::new(&paths.socket);
+        for _ in 0..100 {
+            if c.ping().await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        c
+    } else {
+        reagent_supervisor::ensure_running(&o.exe, &o.data, &paths.socket).await?
+    };
+    let listen = o.listen.clone().unwrap_or_else(|| config.listen.clone());
+    let app = App::new(paths, config, store, sup);
+
+    // reagent's MCP servers, for the node only.
+    let mcp_l = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mcp_base = format!("http://{}", mcp_l.local_addr()?);
+    let mcp = reagent_tools::mcp::router(app.clone());
+    tokio::spawn(async move { axum::serve(mcp_l, mcp).await });
+
+    // The hub, on SQLite next to reagent's own database.
+    let admin_token = uuid::Uuid::new_v4().simple().to_string();
+    let hub_l = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let hub_url = format!("http://{}", hub_l.local_addr()?);
+    let hub = Hub::start(&format!("sqlite://{}", o.data.join("hub.db").display()), Some(admin_token.clone()), &hub_url).await?;
+    let router = http::router(hub.clone());
+    tokio::spawn(async move { axum::serve(hub_l, router).await });
+    hub.wait_leader().await;
+    let text = reagent_tools::cluster::render(&app.config, &mcp_base);
+    std::fs::write(o.data.join("cluster.hcl"), &text)?;
+    let applied = hub.apply_cluster(vec![ClusterFile { name: "cluster.hcl".into(), text }], false, &Addr::root()).await?;
+    tracing::info!(version = ?applied.version, "cluster applied");
+    attach(hub.clone(), Arc::new(Node::new("local", None))).await?;
+    app.set_hub(hub.clone());
+    // Ready once the node offers every profile's type (its MCP servers connected).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let types = hub.op(&Addr::root(), subnet_core::proto::Op::ListTypes).await.map_err(anyhow::Error::msg)?;
+        let missing: Vec<String> = app.config.profile.keys().map(|p| reagent_tools::cluster::mixture(p)).filter(|m| !types.as_array().is_some_and(|ts| ts.iter().any(|t| t["name"] == m.as_str() && t["nodes"].as_u64().unwrap_or(0) > 0))).collect();
+        if missing.is_empty() {
+            break;
+        }
+        anyhow::ensure!(tokio::time::Instant::now() < deadline, "the node doesn't offer {missing:?} (is a profile's key_env set?)");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    upgrade_outdated(&app, &hub).await;
+    resume_paused(&app, &hub).await;
+    app.follow();
+    reagent_tools::cron::schedule(app.clone());
+
+    let web = Arc::new(reagent_web::Web { app: app.clone(), hub_url: hub_url.clone(), hub_token: admin_token.clone(), dist: o.dist.clone() });
+    let web_l = tokio::net::TcpListener::bind(&listen).await.map_err(|e| anyhow::anyhow!("listening on {listen}: {e}"))?;
+    let web_url = format!("http://{}", web_l.local_addr()?);
+    let r = reagent_web::router(web);
+    tokio::spawn(async move { axum::serve(web_l, r.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
+    Ok(Running { app, hub, hub_url, admin_token, web_url })
+}
+
+/// Tasks whose agents are of an older version (reagent.hcl or reagent
+/// changed) move onto the current one: same history, new agent.
+async fn upgrade_outdated(app: &App, hub: &Hub) {
+    let agents = hub.list_agents().await;
+    for t in app.store.tasks(None, None, true, 10_000).await.unwrap_or_default() {
+        let Some(id) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
+        let Some(a) = agents.iter().find(|a| a.id == id) else { continue };
+        if !a.outdated || a.superseded_by.is_some() {
+            continue;
+        }
+        match hub.upgrade(&Addr::root(), id, true).await {
+            Ok(s) => {
+                let _ = app.store.set_agent(&t.id, &s.id.to_string()).await;
+                tracing::info!(task = %t.id, "task moved onto the current version");
+            }
+            Err(e) => tracing::warn!(task = %t.id, error = %e, "couldn't upgrade a task's agent"),
+        }
+    }
+}
+
+async fn resume_paused(app: &App, hub: &Hub) {
+    let file = app.paths.data.join(PAUSED_FILE);
+    let Ok(text) = std::fs::read(&file) else { return };
+    let ids: Vec<String> = serde_json::from_slice(&text).unwrap_or_default();
+    for id in ids {
+        let Ok(Some(t)) = app.store.task(&id).await else { continue };
+        let Some(agent) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
+        match hub.resume(&Addr::root(), agent, true).await {
+            Ok(_) => {
+                let _ = app.store.set_state(&t.id, "running", None).await;
+                tracing::info!(task = %t.id, "task resumed");
+            }
+            Err(e) => tracing::warn!(task = %t.id, error = %e, "couldn't resume a task paused at the last stop"),
+        }
+    }
+    let _ = std::fs::remove_file(&file);
+}
+
+/// Before stopping: running tasks are paused (quick: running tool calls
+/// finish, nothing new starts), and resumed at the next start.
+pub async fn stop(r: &Running) {
+    let mut paused = vec![];
+    for t in r.app.store.tasks(None, None, true, 10_000).await.unwrap_or_default().into_iter().filter(|t| t.state == "running" || t.state == "waiting") {
+        let Some(agent) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
+        if r.hub.pause(&Addr::root(), agent, PauseMode::Quick, true).await.is_ok() {
+            paused.push((t.id.clone(), agent));
+        }
+    }
+    let _ = std::fs::write(r.app.paths.data.join(PAUSED_FILE), serde_json::to_vec(&paused.iter().map(|(t, _)| t).collect::<Vec<_>>()).unwrap_or_default());
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let agents = r.hub.list_agents().await;
+        let busy = paused.iter().filter(|(_, id)| agents.iter().any(|a| a.id == *id && !a.paused && !matches!(a.phase.as_str(), "failed" | "cancelled"))).count();
+        if busy == 0 || tokio::time::Instant::now() > deadline {
+            tracing::info!(tasks = paused.len(), still_busy = busy, "tasks paused for the stop");
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    r.hub.shutdown();
+}

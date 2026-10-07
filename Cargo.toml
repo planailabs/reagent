@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/store", "crates/supervisor", "crates/tools"]
+members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
@@ -17,7 +17,7 @@ subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4
 subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4a24261f8f4771cfa55250f113dcaaec0f67a554" }
 subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "4a24261f8f4771cfa55250f113dcaaec0f67a554" }
 anyhow = "1"
-argon2 = "0.5"
+argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 axum-extra = { version = "0.12", features = ["cookie"] }
 base64 = "0.22"

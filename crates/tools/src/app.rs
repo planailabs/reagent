@@ -444,6 +444,7 @@ impl App {
         if t.state == "cancelled" {
             return;
         }
+        self.record_usage(t).await;
         let _ = self.store.set_report(&t.id, content).await;
         let _ = self.store.set_state(&t.id, state, None).await;
         self.task_changed(&t.id).await;
@@ -458,6 +459,16 @@ impl App {
             let _ = self.message(parent, &format!("[subtask {} ({}) {state}]\n{content}", t.title, t.id)).await;
         }
         crate::cron::task_ended(self, t).await;
+    }
+
+    /// A task's tokens and cost, from its agent's usage.
+    async fn record_usage(&self, t: &Task) {
+        let (Ok(hub), Some(agent)) = (self.hub(), t.agent.as_deref()) else { return };
+        let Ok(list) = serde_json::to_value(hub.list_agents().await) else { return };
+        let Some(a) = list.as_array().and_then(|l| l.iter().find(|a| a["id"] == agent)) else { return };
+        let (input, output) = (a["usage"]["prompt_tokens"].as_u64().unwrap_or(0), a["usage"]["completion_tokens"].as_u64().unwrap_or(0));
+        let price = self.config.profile.get(&t.profile).map(|p| p.price).unwrap_or_default();
+        let _ = self.store.set_usage(&t.id, (input + output) as i64, price.cost(input, output)).await;
     }
 
     /// Follows the agents: phases, approvals, usage and budgets.
