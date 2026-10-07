@@ -12,7 +12,7 @@
 
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
-  environment.systemPackages = with pkgs; [ git curl jq ripgrep vim htop tmux apprise gnumake gcc python3 nodejs ];
+  environment.systemPackages = with pkgs; [ git gh curl jq ripgrep vim htop tmux apprise gnumake gcc python3 nodejs ];
 
   users.users.reagent = {
     isSystemUser = true;
@@ -29,7 +29,7 @@
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     # What its tasks' commands find.
-    path = with pkgs; [ bashInteractive coreutils findutils gnugrep gnused gawk diffutils git openssh curl jq ripgrep apprise gnumake gcc python3 nodejs which procps ];
+    path = with pkgs; [ bashInteractive coreutils findutils gnugrep gnused gawk diffutils git gh nix openssh curl jq ripgrep apprise gnumake gcc python3 nodejs which procps gnutar gzip xz ];
     environment = {
       REAGENT_DATA = "/var/lib/reagent";
       REAGENT_WEBUI = "/opt/reagent/webui";
