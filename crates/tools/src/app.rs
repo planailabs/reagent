@@ -269,7 +269,7 @@ impl App {
             return Err(format!("{} isn't a folder", path.display()));
         }
         p.path = path.display().to_string();
-        for (field, v, ok) in [("memory", &p.memory, &["central", "repo"][..]), ("worktrees", &p.worktrees, &["central", "repo"]), ("merge", &p.merge, &["approve", "auto"]), ("default_action", &p.default_action, &["allow", "ask", "deny"])] {
+        for (field, v, ok) in [("devshell", &p.devshell, &["off", "auto", "on"][..]), ("memory", &p.memory, &["central", "repo"]), ("worktrees", &p.worktrees, &["central", "repo"]), ("merge", &p.merge, &["approve", "auto"]), ("default_action", &p.default_action, &["allow", "ask", "deny"])] {
             if !ok.contains(&v.as_str()) {
                 return Err(format!("{field}: one of {}", ok.join(", ")));
             }

@@ -44,6 +44,16 @@ pub struct Project {
     pub budget: Json<Budget>,
     pub env: Json<serde_json::Map<String, serde_json::Value>>,
     pub created: i64,
+    /// Commands run in the project's nix dev shell: off, auto (when there's a flake.nix) or on.
+    #[serde(default = "auto")]
+    pub devshell: String,
+    /// Which dev shell (`devShells.<attr>`; none: the default).
+    #[serde(default)]
+    pub devshell_attr: Option<String>,
+}
+
+fn auto() -> String {
+    "auto".into()
 }
 
 impl Project {
@@ -60,6 +70,8 @@ impl Project {
             budget: Json(Budget::default()),
             env: Json(Default::default()),
             created: now(),
+            devshell: auto(),
+            devshell_attr: None,
         }
     }
 }
@@ -280,10 +292,10 @@ impl Store {
     /// Adds a project, or changes one (by its slug).
     pub async fn put_project(&self, p: &Project) -> R<()> {
         sqlx::query(
-            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              on conflict (slug) do update set name = $2, path = $3, memory = $4, worktrees = $5, merge = $6,
-               default_action = $7, profile = $8, budget = $9, env = $10",
+               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12",
         )
         .bind(&p.slug)
         .bind(&p.name)
@@ -295,6 +307,8 @@ impl Store {
         .bind(&p.profile)
         .bind(&p.budget)
         .bind(&p.env)
+        .bind(&p.devshell)
+        .bind(&p.devshell_attr)
         .execute(&self.pool)
         .await?;
         Ok(())

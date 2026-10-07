@@ -56,7 +56,7 @@ async function save() {
   error.value = "";
   try {
     const s = settings.value;
-    const body = { name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
+    const body = { devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
     p.value = await put(`/api/projects/${props.slug}`, body);
     error.value = "saved";
   } catch (e) {
@@ -133,6 +133,9 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <label>memory <select v-model="settings.memory"><option>central</option><option>repo</option></select> <span class="dim">central: in reagent's data; repo: .reagent/memory in the folder</span></label>
       <label>worktrees <select v-model="settings.worktrees"><option>central</option><option>repo</option></select></label>
       <label>merging <select v-model="settings.merge"><option>approve</option><option>auto</option></select></label>
+      <label>nix dev shell <select v-model="settings.devshell"><option>auto</option><option>on</option><option>off</option></select>
+        <input v-model="settings.devshell_attr" size="10" placeholder="default" aria-label="dev shell" />
+        <span class="dim">auto: when there's a flake.nix; commands and terminals run in `nix develop`</span></label>
       <label>calls no rule covers <select v-model="settings.default_action"><option>ask</option><option>allow</option><option>deny</option></select></label>
       <label>profile
         <select v-model="settings.profile"><option :value="null">default</option><option v-for="pr in config?.profiles ?? []" :key="pr.name" :value="pr.name">{{ pr.name }}</option></select>

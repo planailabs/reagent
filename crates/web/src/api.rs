@@ -616,6 +616,7 @@ async fn ptys(State(s): State<S>, Path(id): Path<String>) -> R {
 #[derive(Deserialize)]
 struct PtyOpen {
     cmd: Option<String>,
+    devshell: Option<bool>,
     cols: Option<u16>,
     rows: Option<u16>,
 }
@@ -623,7 +624,9 @@ struct PtyOpen {
 /// The person opens a terminal in a task's working directory.
 async fn pty_open(State(s): State<S>, Path(id): Path<String>, Json(o): Json<PtyOpen>) -> R {
     let t = s.w.app.task(&id).await?;
-    let m = s.w.app.sup.pty_open(sup::PtyArgs { cmd: o.cmd, cwd: t.cwd.clone(), env: std::env::var("PATH").ok().map(|p| ("PATH".to_string(), p)).into_iter().chain([("REAGENT_TASK".to_string(), t.id.clone())]).collect(), owner: Some(t.id), cols: o.cols.unwrap_or(120), rows: o.rows.unwrap_or(32) }).await?;
+    let p = s.w.app.project(&t.project).await?;
+    let cmd = reagent_tools::devshell::wrap_terminal(&p, std::path::Path::new(&t.cwd), o.cmd.as_deref(), o.devshell.unwrap_or(true));
+    let m = s.w.app.sup.pty_open(sup::PtyArgs { cmd, cwd: t.cwd.clone(), env: std::env::var("PATH").ok().map(|p| ("PATH".to_string(), p)).into_iter().chain([("REAGENT_TASK".to_string(), t.id.clone())]).collect(), owner: Some(t.id), cols: o.cols.unwrap_or(120), rows: o.rows.unwrap_or(32) }).await?;
     Ok(Json(json!(m)))
 }
 

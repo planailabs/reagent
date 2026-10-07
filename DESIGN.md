@@ -80,6 +80,7 @@ A project is registered in the UI (or the API): an id (lowercase, `-`), a name, 
 | `profile` | the default model profile for its tasks |
 | `budget` | per task (`tokens`, `cost`, `minutes`) and for the project per day (`daily_cost`: no new tasks past it) |
 | `env` | extra environment for its commands |
+| `devshell` | `auto` (default: when the working directory or the folder has a `flake.nix`), `on` or `off`: commands and terminals run in its nix dev shell (`nix develop <flake>[#devshell_attr] --command sh -c …`, per command: exact, nothing cached to go stale); `devshell_attr` picks another shell (`ci`); a command opts out with `devshell: false` |
 
 A new project gets the starter rules (below).
 
@@ -114,7 +115,7 @@ Besides these, subnet gives every task `search_history` (its own whole conversat
 **Commands (`shell`)**
 | tool | |
 |---|---|
-| `exec(cmd, cwd?, timeout?, stdin?)` | `sh -c` in the foreground: exit code and output (the last 60 000 characters). Past `timeout` (default 600 s), or when the person moves it, it goes on as a background job: the call says so, with the output so far. |
+| `exec(cmd, cwd?, timeout?, stdin?, devshell?)` | `sh -c` in the foreground: exit code and output (the last 60 000 characters). Past `timeout` (default 600 s), or when the person moves it, it goes on as a background job: the call says so, with the output so far. |
 | `exec_bg(cmd, cwd?, name?)` | a background job, its id at once; its end comes as a message |
 | `jobs()` / `job_output(job, from?, to?, tail?, pattern?)` / `job_wait(job, timeout?)` / `job_input(job, text, close?)` / `job_kill(job, signal?)` | list, read, wait, write to stdin, signal the process group |
 

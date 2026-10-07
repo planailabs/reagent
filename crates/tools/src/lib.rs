@@ -10,6 +10,7 @@ pub mod skills;
 pub mod app;
 pub mod cluster;
 pub mod cron;
+pub mod devshell;
 pub mod hooks;
 pub mod mcp;
 pub mod notify;

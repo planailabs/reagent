@@ -33,6 +33,8 @@ pub struct Exec {
     pub timeout: Option<u64>,
     /// Text for its stdin.
     pub stdin: Option<String>,
+    /// false: not in the project's nix dev shell (default: in it, when the project uses one).
+    pub devshell: Option<bool>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -41,6 +43,8 @@ pub struct ExecBg {
     pub cwd: Option<String>,
     /// A name to tell it by (`dev server`).
     pub name: Option<String>,
+    /// false: not in the project's nix dev shell.
+    pub devshell: Option<bool>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -84,6 +88,8 @@ pub struct PtyOpen {
     pub cwd: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
+    /// false: not in the project's nix dev shell.
+    pub devshell: Option<bool>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -153,7 +159,8 @@ impl ShellTools {
         let (t, p) = caller(&self.0, &ctx).await?;
         let cwd = place(&self.0, &t, &p, "shell.exec", a.cwd.as_deref()).await?;
         let started = std::time::Instant::now();
-        let j = self.0.sup.spawn(SpawnArgs { cmd: a.cmd.clone(), cwd, env: env(&t, &p), owner: Some(t.id.clone()), name: None, fg: true, stdin: a.stdin }).await?;
+        let cmd = crate::devshell::wrap(&p, std::path::Path::new(&cwd), &a.cmd, a.devshell.unwrap_or(true));
+        let j = self.0.sup.spawn(SpawnArgs { cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), name: Some(a.cmd.clone()), fg: true, stdin: a.stdin }).await?;
         self.0.fg_waiting.lock().unwrap().insert(j.id.clone());
         let r = self.0.sup.wait(&j.id, a.timeout.unwrap_or(FG_TIMEOUT).clamp(1, 24 * 3600) * 1000).await;
         self.0.fg_waiting.lock().unwrap().remove(&j.id);
@@ -186,7 +193,9 @@ impl ShellTools {
     async fn exec_bg(&self, Parameters(a): Parameters<ExecBg>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
         let cwd = place(&self.0, &t, &p, "shell.exec_bg", a.cwd.as_deref()).await?;
-        let j = self.0.sup.spawn(SpawnArgs { cmd: a.cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), name: a.name, fg: false, stdin: None }).await?;
+        let cmd = crate::devshell::wrap(&p, std::path::Path::new(&cwd), &a.cmd, a.devshell.unwrap_or(true));
+        let name = a.name.or_else(|| (cmd != a.cmd).then(|| a.cmd.clone()));
+        let j = self.0.sup.spawn(SpawnArgs { cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), name, fg: false, stdin: None }).await?;
         Ok(format!("started job {} (pid {})", j.id, j.pid.unwrap_or(0)))
     }
 
@@ -284,7 +293,8 @@ impl PtyTools {
     async fn pty_open(&self, Parameters(a): Parameters<PtyOpen>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
         let cwd = place(&self.0, &t, &p, "pty.pty_open", a.cwd.as_deref()).await?;
-        let m = self.0.sup.pty_open(PtyArgs { cmd: a.cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), cols: a.cols.unwrap_or(120), rows: a.rows.unwrap_or(32) }).await?;
+        let cmd = crate::devshell::wrap_terminal(&p, std::path::Path::new(&cwd), a.cmd.as_deref(), a.devshell.unwrap_or(true));
+        let m = self.0.sup.pty_open(PtyArgs { cmd, cwd, env: env(&t, &p), owner: Some(t.id.clone()), cols: a.cols.unwrap_or(120), rows: a.rows.unwrap_or(32) }).await?;
         let screen = self.0.sup.pty_screen(&m.id, 500, 0).await?;
         Ok(format!("terminal {} ({}x{})\n{}", m.id, m.cols, m.rows, screen_text(&screen)))
     }

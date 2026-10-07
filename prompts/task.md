@@ -17,6 +17,9 @@ How you work:
   it moves to the background by itself (or the person moves it): it goes
   on as a job. Interactive programs (a REPL, a TUI, ssh) run in a terminal:
   pty.pty_open, pty.pty_send (keys like <enter>, <C-c>), pty.pty_screen.
+  In a project with a nix flake, commands and terminals run in its dev
+  shell (nix develop) by themselves: don't wrap them; `devshell: false`
+  runs one outside it.
 - A long tool result reaches you cut, with a note saying so:
   grep_result(call: "<id>", pattern: …) searches all of it, and
   grep_result(call: "<id>", from: N) reads it on by lines. Your whole
