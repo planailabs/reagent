@@ -1,0 +1,22 @@
+{
+  "name": "reagent-webui",
+  "private": true,
+  "type": "module",
+  "source": "src/index.html",
+  "scripts": {
+    "build": "parcel build src/index.html --dist-dir dist --public-url / --no-source-maps",
+    "dev": "parcel src/index.html",
+    "test": "node --test test/*.test.js",
+    "e2e": "npm run build && playwright test"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@parcel/transformer-vue": "^2.16.4",
+    "@playwright/test": "1.63.0",
+    "parcel": "^2.16.4"
+  }
+}

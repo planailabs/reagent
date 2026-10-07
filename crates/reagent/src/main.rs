@@ -27,7 +27,11 @@ enum Cmd {
         stop: bool,
     },
     /// Set the web interface's password (ends every session).
-    Passwd,
+    Passwd {
+        /// Read it from stdin (one line) instead of asking.
+        #[arg(long)]
+        password_stdin: bool,
+    },
     /// Whether the supervisor runs, and its jobs.
     Status,
 }
@@ -72,11 +76,18 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             let s = reagent_supervisor::server::Supervisor::new(&data)?;
             s.serve(&socket).await
         }
-        Cmd::Passwd => {
-            let a = rpassword::prompt_password("new password: ")?;
+        Cmd::Passwd { password_stdin } => {
+            let a = if password_stdin {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line.trim_end_matches(['\r', '\n']).to_string()
+            } else {
+                let a = rpassword::prompt_password("new password: ")?;
+                let b = rpassword::prompt_password("again: ")?;
+                anyhow::ensure!(a == b, "they differ");
+                a
+            };
             anyhow::ensure!(a.len() >= 8, "at least 8 characters");
-            let b = rpassword::prompt_password("again: ")?;
-            anyhow::ensure!(a == b, "they differ");
             std::fs::create_dir_all(&data)?;
             let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
             store.set_setting("password", &reagent_web::auth::hash(&a)?).await?;
