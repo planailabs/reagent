@@ -407,6 +407,37 @@ impl App {
         list.as_array()?.iter().find(|a| a["id"] == agent).and_then(|a| a["awaiting_approval"].get("call").cloned().or_else(|| a["awaiting_approval"].as_object().map(|_| a["awaiting_approval"].clone())))
     }
 
+    /// Searches tasks' whole conversations: one task's (paged), or every
+    /// task's of a project (`None`: all projects), a few hits each.
+    pub async fn search(&self, pattern: &str, task: Option<&str>, project: Option<&str>, except: Option<&str>, page: u32) -> Result<Value, String> {
+        regex::RegexBuilder::new(pattern).size_limit(1 << 20).build().map_err(|e| format!("bad pattern: {e}"))?;
+        let hub = self.hub()?.clone();
+        let search = |agent: uuid::Uuid, page: u32| {
+            let (hub, pattern) = (hub.clone(), pattern.to_string());
+            async move { hub.op(&Addr::Agent(agent), Op::SearchHistory { pattern, page }).await }
+        };
+        if let Some(id) = task {
+            let t = self.task(id).await?;
+            let agent = Self::agent_of(&t)?;
+            let mut v = search(agent, page.max(1)).await?;
+            v["task"] = json!({"id": t.id, "title": t.title, "state": t.state, "project": t.project});
+            return Ok(v);
+        }
+        let mut out = vec![];
+        for t in self.store.tasks(project, None, false, 500).await.map_err(|e| e.to_string())? {
+            if Some(t.id.as_str()) == except {
+                continue;
+            }
+            let Ok(agent) = Self::agent_of(&t) else { continue };
+            let Ok(v) = search(agent, 1).await else { continue };
+            if v["matches"].as_u64().unwrap_or(0) == 0 {
+                continue;
+            }
+            out.push(json!({"task": {"id": t.id, "title": t.title, "state": t.state, "project": t.project}, "matches": v["matches"], "hits": v["hits"].as_array().map(|h| h.iter().take(3).cloned().collect::<Vec<_>>())}));
+        }
+        Ok(json!({"pattern": pattern, "tasks": out}))
+    }
+
     // --- questions and merges waiting for the person ---------------------
 
     /// A task asks; this waits for the answer.

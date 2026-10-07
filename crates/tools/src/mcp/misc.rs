@@ -10,8 +10,6 @@ use rmcp::{RoleServer, schemars, tool, tool_router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::types::Json;
-use subnet_core::addr::Addr;
-use subnet_core::proto::Op;
 
 use super::{caller, more};
 use crate::app::{App, StartTask};
@@ -300,43 +298,32 @@ impl TaskTools {
     #[tool(description = "Search other tasks' whole conversations (the parts summarised away too) for a regex: in one task (paged), or across the project's (or all projects') tasks, a few hits each.")]
     async fn search_history(&self, Parameters(a): Parameters<Search>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (me, p) = caller(&self.0, &ctx).await?;
-        regex(&a.pattern)?;
-        let hub = self.0.hub()?.clone();
-        let search = |agent: uuid::Uuid, page: u32| {
-            let (hub, pattern) = (hub.clone(), a.pattern.clone());
-            async move { hub.op(&Addr::Agent(agent), Op::SearchHistory { pattern, page }).await }
-        };
-        if let Some(id) = &a.task {
-            let t = self.0.task(id).await?;
-            let agent: uuid::Uuid = t.agent.as_deref().ok_or("that task never started")?.parse().map_err(|e| format!("{e}"))?;
-            let v = search(agent, a.page.unwrap_or(1)).await?;
-            let hits: Vec<String> = v["hits"].as_array().into_iter().flatten().map(|h| format!("#{} {}{}: {}", h["n"], h["role"].as_str().unwrap_or(""), if h["summarised"] == true { " (summarised)" } else { "" }, h["text"].as_str().unwrap_or(""))).collect();
-            let note = format!("{} matches in task {} ({}), page {} of {}{}", v["matches"], t.title, &t.id[..8], v["page"], v["pages"], v["next_page"].as_u64().map(|n| format!("; page: {n} for more")).unwrap_or_default());
-            return Ok(format!("{}{}", hits.join("\n"), more(note)));
-        }
         let project = match a.project.as_deref() {
             Some("all") => None,
             Some(x) => Some(x.to_string()),
             None => Some(p.slug.clone()),
         };
-        let tasks = self.0.store.tasks(project.as_deref(), None, false, 200).await.map_err(|e| e.to_string())?;
-        let mut out = vec![];
-        for t in tasks.iter().filter(|t| t.id != me.id) {
-            let Some(agent) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
-            let Ok(v) = search(agent, 1).await else { continue };
-            let n = v["matches"].as_u64().unwrap_or(0);
-            if n == 0 {
-                continue;
-            }
-            let mut s = format!("task {} ({}, {}) — {n} matches:", t.title, t.id, t.state);
-            for h in v["hits"].as_array().into_iter().flatten().take(3) {
-                s.push_str(&format!("\n  #{} {}: {}", h["n"], h["role"].as_str().unwrap_or(""), h["text"].as_str().unwrap_or("").chars().take(300).collect::<String>()));
-            }
-            out.push(s);
+        let v = self.0.search(&a.pattern, a.task.as_deref(), project.as_deref(), Some(&me.id), a.page.unwrap_or(1)).await?;
+        let hit = |h: &Value| format!("#{} {}{}: {}", h["n"], h["role"].as_str().unwrap_or(""), if h["summarised"] == true { " (summarised)" } else { "" }, h["text"].as_str().unwrap_or("").chars().take(300).collect::<String>());
+        if a.task.is_some() {
+            let hits: Vec<String> = v["hits"].as_array().into_iter().flatten().map(hit).collect();
+            let note = format!("{} matches in task {} ({}), page {} of {}{}", v["matches"], v["task"]["title"].as_str().unwrap_or(""), v["task"]["id"].as_str().unwrap_or(""), v["page"], v["pages"], v["next_page"].as_u64().map(|n| format!("; page: {n} for more")).unwrap_or_default());
+            return Ok(format!("{}{}", hits.join("\n"), more(note)));
         }
-        if out.is_empty() {
+        let tasks = v["tasks"].as_array().cloned().unwrap_or_default();
+        if tasks.is_empty() {
             return Ok(format!("no other task's conversation matches {:?}", a.pattern));
         }
+        let out: Vec<String> = tasks
+            .iter()
+            .map(|t| {
+                let mut s = format!("task {} ({}, {}) — {} matches:", t["task"]["title"].as_str().unwrap_or(""), t["task"]["id"].as_str().unwrap_or(""), t["task"]["state"].as_str().unwrap_or(""), t["matches"]);
+                for h in t["hits"].as_array().into_iter().flatten() {
+                    s.push_str(&format!("\n  {}", hit(h)));
+                }
+                s
+            })
+            .collect();
         Ok(format!("{}{}", out.join("\n\n"), more(format!("{} tasks match; search_history(pattern, task: <id>) shows all of one", out.len()))))
     }
 

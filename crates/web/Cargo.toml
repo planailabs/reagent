@@ -27,3 +27,4 @@ tokio-stream.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+ignore.workspace = true
