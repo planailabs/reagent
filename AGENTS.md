@@ -12,3 +12,4 @@ A resumable coding agent for long-running work, built on subagent-net (Rust; web
 - Schema changes only through `sqlx migrate`.
 - Linux and macOS: no Linux-only calls without a macOS path.
 - Tests write long output to `target/test.log`.
+- Tests: `nix develop -c cargo test`; web UI: `cd webui && npm test && npm run e2e` (Playwright, browsers from nix).
