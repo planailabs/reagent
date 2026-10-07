@@ -5250,7 +5250,7 @@ dependencies = [
 [[package]]
 name = "subnet"
 version = "0.1.0"
-source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=4a24261f8f4771cfa55250f113dcaaec0f67a554#4a24261f8f4771cfa55250f113dcaaec0f67a554"
+source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=b9dc78da69c39b89a884c1311569c40f9925f8b6#b9dc78da69c39b89a884c1311569c40f9925f8b6"
 dependencies = [
  "anyhow",
  "axum",
@@ -5295,7 +5295,7 @@ dependencies = [
 [[package]]
 name = "subnet-cluster"
 version = "0.1.0"
-source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=4a24261f8f4771cfa55250f113dcaaec0f67a554#4a24261f8f4771cfa55250f113dcaaec0f67a554"
+source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=b9dc78da69c39b89a884c1311569c40f9925f8b6#b9dc78da69c39b89a884c1311569c40f9925f8b6"
 dependencies = [
  "croner",
  "hcl-rs",
@@ -5311,7 +5311,7 @@ dependencies = [
 [[package]]
 name = "subnet-core"
 version = "0.1.0"
-source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=4a24261f8f4771cfa55250f113dcaaec0f67a554#4a24261f8f4771cfa55250f113dcaaec0f67a554"
+source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=b9dc78da69c39b89a884c1311569c40f9925f8b6#b9dc78da69c39b89a884c1311569c40f9925f8b6"
 dependencies = [
  "schemars",
  "serde",
@@ -5322,7 +5322,7 @@ dependencies = [
 [[package]]
 name = "subnet-llm"
 version = "0.1.0"
-source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=4a24261f8f4771cfa55250f113dcaaec0f67a554#4a24261f8f4771cfa55250f113dcaaec0f67a554"
+source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=b9dc78da69c39b89a884c1311569c40f9925f8b6#b9dc78da69c39b89a884c1311569c40f9925f8b6"
 dependencies = [
  "eventsource-stream",
  "futures",
@@ -5338,7 +5338,7 @@ dependencies = [
 [[package]]
 name = "subnet-ops"
 version = "0.1.0"
-source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=4a24261f8f4771cfa55250f113dcaaec0f67a554#4a24261f8f4771cfa55250f113dcaaec0f67a554"
+source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=b9dc78da69c39b89a884c1311569c40f9925f8b6#b9dc78da69c39b89a884c1311569c40f9925f8b6"
 dependencies = [
  "axum",
  "clap",
@@ -5356,7 +5356,7 @@ dependencies = [
 [[package]]
 name = "subnet-switchboard"
 version = "0.1.0"
-source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=4a24261f8f4771cfa55250f113dcaaec0f67a554#4a24261f8f4771cfa55250f113dcaaec0f67a554"
+source = "git+ssh://git@git.plan.ai/plan-ai/subagent-net.git?rev=b9dc78da69c39b89a884c1311569c40f9925f8b6#b9dc78da69c39b89a884c1311569c40f9925f8b6"
 dependencies = [
  "cel-interpreter",
  "schemars",

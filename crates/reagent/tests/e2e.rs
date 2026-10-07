@@ -239,3 +239,38 @@ async fn files_outside_the_project_are_refused() {
 fn chrono_now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
 }
+
+#[tokio::test]
+async fn a_failed_task_is_retried_where_it_failed() {
+    let r = start().await;
+    // No reply scripted: the model call fails, and so does the task.
+    let t = r.start_task("Flaky", "x").await;
+    let f = r.until(&t.id, "the failure", |t| t.state == "failed").await;
+    assert!(f.report.is_some_and(|r| !r.is_empty()), "the failure is the report");
+    assert!(r.run.app.retry("nope").await.is_err());
+    r.push("Flaky", |_| text("worked this time"));
+    let t2 = r.run.app.retry(&t.id).await.unwrap();
+    assert_eq!(t2.state, "running");
+    let d = r.done(&t.id).await;
+    assert_eq!(d.report.as_deref(), Some("worked this time"));
+    assert!(r.run.app.retry(&t.id).await.unwrap_err().contains("isn't failed"));
+}
+
+#[tokio::test]
+async fn raising_the_budget_lets_a_paused_task_go_on() {
+    let r = start().await;
+    r.push("Tight", |_| call("c1", "fs.ls", json!({})));
+    r.push("Tight", |_| text("finished after all"));
+    let t = r
+        .run
+        .app
+        .start_task(reagent_tools::app::StartTask { project: "site".into(), title: "Tight".into(), prompt: "x".into(), budget: Some(reagent_store::Budget { tokens: Some(100), ..Default::default() }), ..Default::default() })
+        .await
+        .unwrap();
+    let w = r.until(&t.id, "the budget stop", |t| t.wait.as_ref().is_some_and(|w| w.0["kind"] == "budget")).await;
+    assert!(r.run.app.raise_budget(&t.id, &reagent_store::Budget { tokens: Some(10), ..Default::default() }).await.unwrap_err().contains("still over"), "{w:?}");
+    let raised = r.run.app.raise_budget(&t.id, &reagent_store::Budget { tokens: Some(10_000), ..Default::default() }).await.unwrap();
+    assert_eq!(raised.budget.tokens, Some(10_110));
+    let d = r.done(&t.id).await;
+    assert_eq!(d.report.as_deref(), Some("finished after all"));
+}

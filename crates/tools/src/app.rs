@@ -319,15 +319,60 @@ impl App {
     }
 
     /// Changes a task's profile or budget (a new profile takes effect when
-    /// it's next started: subnet keeps an agent's type).
+    /// it's next started: subnet keeps an agent's type). A task paused over
+    /// its budget goes on if the new one allows it.
     pub async fn set_limits(&self, id: &str, profile: Option<&str>, budget: Option<Budget>) -> Result<Task, String> {
         let t = self.task(id).await?;
         let profile = match profile {
             Some(p) => self.config.profile(Some(p))?.0.to_string(),
             None => t.profile.clone(),
         };
-        self.store.set_task_limits(id, &profile, &budget.unwrap_or(t.budget.0.clone())).await.map_err(|e| e.to_string())?;
+        let budget = budget.unwrap_or(t.budget.0.clone());
+        self.store.set_task_limits(id, &profile, &budget).await.map_err(|e| e.to_string())?;
         self.notified.lock().unwrap().remove(&(id.to_string(), "budget".to_string()));
+        if t.wait.as_ref().is_some_and(|w| w.0["kind"] == "budget") {
+            let minutes = (chrono::Utc::now().timestamp() - t.created) / 60;
+            let over = budget.tokens.is_some_and(|l| t.tokens as u64 > l) || budget.cost.is_some_and(|l| t.cost > l) || budget.minutes.is_some_and(|l| minutes as u64 > l);
+            if over {
+                self.task_changed(id).await;
+                return Err(format!("still over: {} tokens, {:.2} spent, {minutes} min; raise it further", t.tokens, t.cost));
+            }
+            self.resume(id).await?;
+        }
+        self.task_changed(id).await;
+        self.task(id).await
+    }
+
+    /// Adds to a task's budget (tokens, cost, minutes; what it has none of stays unlimited).
+    pub async fn raise_budget(&self, id: &str, more: &Budget) -> Result<Task, String> {
+        let t = self.task(id).await?;
+        let b = &t.budget.0;
+        let add = |have: Option<u64>, more: Option<u64>| match (have, more) {
+            (Some(h), Some(m)) => Some(h + m),
+            (h, _) => h,
+        };
+        let raised = Budget {
+            tokens: add(b.tokens, more.tokens),
+            cost: match (b.cost, more.cost) {
+                (Some(h), Some(m)) => Some(h + m),
+                (h, _) => h,
+            },
+            minutes: add(b.minutes, more.minutes),
+            daily_cost: b.daily_cost,
+        };
+        self.set_limits(id, None, Some(raised)).await
+    }
+
+    /// Resumes a failed task where it failed (its model call or step again).
+    pub async fn retry(&self, id: &str) -> Result<Task, String> {
+        let t = self.task(id).await?;
+        if t.state != "failed" {
+            return Err(format!("{} isn't failed (it's {})", t.title, t.state));
+        }
+        let agent = Self::agent_of(&t)?;
+        self.hub()?.op(&root(), Op::Resume { id: agent, tree: true }).await?;
+        self.store.set_state(id, "running", None).await.map_err(|e| e.to_string())?;
+        self.notified.lock().unwrap().retain(|(t, _)| t != id);
         self.task_changed(id).await;
         self.task(id).await
     }
@@ -445,11 +490,6 @@ impl App {
             return;
         }
         self.record_usage(t).await;
-        // A task paused over its budget stays so: its answer was its last step.
-        if t.wait.as_ref().is_some_and(|w| w.0["kind"] == "budget") {
-            let _ = self.store.set_report(&t.id, content).await;
-            return;
-        }
         let _ = self.store.set_report(&t.id, content).await;
         if kind != "cancelled" {
             self.notify(kind, Some(t), &format!("{} — {state}", t.title), &content.chars().take(400).collect::<String>()).await;
