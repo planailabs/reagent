@@ -245,7 +245,7 @@ impl App {
             }
             match hub.upgrade(&root(), id, true, None).await {
                 Ok(s) => {
-                    let _ = self.store.set_agent(&t.id, &s.id.to_string()).await;
+                    let _ = self.move_agent(&t, &s.id.to_string()).await;
                     tracing::info!(task = %t.id, "task moved onto the current version");
                 }
                 Err(e) => tracing::warn!(task = %t.id, error = %e, "couldn't upgrade a task's agent"),
@@ -519,7 +519,7 @@ impl App {
         let own = crate::cluster::project_mixture(name, &p.slug);
         let ty = if hub.cluster().spec.mixtures.contains_key(&own) { own } else { crate::cluster::mixture(name) };
         let s = hub.upgrade(&root(), Self::agent_of(&t)?, true, Some(&ty)).await.map_err(|e| e.to_string())?;
-        self.store.set_agent(id, &s.id.to_string()).await.map_err(|e| e.to_string())?;
+        self.move_agent(&t, &s.id.to_string()).await?;
         self.store.set_task_limits(id, name, &t.budget.0).await.map_err(|e| e.to_string())?;
         // A failed agent's copy is failed too: retried there.
         let failed = hub.list_agents().await.iter().any(|a| a.id == s.id && a.phase == "failed");
@@ -920,6 +920,48 @@ impl App {
         self.task_changed(&t.id).await;
     }
 
+    /// What a task's current agent used: tokens and cost.
+    async fn agent_usage(&self, t: &Task) -> (i64, f64) {
+        let (Ok(hub), Some(agent)) = (self.hub(), t.agent.as_deref()) else { return (0, 0.0) };
+        let Ok(list) = serde_json::to_value(hub.list_agents().await) else { return (0, 0.0) };
+        let Some(a) = list.as_array().and_then(|l| l.iter().find(|a| a["id"] == agent)) else { return (0, 0.0) };
+        let (input, output, cached) = usage_of(&a["usage"]);
+        let price = self.config.profile.get(&t.profile).map(|p| p.price).unwrap_or_default();
+        ((input + output) as i64, price.cost(input, cached, output))
+    }
+
+    /// Counts each task's earlier agents again (those its current one
+    /// superseded, all the way back): their usage stays with the task.
+    pub async fn recount_usage(&self) {
+        let Ok(hub) = self.hub() else { return };
+        let agents = hub.list_agents().await;
+        for t in self.store.tasks(None, None, false, 100_000).await.unwrap_or_default() {
+            let Some(current) = t.agent.as_deref().and_then(|a| a.parse::<uuid::Uuid>().ok()) else { continue };
+            let price = self.config.profile.get(&t.profile).map(|p| p.price).unwrap_or_default();
+            let (mut tokens, mut cost) = (0i64, 0f64);
+            let mut wanted = vec![current];
+            while let Some(id) = wanted.pop() {
+                for a in agents.iter().filter(|a| a.superseded_by == Some(id)) {
+                    let u = serde_json::to_value(a.usage).unwrap_or_default();
+                    let (input, output, cached) = usage_of(&u);
+                    // ponytail: earlier agents counted at the current profile's prices.
+                    tokens += (input + output) as i64;
+                    cost += price.cost(input, cached, output);
+                    wanted.push(a.id);
+                }
+            }
+            if tokens != t.base_tokens {
+                let _ = self.store.set_base_usage(&t.id, tokens, cost).await;
+            }
+        }
+    }
+
+    /// A task moves onto a new agent: what the old one used stays counted.
+    pub async fn move_agent(&self, t: &Task, agent: &str) -> Result<(), String> {
+        let (tokens, cost) = self.agent_usage(t).await;
+        self.store.move_agent(&t.id, agent, tokens, cost).await.map_err(|e| e.to_string())
+    }
+
     /// A task's tokens and cost, from its agent's usage.
     async fn record_usage(&self, t: &Task) {
         let (Ok(hub), Some(agent)) = (self.hub(), t.agent.as_deref()) else { return };
@@ -942,7 +984,7 @@ impl App {
             let (input, output, cached) = usage_of(u);
             let price = self.config.profile.get(&t.profile).map(|p| p.price).unwrap_or_default();
             let cost = price.cost(input, cached, output);
-            if (input + output) as i64 != t.tokens {
+            if t.base_tokens + (input + output) as i64 != t.tokens {
                 let _ = self.store.set_usage(&t.id, (input + output) as i64, cost).await;
             }
             let phase = a["phase"].as_str().unwrap_or("");
@@ -1010,13 +1052,15 @@ impl App {
             // Over budget: paused (quick), and the person hears it.
             let b = &t.budget.0;
             let minutes = (chrono::Utc::now().timestamp() - t.created) / 60;
-            let over = b.tokens.is_some_and(|l| input + output > l) || b.cost.is_some_and(|l| cost > l) || b.minutes.is_some_and(|l| minutes as u64 > l);
+            // All the task's agents together.
+            let (all_tokens, all_cost) = (t.base_tokens as u64 + input + output, t.base_cost + cost);
+            let over = b.tokens.is_some_and(|l| all_tokens > l) || b.cost.is_some_and(|l| all_cost > l) || b.minutes.is_some_and(|l| minutes as u64 > l);
             if over && a["paused"] != true && state != "done" {
                 let _ = hub.op(&root(), Op::Pause { id: Self::agent_of(&t)?, mode: PauseMode::Quick, tree: true }).await;
                 state = "waiting".into();
-                wait = Some(json!({"kind": "budget", "tokens": input + output, "cost": cost, "minutes": minutes, "budget": b}));
+                wait = Some(json!({"kind": "budget", "tokens": all_tokens, "cost": all_cost, "minutes": minutes, "budget": b}));
                 if self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
-                    self.notify("budget", Some(&t), &format!("{} is over budget", t.title), &format!("{} tokens, {cost:.2} spent, {minutes} min: paused", input + output)).await;
+                    self.notify("budget", Some(&t), &format!("{} is over budget", t.title), &format!("{all_tokens} tokens, {all_cost:.2} spent, {minutes} min: paused")).await;
                 }
             }
             if state != t.state || wait != t.wait.as_ref().map(|w| w.0.clone()) {

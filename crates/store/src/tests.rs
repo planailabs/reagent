@@ -49,7 +49,10 @@ async fn tasks_keep_their_state_and_usage() {
     let w = s.task(&t.id).await.unwrap().unwrap();
     assert_eq!(w.wait.unwrap().0["question"], "which?");
     s.set_cwd(&t.id, "/wt/fix", Some(&Worktree { path: "/wt/fix".into(), branch: "reagent/fix".into(), base: "main".into() })).await.unwrap();
-    s.set_usage(&t.id, 1200, 0.25).await.unwrap();
+    s.set_usage(&t.id, 1000, 0.2).await.unwrap();
+    // A new agent: what the old one used is carried over.
+    s.move_agent(&t.id, "a-2", 1000, 0.2).await.unwrap();
+    s.set_usage(&t.id, 200, 0.05).await.unwrap();
     s.set_state(&t.id, "done", None).await.unwrap();
     let d = s.task(&t.id).await.unwrap().unwrap();
     assert!(d.finished.is_some() && d.wait.is_none() && !d.is_active());

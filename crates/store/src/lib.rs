@@ -130,6 +130,9 @@ pub struct Task {
     pub updated: i64,
     pub finished: Option<i64>,
     pub kind: Option<String>,
+    /// Used by its earlier agents (before an upgrade or a model switch).
+    pub base_tokens: i64,
+    pub base_cost: f64,
 }
 
 impl Task {
@@ -445,6 +448,24 @@ impl Store {
         .await
     }
 
+    /// What a task's earlier agents used, as counted again.
+    pub async fn set_base_usage(&self, id: &str, tokens: i64, cost: f64) -> R<()> {
+        sqlx::query("update tasks set tokens = tokens - base_tokens + $2, cost = cost - base_cost + $3, base_tokens = $2, base_cost = $3 where id = $1").bind(id).bind(tokens).bind(cost).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// A new agent for a task whose old one used `tokens` and `cost`: carried over.
+    pub async fn move_agent(&self, id: &str, agent: &str, tokens: i64, cost: f64) -> R<()> {
+        sqlx::query("update tasks set agent = $2, base_tokens = base_tokens + $3, base_cost = base_cost + $4, tokens = base_tokens + $3, cost = base_cost + $4, updated = unixepoch() where id = $1")
+            .bind(id)
+            .bind(agent)
+            .bind(tokens)
+            .bind(cost)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_agent(&self, id: &str, agent: &str) -> R<()> {
         sqlx::query("update tasks set agent = $2, updated = unixepoch() where id = $1").bind(id).bind(agent).execute(&self.pool).await?;
         Ok(())
@@ -478,8 +499,9 @@ impl Store {
         Ok(())
     }
 
+    /// The current agent's usage (what earlier agents used is added).
     pub async fn set_usage(&self, id: &str, tokens: i64, cost: f64) -> R<()> {
-        sqlx::query("update tasks set tokens = $2, cost = $3 where id = $1").bind(id).bind(tokens).bind(cost).execute(&self.pool).await?;
+        sqlx::query("update tasks set tokens = base_tokens + $2, cost = base_cost + $3 where id = $1").bind(id).bind(tokens).bind(cost).execute(&self.pool).await?;
         Ok(())
     }
 

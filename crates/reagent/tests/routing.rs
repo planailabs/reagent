@@ -133,3 +133,26 @@ async fn a_failing_model_falls_back() {
     let d = r.done(&t.id).await;
     assert_eq!((d.profile.as_str(), d.report.as_deref()), ("default", Some("made it")));
 }
+
+#[tokio::test]
+async fn usage_stays_counted_across_a_move() {
+    let r = routed().await;
+    r.push("Count", |_| text("one"));
+    r.push("Count", |_| text("two"));
+    let t = r.start_task("Count", "x").await;
+    let first = r.done(&t.id).await;
+    assert!(first.tokens > 0);
+    r.run.app.switch_profile(&t.id, "big", "test").await.unwrap();
+    assert_eq!(r.run.app.task(&t.id).await.unwrap().tokens, first.tokens, "not lost with the old agent");
+    // Counted again from the agents (as at a start): the same, not twice.
+    r.run.app.recount_usage().await;
+    let again = r.run.app.task(&t.id).await.unwrap();
+    assert_eq!((again.tokens, again.base_tokens), (first.tokens, first.tokens));
+    // A task moved before carrying was a thing (base lost): the recount restores it.
+    r.run.app.store.set_base_usage(&t.id, 0, 0.0).await.unwrap();
+    r.run.app.recount_usage().await;
+    assert_eq!(r.run.app.task(&t.id).await.unwrap().base_tokens, first.tokens);
+    r.run.app.message(&t.id, "again").await.unwrap();
+    let after = r.until(&t.id, "the second report", |t| t.report.as_deref() == Some("two") && t.tokens > first.tokens).await;
+    assert!(after.tokens >= first.tokens * 2, "both agents counted: {} vs {}", after.tokens, first.tokens);
+}

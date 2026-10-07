@@ -103,6 +103,7 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     let _ = app.mcp_base.set(mcp_base.clone());
     app.apply_cluster().await.map_err(anyhow::Error::msg)?;
     tracing::info!("cluster applied");
+    app.recount_usage().await;
     resume_paused(&app, &hub).await;
     app.follow();
     app.watch_mcp();
