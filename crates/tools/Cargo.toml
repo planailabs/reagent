@@ -29,6 +29,10 @@ serde_yaml.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+sqlx.workspace = true
+web-push-native.workspace = true
+axum.workspace = true
+subnet-cluster.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

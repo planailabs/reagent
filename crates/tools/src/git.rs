@@ -88,7 +88,7 @@ pub fn checkout_of(repo: &Path, branch: &str) -> Result<Option<PathBuf>, String>
     Ok(None)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Strategy {
     Merge,
