@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/store"]
+members = ["crates/store", "crates/supervisor"]
 
 [workspace.package]
 edition = "2024"
@@ -32,6 +32,7 @@ globset = "0.4"
 grep-regex = "0.1"
 grep-searcher = "0.1"
 hcl-rs = "0.19"
+nix = { version = "0.30", features = ["signal", "process"] }
 ignore = "0.4"
 portable-pty = "0.9"
 rand = "0.9"
