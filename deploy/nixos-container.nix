@@ -1,6 +1,6 @@
 # reagent on this container: tools for its tasks, nftables with port 80
-# open, and the service (the binary and the web UI in /opt/reagent, copied
-# in with their nix closure; data in /var/lib/reagent).
+# open, and the service (/opt/reagent/reagent: a static binary with the web
+# UI in it; data in /var/lib/reagent).
 { pkgs, ... }:
 
 {
@@ -33,7 +33,6 @@
     path = [ "/run/current-system/sw" ] ++ (with pkgs; [ bashInteractive coreutils findutils gnugrep gnused gawk diffutils git gh nix openssh curl jq ripgrep apprise gnumake gcc python3 nodejs which procps gnutar gzip xz ]);
     environment = {
       REAGENT_DATA = "/var/lib/reagent";
-      REAGENT_WEBUI = "/opt/reagent/webui";
       HOME = "/var/lib/reagent";
     };
     serviceConfig = {

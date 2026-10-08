@@ -109,7 +109,7 @@ pub async fn start_in(data: tempfile::TempDir, extra: &str) -> R {
     std::fs::write(p.join("a.txt"), "hello world\n").unwrap();
     git(p, &["add", "."]);
     git(p, &["commit", "-q", "-m", "init"]);
-    let run = reagent::up(reagent::Opts { data: data.path().into(), listen: None, in_process_supervisor: true, exe: PathBuf::new(), dist: PathBuf::from("/nonexistent") }).await.unwrap();
+    let run = reagent::up(reagent::Opts { data: data.path().into(), listen: None, in_process_supervisor: true, exe: PathBuf::new() }).await.unwrap();
     let mut proj = reagent_store::Project::new("site", "Site", &p.display().to_string());
     proj.merge = "approve".into();
     run.app.put_project(proj).await.unwrap();

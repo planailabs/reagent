@@ -239,8 +239,7 @@ fn main() -> anyhow::Result<()> {
 async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
     match cmd {
         Cmd::Up { listen } => {
-            let dist = std::env::var_os("REAGENT_WEBUI").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../webui/dist")));
-            let r = reagent::up(reagent::Opts { data: data.clone(), listen, in_process_supervisor: false, exe: std::env::current_exe()?, dist }).await?;
+            let r = reagent::up(reagent::Opts { data: data.clone(), listen, in_process_supervisor: false, exe: std::env::current_exe()? }).await?;
             if r.app.store.setting("password").await?.is_none() {
                 tracing::warn!("no password set: run `reagent passwd` before using the web interface");
             }

@@ -1,6 +1,6 @@
 ---
 name: deploy-nixos-container
-description: Deploy reagent to a NixOS incus container (new or existing) - build here, copy the binary with its nix closure and the web UI in, switch NixOS with deploy/nixos-container.nix (nftables, port 80, reagent as a service), set its key and password, and check it answers. Triggers on: deploy reagent, update reagent on the container, set up a reagent container, redeploy reagent, reagent on nixos.
+description: Deploy reagent to a NixOS incus container (new or existing) - build here (a static musl binary with the web UI in it), copy it in, switch NixOS with deploy/nixos-container.nix (nftables, port 80, reagent as a service), set its key and password, and check it answers. Triggers on: deploy reagent, update reagent on the container, set up a reagent container, redeploy reagent, reagent on nixos.
 ---
 
 # Deploy reagent to a NixOS incus container
@@ -29,11 +29,10 @@ adds `./reagent.nix` next to it (once).
 deploy/push.sh <remote>:<container>
 ```
 
-It builds the web UI and `reagent` (release) here, exports the store paths the
-binary loads (glibc, gcc libs) with their closure, pushes binary, UI and
-`deploy/nixos-container.nix` (as `/etc/nixos/reagent.nix`), imports the
-closure, swaps `/opt/reagent`, runs `nixos-rebuild switch` and restarts the
-service. What the module gives: nftables with the firewall open on port 80,
+It builds the web UI and `reagent` here (release, a static musl binary with
+the UI embedded: nothing else to copy), pushes the binary and
+`deploy/nixos-container.nix` (as `/etc/nixos/reagent.nix`), swaps
+`/opt/reagent`, runs `nixos-rebuild switch` and restarts the service. What the module gives: nftables with the firewall open on port 80,
 tools for tasks (git, gh, nix, compilers, …), the `reagent` user and the
 service on `[::]:80` (`KillSignal=SIGINT`: tasks are paused first;
 `KillMode=process`: the supervisor and its commands survive restarts).

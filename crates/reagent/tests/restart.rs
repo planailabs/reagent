@@ -31,7 +31,7 @@ async fn a_task_paused_at_stop_goes_on_after_the_next_start() {
     assert_eq!(r.requests("Long").len(), 1, "nothing more was asked of the model while stopping");
 
     // The next start, on the same data.
-    let again = reagent::up(reagent::Opts { data: r.data.path().into(), listen: None, in_process_supervisor: true, exe: Default::default(), dist: "/nonexistent".into() }).await.unwrap();
+    let again = reagent::up(reagent::Opts { data: r.data.path().into(), listen: None, in_process_supervisor: true, exe: Default::default() }).await.unwrap();
     assert!(!r.data.path().join("paused-at-stop.json").exists());
     assert_eq!(std::fs::read_to_string(r.data.path().join("cluster.hcl")).unwrap(), cluster_before, "the same servers, at the same URLs: running tasks stay current");
     let mut done = None;
@@ -47,7 +47,7 @@ async fn a_task_paused_at_stop_goes_on_after_the_next_start() {
 }
 
 async fn again(r: &R) -> reagent::Running {
-    reagent::up(reagent::Opts { data: r.data.path().into(), listen: None, in_process_supervisor: true, exe: Default::default(), dist: "/nonexistent".into() }).await.unwrap()
+    reagent::up(reagent::Opts { data: r.data.path().into(), listen: None, in_process_supervisor: true, exe: Default::default() }).await.unwrap()
 }
 
 async fn until_state(run: &reagent::Running, id: &str, what: &str, f: impl Fn(&reagent_store::Task) -> bool) -> reagent_store::Task {

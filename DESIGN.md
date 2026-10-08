@@ -198,7 +198,7 @@ A trigger runs a script that watches something (a CI pipeline, a queue, an inbox
 
 ## Web interface
 
-Vue + Parcel (`webui/`), served by `reagent up`; live over SSE (`/api/events`).
+Vue + Parcel (`webui/`), built into `webui/dist` and embedded in the binary (rust-embed; a debug build reads the folder): served by `reagent up` (hashed assets cached for good, the page and the service worker not); live over SSE (`/api/events`).
 
 - **Inbox:** waiting tasks (approvals, questions, merges, budgets), triggers whose script waits for approval (allow, always, deny), failed ones, tasks going on, new notifications.
 - **Projects:** the list and adding one; a project's tabs: tasks (a tree, subtasks under their parent), new task (profile, budget, skills), cron (run now, edit, on/off), triggers (each with its schedule, where it's kept, its approval, failures and last runs; run now, edit, on/off, move to the repo or back, remove; a webhook's URL), policy (the rules, ordered), memory, skills, mcp (its own servers), settings.
@@ -256,6 +256,10 @@ notify {
 ## CLI
 
 `reagent [--data <dir>] up [--listen <addr>]`, `supervisor [--stop]`, `passwd [--password-stdin]`, `status`, `mcp add|list|remove`, `secret set|list|get|remove`, `trigger add|list|remove|enable|disable|run|move|approve`, `token add|list|revoke`.
+
+## Building
+
+`cargo build --release -p reagent --target $REAGENT_MUSL_TARGET` in the dev shell gives one static (musl, static-pie) binary with the web UI in it (build `webui` first); the dev shell carries the musl target and a static C toolchain for SQLite and the TLS crypto. subnet is used without its default features (no tool router: fastembed's ONNX runtime has no static musl build; no hub web UI). `deploy/push.sh` copies just that binary.
 
 ## Code layout
 

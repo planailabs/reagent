@@ -23,7 +23,6 @@ pub struct Opts {
     pub in_process_supervisor: bool,
     /// The reagent binary (to start the supervisor).
     pub exe: PathBuf,
-    pub dist: PathBuf,
 }
 
 pub struct Running {
@@ -110,7 +109,7 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     reagent_tools::cron::schedule(app.clone());
     reagent_tools::triggers::schedule(app.clone());
 
-    let web = Arc::new(reagent_web::Web { app: app.clone(), hub_url: hub_url.clone(), hub_token: admin_token.clone(), dist: o.dist.clone() });
+    let web = Arc::new(reagent_web::Web { app: app.clone(), hub_url: hub_url.clone(), hub_token: admin_token.clone() });
     let web_l = tokio::net::TcpListener::bind(&listen).await.map_err(|e| anyhow::anyhow!("listening on {listen}: {e}"))?;
     let web_url = format!("http://{}", web_l.local_addr()?);
     let r = reagent_web::router(web);

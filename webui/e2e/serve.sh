@@ -36,7 +36,6 @@ git init -q -b main
 git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 echo "e2e-password" | "$root/target/debug/reagent" --data "$tmp/data" passwd --password-stdin
 export HOME="$tmp/home"
-export REAGENT_WEBUI="$root/webui/dist"
 "$root/target/debug/reagent" --data "$tmp/data" up &
 up=$!
 # Playwright ends this script: end reagent and its supervisor with it.

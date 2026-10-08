@@ -23,8 +23,6 @@ pub struct Web {
     /// The hub's own API, for reference (its admin token stays here).
     pub hub_url: String,
     pub hub_token: String,
-    /// The built UI (`webui/dist`).
-    pub dist: std::path::PathBuf,
 }
 
 pub struct St {
@@ -67,15 +65,33 @@ async fn guard(State(s): State<S>, req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+/// The built web UI (`webui/dist`), in the binary (a debug build reads the folder).
+#[derive(rust_embed::Embed)]
+#[folder = "../../webui/dist"]
+#[allow_missing = true]
+struct Ui;
+
+/// A file of the UI; anything else is the app (it routes by the hash).
+async fn ui(uri: axum::http::Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let (file, name) = match Ui::get(path).filter(|_| !path.is_empty()) {
+        Some(f) => (f, path),
+        None => match Ui::get("index.html") {
+            Some(f) => (f, "index.html"),
+            None => return (StatusCode::NOT_FOUND, "the web UI isn't built (cd webui && npm run build)").into_response(),
+        },
+    };
+    // Parcel's file names carry their hash: kept; the page and the service worker aren't.
+    let cache = if name == "index.html" || name.starts_with("sw") { "no-cache" } else { "public, max-age=31536000, immutable" };
+    ([(header::CONTENT_TYPE, file.metadata.mimetype().to_string()), (header::CACHE_CONTROL, cache.to_string())], file.data).into_response()
+}
+
 pub fn router(w: Arc<Web>) -> Router {
-    let dist = w.dist.clone();
     let s: S = Arc::new(St { w, attempts: Default::default() });
-    let index = dist.join("index.html");
-    let files = tower_http::services::ServeDir::new(&dist).fallback(tower_http::services::ServeFile::new(index));
     let mcp = axum::Router::new().nest_service("/mcp", mcp::service(s.w.app.clone())).layer(axum::middleware::from_fn_with_state(s.clone(), mcp::auth));
     api::routes()
         .merge(mcp.with_state(s.clone()))
-        .fallback_service(files)
+        .fallback(ui)
         .layer(axum::middleware::from_fn_with_state(s.clone(), guard))
         .with_state(s)
 }

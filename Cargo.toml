@@ -12,7 +12,8 @@ reagent-supervisor = { path = "crates/supervisor" }
 reagent-tools = { path = "crates/tools" }
 reagent-web = { path = "crates/web" }
 # subagent-net: the hub, the node and the agents reagent runs on.
-subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
+# Without the tool router (fastembed/onnxruntime: no static musl build) and the hub's own web UI.
+subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99", default-features = false }
 subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
 subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
 subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
@@ -34,6 +35,7 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 hcl-rs = "0.19"
 hmac = "0.12"
+rust-embed = { version = "8", features = ["mime-guess"] }
 nix = { version = "0.30", features = ["signal", "process"] }
 ignore = "0.4"
 portable-pty = "0.9"
@@ -53,7 +55,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
-tower-http = { version = "0.6", features = ["fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -65,3 +66,6 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+[profile.release]
+strip = "symbols"
