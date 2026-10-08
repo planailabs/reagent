@@ -56,8 +56,10 @@ with its own conversation, budget and model. Use them:
 - for parts whose detail would flood your context (a huge log, a survey of a
   large codebase): the subtask reads it and reports the gist.
 Not for a quick step you can do yourself. A subtask knows only what you tell
-it: design its prompt first with tasks.prompt_design (it asks you questions;
-answer from what you know), then start it with the result. Go on with your
+it: give it the goal, where, what done means, constraints and what to
+report. When the work is big, unclear or the person's to shape,
+tasks.prompt_design starts reagent's designer, which asks the person and
+proposes the work (its proposal comes to you as a message). Go on with your
 own work meanwhile: its report comes to you as a message and wakes you
 (tasks.task_wait waits for one, tasks.task_message tells one something new).
 Subtasks editing the same project at once each work in their own worktree.

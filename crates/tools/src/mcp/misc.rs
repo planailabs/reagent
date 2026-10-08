@@ -31,14 +31,8 @@ pub struct SecretTools(pub Arc<App>);
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Design {
-    /// What the subtask should achieve, roughly.
+    /// What the work should achieve, roughly, and what you know that matters.
     pub goal: String,
-    /// Your answers to the designer's questions so far.
-    #[serde(default)]
-    pub answers: Vec<crate::design::Answer>,
-    /// Propose now, without more questions.
-    #[serde(default)]
-    pub propose: bool,
     /// Another project (default: this one).
     pub project: Option<String>,
 }
@@ -316,13 +310,11 @@ fn task_line(t: &reagent_store::Task) -> String {
 
 #[tool_router(server_handler)]
 impl TaskTools {
-    #[tool(description = "Design a prompt for a subtask before starting it: give a rough goal; it asks you questions (answer them from what you know, and call again with `answers`) or proposes a title, prompt, skills, kind and budget for tasks.task_spawn. `propose: true` asks for the proposal now. Worth it for any subtask that isn't trivial.")]
+    #[tool(description = "Have reagent's designer work out a subtask's work with the person before you start it: a design task reads the project, asks the person what it can't find out, and reports a proposal (tasks, cron entries, triggers, repo skills, each with a clear prompt). Its report comes to you as a message; start what fits with task_spawn, cron_add, trigger_add. Worth it when the work is big, unclear, or the person's to shape.")]
     async fn prompt_design(&self, Parameters(a): Parameters<Design>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
-        let project = a.project.unwrap_or(p.slug);
-        let goal = format!("{}\n\n(Asked by the task \"{}\", which will start it as its subtask.)", a.goal.trim(), t.title);
-        let step = self.0.design(&project, "subtask", &goal, &a.answers, a.propose).await?;
-        Ok(crate::design::step_text(&step))
+        let d = self.0.start_design_task(a.project.as_deref().unwrap_or(&p.slug), "subtask", &a.goal, Some(&t)).await?;
+        Ok(format!("design task {} started ({}); its proposal comes to you as a message when it's done", d.id, d.title))
     }
 
     #[tool(description = "Start a subtask: another task working on its own (in this project, or another if the policy allows). Its report comes to you as a message when it ends.")]

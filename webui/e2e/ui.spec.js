@@ -281,23 +281,25 @@ test("over the limit a task is queued, and started now by hand", async ({ page }
   await expect(page.getByLabel("tasks at once")).toHaveValue("");
 });
 
-test("the guide asks, proposes, makes a suggested skill and fills the task", async ({ page }) => {
+test("the guide reads, asks, and proposes items the person picks and creates", async ({ page }) => {
   await page.goto("/#/project/site/new");
   await page.getByText("design it with the guide").click();
   await page.getByLabel("goal").fill("make the page nicer");
   await page.getByRole("button", { name: "design", exact: true }).click();
-  const q = page.getByLabel("designer question 1");
-  await expect(q).toContainText("Which page?");
-  await q.getByLabel("home").check();
-  await page.getByRole("button", { name: "next" }).click();
+  await expect(page.getByRole("heading", { name: "Design: make the page nicer" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "propose now" })).toBeVisible();
+  await page.getByRole("button", { name: "home" }).click();
   const p = page.getByLabel("proposal");
-  await expect(p).toContainText("Polish the page");
-  await expect(p.locator("strong")).toHaveText("nicer");
-  await p.getByRole("button", { name: "make the ticked ones" }).click();
-  await expect(p).toContainText("✓ skill page-polish written");
-  await p.getByRole("button", { name: "use it below" }).click();
-  await expect(page.getByLabel("title", { exact: true })).toHaveValue("Polish the page");
-  await expect(page.getByLabel("what to do")).toHaveValue("Make the page **nicer**.");
+  await expect(p).toContainText("the home page");
+  await expect(p.getByLabel("item 1", { exact: true })).toContainText("task: Polish the page");
+  await expect(p.getByLabel("item 1", { exact: true }).locator("strong")).toHaveText("nicer");
+  // Edit the task's title, leave the skill out, create.
+  await p.getByLabel("item 1", { exact: true }).getByRole("button", { name: "edit" }).click();
+  await p.getByLabel("item 1", { exact: true }).getByLabel("item title").fill("Polish the home page");
+  await p.getByLabel("take item 2").uncheck();
+  await p.getByRole("button", { name: "create the ticked ones" }).click();
+  await expect(p).toContainText("✓ task Polish the home page started");
+  await expect(p).not.toContainText("page-polish written");
 });
 
 test("reagent's docs are readable", async ({ page }) => {

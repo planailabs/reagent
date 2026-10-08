@@ -51,9 +51,9 @@ pub fn routes() -> Router<S> {
         .route("/api/logout", post(logout))
         .route("/api/config", get(config))
         .route("/api/settings", get(settings).put(put_settings))
-        .route("/api/design", post(design))
-        .route("/api/design/task", post(design_task))
-        .route("/api/design/apply", post(design_apply))
+        .route("/api/design", post(design_task))
+        .route("/api/design/create", post(design_create))
+        .route("/api/tasks/{id}/proposal", get(proposal))
         .route("/api/docs", get(docs))
         .route("/api/docs/{name}", get(doc))
         .route("/api/events", get(events))
@@ -197,47 +197,38 @@ async fn put_settings(State(s): State<S>, Json(v): Json<Settings>) -> R {
 struct DesignReq {
     project: String,
     goal: String,
-    /// task (default), cron or trigger.
+    /// What the person started from: task (default), cron or trigger.
     #[serde(default)]
     target: Option<String>,
-    #[serde(default)]
-    answers: Vec<reagent_tools::design::Answer>,
-    #[serde(default)]
-    propose: bool,
 }
 
-/// A round of the prompt designer: questions, or a proposal.
-async fn design(State(s): State<S>, Json(d): Json<DesignReq>) -> R {
+/// The designer: a design task that reads the project, asks, and proposes.
+async fn design_task(State(s): State<S>, Json(d): Json<DesignReq>) -> R {
     let target = d.target.as_deref().unwrap_or("task");
     if !matches!(target, "task" | "cron" | "trigger") {
         return Err(E(StatusCode::BAD_REQUEST, "target: task, cron or trigger".into()));
     }
-    Ok(Json(json!(s.w.app.design(&d.project, target, &d.goal, &d.answers, d.propose).await?)))
+    Ok(Json(json!(s.w.app.start_design_task(&d.project, target, &d.goal, None).await?)))
 }
 
-/// The designer as a read-only task that looks at the project first.
-async fn design_task(State(s): State<S>, Json(d): Json<DesignReq>) -> R {
-    Ok(Json(json!(s.w.app.start_design_task(&d.project, d.target.as_deref().unwrap_or("task"), &d.goal).await?)))
+/// A design task's proposal (null until it has one).
+async fn proposal(State(s): State<S>, Path(id): Path<String>) -> R {
+    Ok(Json(json!(s.w.app.proposal(&id).await?)))
 }
 
 #[derive(Deserialize)]
-struct Apply {
+struct Create {
     project: String,
-    suggestions: Vec<reagent_tools::design::Suggestion>,
+    items: Vec<reagent_tools::design::Item>,
 }
 
-/// Makes the suggestions the person chose; what became of each.
-async fn design_apply(State(s): State<S>, Json(a): Json<Apply>) -> R {
-    let p = s.w.app.project(&a.project).await?;
-    let mut out = vec![];
-    for sug in &a.suggestions {
-        out.push(match reagent_tools::design::apply(&s.w.app.store, &p, sug).await {
-            Ok(done) => json!({"ok": true, "done": done}),
-            Err(e) => json!({"ok": false, "error": e}),
-        });
-    }
-    s.w.app.start_queued().await;
-    Ok(Json(json!(out)))
+/// Makes the items the person chose; what became of each.
+async fn design_create(State(s): State<S>, Json(c): Json<Create>) -> R {
+    let out = s.w.app.create_items(&c.project, &c.items).await?;
+    Ok(Json(json!(out.into_iter().map(|r| match r {
+        Ok(done) => json!({"ok": true, "done": done}),
+        Err(e) => json!({"ok": false, "error": e}),
+    }).collect::<Vec<_>>())))
 }
 
 /// reagent's own documentation (the system skills).

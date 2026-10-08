@@ -10,7 +10,7 @@ description: How people and other agents use reagent - the web UI (inbox, projec
 - **Inbox**: what waits for you (approvals, questions, merges, budgets,
   trigger scripts to allow), failed tasks, tasks going on, notifications.
 - **Projects**: each with tabs: tasks (a tree with subtasks), new task (with
-  the prompt designer), cron, triggers, policy, memory, skills, MCP servers,
+  the designer), cron, triggers, policy, memory, skills, MCP servers,
   secrets, settings.
 - **Task**: state, cost, todo list, what it waits for, the report, a message
   box, the transcript (live, markdown rendered), jobs (logs), terminals, the
@@ -31,7 +31,7 @@ email, ntfy, … as `reagent.hcl` says).
 
 `reagent up` runs it. Besides: `passwd`, `status`, `mcp add|list|remove`,
 `secret set|list|get|remove`, `trigger add|list|remove|enable|disable|run|move|approve`,
-`task design`, `token add|list|revoke`, `supervisor --stop`.
+`task design`, `task proposal`, `token add|list|revoke`, `supervisor --stop`.
 
 ## MCP API (for other agents)
 
@@ -40,5 +40,5 @@ email, ntfy, … as `reagent.hcl` says).
 `task_start`, `task_list`, `task_get`, `task_transcript`, `task_message`,
 `task_pause`, `task_resume`, `task_cancel`, `task_retry`, `task_raise_budget`,
 `task_switch_profile`, `task_approve`, `task_answer`, `task_merge`,
-`task_wait`, `search`, `prompt_design`, `docs_list`, `docs_read`,
+`task_wait`, `search`, `prompt_design`, `design_proposal`, `design_create`, `docs_list`, `docs_read`,
 `trigger_list`, `trigger_add`, `trigger_remove`, `trigger_run`, `trigger_move`.

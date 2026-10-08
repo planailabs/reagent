@@ -1,6 +1,7 @@
-//! The prompt designer (questions, then a proposal) for the person, for a
-//! task's subtasks and for outside agents; the design task that only reads;
-//! reagent's own docs (system skills) for tasks, the web UI and the MCP API.
+//! The designer: a design task that only reads and asks, then proposes
+//! items of any kind (tasks, cron entries, triggers, repo skills) that the
+//! person picks and creates; for agents a design subtask; reagent's own
+//! docs (system skills) for tasks, the web UI and the MCP API.
 
 mod common;
 
@@ -14,81 +15,90 @@ async fn login(r: &R) -> reqwest::Client {
     c
 }
 
-#[tokio::test]
-async fn the_designer_asks_then_proposes() {
-    let r = start().await;
-    std::fs::write(r.project.path().join("AGENTS.md"), "# Site\nBuild with make.\n").unwrap();
-    let c = login(&r).await;
-    let base = r.run.web_url.clone();
-    r.push("designer", |b| {
-        let user = b["messages"][1]["content"].as_str().unwrap();
-        assert!(user.contains("Build with make.") && user.contains("make the site faster") && user.ends_with("or propose."), "{user}");
-        assert!(b["messages"][0]["content"].as_str().unwrap().contains("# What a clear prompt has"), "the skill is its instructions");
-        assert_eq!(b["response_format"]["type"], "json_object");
-        text(r#"{"questions": [{"question": "Which pages?", "options": ["home", "all"]}]}"#)
-    });
-    let v: Value = c.post(format!("{base}/api/design")).json(&json!({"project": "site", "goal": "make the site faster"})).send().await.unwrap().json().await.unwrap();
-    assert_eq!(v["questions"][0]["options"][1], "all", "{v}");
-    r.push("designer", |b| {
-        let user = b["messages"][1]["content"].as_str().unwrap();
-        assert!(user.contains("- Q: Which pages?\n  A: home") && user.ends_with("Propose now."), "{user}");
-        text(r#"```json
-{"proposal": {"title": "Speed up the home page", "prompt": "Make / load in under 1s.", "skills": ["nope"], "kind": null, "profile": "default", "budget": {"cost": 1.5}, "note": "assumed the home page"}}
-```"#)
-    });
-    let v: Value = c.post(format!("{base}/api/design")).json(&json!({"project": "site", "goal": "make the site faster", "answers": [{"question": "Which pages?", "answer": "home"}], "propose": true})).send().await.unwrap().json().await.unwrap();
-    assert_eq!((v["proposal"]["title"].as_str(), v["proposal"]["skills"].as_array().map(|a| a.len()), v["proposal"]["profile"].as_str()), (Some("Speed up the home page"), Some(0), Some("default")), "{v}");
-    assert_eq!(c.post(format!("{base}/api/design")).json(&json!({"project": "site", "goal": " "})).send().await.unwrap().status(), 400);
-}
+const PROPOSAL: &str = "Here's the plan.\n```json\n{\"note\": \"weekly, on main\", \"items\": [\
+  {\"type\": \"task\", \"title\": \"Update deps now\", \"prompt\": \"Update the deps.\", \"skills\": [\"made-up\"], \"why\": \"once now\"},\
+  {\"type\": \"cron\", \"expr\": \"0 4 * * 1\", \"tz\": \"UTC\", \"title\": \"Weekly deps\", \"prompt\": \"Update deps.\", \"why\": \"weekly\"},\
+  {\"type\": \"trigger\", \"name\": \"ci\", \"mode\": \"poll\", \"every\": \"10m\", \"script\": \"true\", \"title\": \"CI {{key}}\", \"prompt\": \"Fix it.\", \"why\": \"on failure\"},\
+  {\"type\": \"skill\", \"name\": \"release\", \"description\": \"How to release\", \"body\": \"1. Tag.\\n2. Push.\", \"why\": \"it recurs\"}]}\n```";
 
 #[tokio::test]
-async fn a_task_designs_its_subtasks_prompt() {
-    let r = start().await;
-    r.push("designer", |b| {
-        assert!(b["messages"][0]["content"].as_str().unwrap().contains("subtask"));
-        assert!(b["messages"][1]["content"].as_str().unwrap().contains("(Asked by the task \"Lead\""));
-        text(r#"{"questions": [{"question": "Which file?", "options": ["a.txt"]}]}"#)
-    });
-    r.push("designer", |_| text(r#"{"proposal": {"title": "Fix a.txt", "prompt": "Fix the greeting in a.txt.", "note": ""}}"#));
-    r.push("Lead", |_| call("c1", "tasks.prompt_design", json!({"goal": "fix the greeting"})));
-    r.push("Lead", |b| {
-        assert!(last_result(b).contains("1. Which file? (e.g. a.txt)"), "{}", last_result(b));
-        call("c2", "tasks.prompt_design", json!({"goal": "fix the greeting", "answers": [{"question": "Which file?", "answer": "a.txt"}]}))
-    });
-    r.push("Lead", |b| {
-        assert!(last_result(b).contains("\"title\": \"Fix a.txt\""), "{}", last_result(b));
-        text("designed")
-    });
-    // Asked without a rule: the starter rules allow it.
-    let t = r.start_task("Lead", "x").await;
-    r.done(&t.id).await;
-}
-
-#[tokio::test]
-async fn a_design_task_only_reads_and_reports_a_proposal() {
+async fn a_design_task_reads_asks_and_proposes_what_the_person_creates() {
     let r = start().await;
     r.allow_all().await;
-    r.push_design();
-    let t = r.run.app.start_design_task("site", "task", "tidy the readme").await.unwrap();
-    assert_eq!((t.origin.as_str(), t.title.as_str()), ("design", "Design: tidy the readme"));
-    let t = r.done(&t.id).await;
-    assert!(t.report.unwrap().contains("```json"));
-    assert!(!r.project.path().join("x.txt").exists(), "its write was refused");
+    let c = login(&r).await;
+    let base = r.run.web_url.clone();
+    let t: Value = c.post(format!("{base}/api/design")).json(&json!({"project": "site", "goal": "keep the deps fresh", "target": "cron"})).send().await.unwrap().json().await.unwrap();
+    let id = t["id"].as_str().unwrap().to_string();
+    assert_eq!((t["origin"].as_str(), t["title"].as_str()), (Some("design"), Some("Design: keep the deps fresh")));
+    // Its first round: the skill loaded, the goal and the cron hint; it may not write.
+    r.push("Design: keep the deps fresh", |b| {
+        let all = all_text(b);
+        assert!(all.contains("## Skill: reagent-prompt-design") && all.contains("keep the deps fresh") && all.contains("again and again"), "{all}");
+        call("c1", "fs.write", json!({"path": "x.txt", "text": "no"}))
+    });
+    r.push("Design: keep the deps fresh", |b| {
+        assert!(last_result(b).contains("a design task only reads"), "{}", last_result(b));
+        call("c2", "ask.ask", json!({"question": "How often?", "options": ["weekly", "daily"]}))
+    });
+    r.push("Design: keep the deps fresh", |b| {
+        assert_eq!(last_result(b), "weekly");
+        text(PROPOSAL)
+    });
+    r.until(&id, "its question", |t| t.wait.as_ref().is_some_and(|w| w.0["kind"] == "question")).await;
+    assert_eq!(c.get(format!("{base}/api/tasks/{id}/proposal")).send().await.unwrap().json::<Value>().await.unwrap(), Value::Null, "none yet");
+    r.run.app.answer(&id, "weekly").await.unwrap();
+    r.done(&id).await;
+    assert!(!r.project.path().join("x.txt").exists());
+    let p: Value = c.get(format!("{base}/api/tasks/{id}/proposal")).send().await.unwrap().json().await.unwrap();
+    assert_eq!((p["note"].as_str(), p["items"].as_array().unwrap().len()), (Some("weekly, on main"), 4), "{p}");
+    assert_eq!(p["items"][0]["skills"], json!([]), "a skill that isn't there is dropped");
+    // The person edits the task, ticks all but the trigger, and creates them.
+    let mut items = p["items"].as_array().unwrap().clone();
+    items[0]["title"] = json!("Update deps today");
+    items.remove(2);
+    r.push("Update deps today", |b| {
+        assert!(all_text(b).contains("Update the deps."));
+        text("updated")
+    });
+    let out: Value = c.post(format!("{base}/api/design/create")).json(&json!({"project": "site", "items": items})).send().await.unwrap().json().await.unwrap();
+    assert!(out.as_array().unwrap().iter().all(|o| o["ok"] == true), "{out}");
+    assert!(out[0]["done"].as_str().unwrap().starts_with("task Update deps today started"));
+    assert_eq!(r.run.app.store.crons(Some("site")).await.unwrap()[0].title, "Weekly deps");
+    let skill = std::fs::read_to_string(r.project.path().join(".agents/skills/release/SKILL.md")).unwrap();
+    assert!(skill.starts_with("---\nname: release\ndescription: How to release\n---") && skill.contains("1. Tag."), "{skill}");
+    assert!(r.run.app.store.trigger("site", "ci").await.unwrap().is_none(), "not ticked, not made");
+    // A trigger in the repo; the same skill isn't overwritten.
+    let p2: Value = c.get(format!("{base}/api/tasks/{id}/proposal")).send().await.unwrap().json().await.unwrap();
+    let again: Value = c.post(format!("{base}/api/design/create")).json(&json!({"project": "site", "items": [p2["items"][2], p2["items"][3]]})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(again[0]["ok"], true);
+    assert!(r.project.path().join(".agents/triggers/ci/TRIGGER.md").is_file());
+    assert!(again[1]["error"].as_str().unwrap().contains("already has a skill release"));
+    assert_eq!(c.post(format!("{base}/api/design")).json(&json!({"project": "site", "goal": " "})).send().await.unwrap().status(), 400);
+    let plain = r.start_task("Plain", "x").await;
+    assert_eq!(c.get(format!("{base}/api/tasks/{}/proposal", plain.id)).send().await.unwrap().status(), 400, "not a design task");
 }
 
-impl R {
-    fn push_design(&self) {
-        self.push("Design: tidy the readme", |b| {
-            let all = all_text(b);
-            assert!(all.contains("## Skill: reagent-prompt-design") && all.contains("tidy the readme"), "the skill is loaded: {all}");
-            call("c1", "fs.write", json!({"path": "x.txt", "text": "no"}))
-        });
-        self.push("Design: tidy the readme", |b| {
-            assert!(last_result(b).contains("a design task only reads"), "{}", last_result(b));
-            call("c2", "fs.read", json!({"path": "a.txt"}))
-        });
-        self.push("Design: tidy the readme", |_| text("Here it is.\n```json\n{\"title\": \"Tidy the README\", \"prompt\": \"…\"}\n```"));
-    }
+#[tokio::test]
+async fn an_agent_has_its_subtasks_work_designed() {
+    let r = start().await;
+    r.push("Lead", |_| call("c1", "tasks.prompt_design", json!({"goal": "fix the greeting"})));
+    r.push("Lead", |b| {
+        assert!(last_result(b).starts_with("design task "), "{}", last_result(b));
+        text("waiting for the design")
+    });
+    r.push("Design: fix the greeting", |b| {
+        let all = all_text(b);
+        assert!(all.contains("(Asked by the task \"Lead\"") && all.contains("subtask"), "{all}");
+        text("```json\n{\"note\": \"\", \"items\": [{\"type\": \"task\", \"title\": \"Fix a.txt\", \"prompt\": \"Fix the greeting in a.txt.\"}]}\n```")
+    });
+    r.push("Lead", |b| {
+        assert!(all_text(b).contains("Fix the greeting in a.txt."), "the proposal comes as a message");
+        text("got it")
+    });
+    let t = r.start_task("Lead", "x").await;
+    r.until(&t.id, "the design's report", |t| t.report.as_deref() == Some("got it")).await;
+    let kids = r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap();
+    assert_eq!((kids[0].origin.as_str(), kids[0].state.as_str()), ("design", "done"));
 }
 
 #[tokio::test]
@@ -98,9 +108,8 @@ async fn reagents_docs_are_skills_pages_and_mcp_tools() {
     r.push("Docs", |b| {
         let all = all_text(b);
         assert!(all.contains("reagent's own documentation, as skills") && all.contains("reagent-subtasks"), "{all}");
-        call("c1", "skills.skill_load", json!({"name": "reagent-triggers-nope"}))
+        call("c1", "skills.skill_load", json!({"name": "reagent-policy"}))
     });
-    r.push("Docs", |_| call("c2", "skills.skill_load", json!({"name": "reagent-policy"})));
     r.push("Docs", |b| {
         assert!(last_result(b).contains("judged piece by piece"), "{}", last_result(b));
         text("read")
@@ -117,28 +126,4 @@ async fn reagents_docs_are_skills_pages_and_mcp_tools() {
     assert_eq!(c.get(format!("{base}/api/docs/nope")).send().await.unwrap().status(), 404);
     let skills: Value = c.get(format!("{base}/api/projects/site/skills")).send().await.unwrap().json().await.unwrap();
     assert!(skills.as_array().unwrap().iter().any(|s| s["source"] == "system"));
-}
-
-#[tokio::test]
-async fn suggestions_the_person_picks_are_made() {
-    let r = start().await;
-    let c = login(&r).await;
-    let base = r.run.web_url.clone();
-    let sugs = json!([
-        {"type": "skill", "name": "release", "description": "How to release", "body": "1. Tag.\n2. Push.", "why": "it recurs"},
-        {"type": "cron", "expr": "0 4 * * 1", "tz": "UTC", "title": "Weekly deps", "prompt": "Update deps.", "why": "weekly"},
-        {"type": "trigger", "name": "ci", "mode": "poll", "every": "10m", "script": "true", "title": "CI {{key}}", "prompt": "Fix it.", "why": "on failure"},
-        {"type": "skill", "name": "Bad Name", "description": "x", "body": "y"}
-    ]);
-    let out: Value = c.post(format!("{base}/api/design/apply")).json(&json!({"project": "site", "suggestions": sugs})).send().await.unwrap().json().await.unwrap();
-    assert_eq!(out.as_array().unwrap().iter().map(|o| o["ok"].as_bool().unwrap()).collect::<Vec<_>>(), [true, true, true, false], "{out}");
-    let skill = std::fs::read_to_string(r.project.path().join(".agents/skills/release/SKILL.md")).unwrap();
-    assert!(skill.starts_with("---\nname: release\ndescription: How to release\n---") && skill.contains("1. Tag."), "{skill}");
-    assert_eq!(r.run.app.store.crons(Some("site")).await.unwrap()[0].title, "Weekly deps");
-    let t = r.run.app.store.trigger("site", "ci").await.unwrap().unwrap();
-    assert_eq!((t.source.as_str(), t.every), ("repo", Some(600)), "in the repo by default");
-    assert!(r.project.path().join(".agents/triggers/ci/TRIGGER.md").is_file());
-    // The same skill again isn't overwritten.
-    let again: Value = c.post(format!("{base}/api/design/apply")).json(&json!({"project": "site", "suggestions": [sugs[0]]})).send().await.unwrap().json().await.unwrap();
-    assert!(again[0]["error"].as_str().unwrap().contains("already has a skill release"));
 }

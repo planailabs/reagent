@@ -7,6 +7,7 @@ import { markdown } from "../lib/markdown.js";
 import TaskRow from "./TaskRow.vue";
 import Jobs from "./Jobs.vue";
 import Terminal from "./Terminal.vue";
+import Proposal from "./Proposal.vue";
 
 const props = defineProps({ id: { type: String, required: true } });
 const config = ref(null);
@@ -60,25 +61,6 @@ async function cloneTask() {
   } catch (e) {
     error.value = e.message;
   }
-}
-
-/** A design task's proposal: the ```json block in its report. */
-const proposal = computed(() => {
-  if (t.value?.origin !== "design" || !t.value.report) return null;
-  const m = t.value.report.match(/```json\s*([\s\S]*?)```/);
-  try {
-    const p = m && JSON.parse(m[1]);
-    return p?.title && p?.prompt ? p : null;
-  } catch {
-    return null;
-  }
-});
-
-function useProposal() {
-  try {
-    sessionStorage.setItem(`reagent-proposal-${t.value.project}`, JSON.stringify(proposal.value));
-  } catch {}
-  location.hash = `#/project/${t.value.project}/new`;
 }
 
 function cancelTask() {
@@ -168,6 +150,10 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <div class="hi">{{ t.wait.question }}</div>
       <div class="row">
         <button v-for="o in t.wait.options ?? []" :key="o" @click="answer(o)">{{ o }}</button>
+        <template v-if="t.origin === 'design'">
+          <button title="no preference: it decides" @click="answer('No preference: you decide.')">you decide</button>
+          <button title="no more questions" @click="answer('Enough questions: propose now with what you know.')">propose now</button>
+        </template>
       </div>
       <form class="row" @submit.prevent="answer(answerText)">
         <input v-model="answerText" class="grow" placeholder="your answer" aria-label="answer" />
@@ -201,7 +187,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     <div v-if="t.report && t.state !== 'failed'" class="report">
       <div class="dim">report</div>
       <div class="md" v-html="markdown(t.report)"></div>
-      <button v-if="proposal" @click="useProposal">use this proposal</button>
+    <Proposal v-if="t.origin === 'design' && t.state === 'done'" :task="t" />
     </div>
 
     <form class="row" @submit.prevent="send">

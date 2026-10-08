@@ -123,7 +123,7 @@ watch(() => [props.slug, live.tick], load);
     </div>
 
     <h2>{{ form.editing ? `change ${form.name}` : "add a trigger" }}</h2>
-    <Designer :project="slug" target="trigger" @use="(p) => Object.assign(form, { title: p.title, prompt: p.prompt })" />
+    <Designer :project="slug" target="trigger" />
     <form class="stack" @submit.prevent="save">
       <div class="row">
         <label>name <input v-model="form.name" :disabled="form.editing" aria-label="trigger name" required /></label>

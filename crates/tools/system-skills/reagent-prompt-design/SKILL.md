@@ -1,15 +1,53 @@
 ---
 name: reagent-prompt-design
-description: How to write a task prompt an agent can act on alone, and how reagent's prompt designer guides there - asking questions, suggesting skills, cron entries and triggers (web UI, CLI, MCP API, tasks.prompt_design).
+description: How reagent's designer guides a rough goal to clear work - a design task that reads the project, asks the person, and proposes tasks, cron entries, triggers and repo skills to pick from - and what makes a task prompt clear.
 ---
 
-# Prompt design
+# The designer
+
+reagent's designer is a guide more than a prompt writer. From a rough goal it
+works out with the person what they actually want done and the best way for
+reagent to do it - once now, on a schedule, when something happens, as a
+procedure to repeat - and proposes it. It points out what the person may not
+have thought of: risks, the checks that show it's done, what must not change.
+
+## How it runs
+
+The designer is a **design task**: a task that may only read (the code, the
+memory, the skills, other tasks' histories) and ask. It reads first, then asks
+the person what changes the result and the project doesn't show - one
+question at a time, each with likely answers (the person may answer in their
+own words, say "you decide", or tell it to propose now). It ends with a short
+note and a **proposal**: a list of items of any kind, in any number:
+
+- **task**: work to start now (a title, a prompt, skills, kind, profile,
+  budget);
+- **cron**: work that recurs on a schedule (`reagent-cron-and-triggers`);
+- **trigger**: work that should follow an event (CI failing, an issue, a
+  webhook), with the script that finds it; in the repo unless it's private to
+  this machine;
+- **skill**: a procedure that will come up again, as a repo skill
+  (`.agents/skills/<name>/SKILL.md`) that the prompts then name.
+
+The person edits the items, ticks the ones they want, and creates them.
+
+- **Web UI**: "design it with the guide" in the new-task, cron and trigger
+  forms starts a design task; its page shows the questions as it asks, a
+  "propose now" button, and, once it's done, the proposal to edit, tick and
+  create (a task can also be opened in the new-task form).
+- **Agents**: `tasks.prompt_design(goal)` starts a design task as your
+  subtask; the person answers its questions; its proposal comes to you as a
+  message. Start what fits (`tasks.task_spawn`, `tasks.cron_add`,
+  `triggers.trigger_add`, a skill with `fs.write`).
+- **Other agents**: the MCP API's `prompt_design`, `design_proposal`,
+  `design_create`.
+- **CLI**: `reagent task design --project <id> "<goal>"` queues one;
+  `reagent task proposal <id> [--make all|1,3]` shows or makes its items.
+
+## What a clear task prompt has
 
 A task starts from nothing but its prompt (and the project's AGENTS.md,
-memory index and skills, which it's shown). A good prompt lets it work
-without asking.
-
-## What a clear prompt has
+memory index and skills, which it's shown).
 
 1. **The goal** in one or two sentences, and **why** (what it's for).
 2. **Where**: the files, folders, branch, services or URLs involved.
@@ -23,56 +61,17 @@ without asking.
 
 Leave out what the agent can see for itself (the code, AGENTS.md).
 
-## The prompt designer
-
-reagent's designer turns a rough goal into such a prompt by asking
-questions, a few at a time, each with likely answers to pick from. When it
-knows enough (or is told to propose), it proposes a title, the prompt, and
-fitting skills, kind, profile and budget, for the person to edit and start,
-and suggests what else to keep: a repo skill, a cron entry, a trigger. The
-person ticks the suggestions they want and they're made.
-
-- **Web UI**: "design" in the new-task form (and the cron and trigger
-  forms). Quick: a chat with a model, no tools. "Look at the project first":
-  the designer runs as a read-only task that reads the project, asks through
-  the usual questions, and reports a proposal ("use this proposal").
-- **Agents**: `tasks.prompt_design(goal, answers?, propose?)` returns
-  questions or a proposal; answer them yourself and call again with the
-  answers, then `tasks.task_spawn` with the result.
-- **Other agents**: the MCP API's `prompt_design`.
-- **CLI**: `reagent task design --project <id> "<goal>"` asks in the
-  terminal and prints the proposal.
-
 ## As the designer
 
-Be a guide more than a prompt writer: help the person work out what they
-actually want done and the best way for reagent to do it - once now, as a
-skill to repeat, on a schedule, when something happens; with which skills,
-model and budget. Point out what they may not have thought of (risks, the
-checks that show it's done, what must not change). The prompt is one of the
-things you hand over, not the whole of it.
-
-When you design (as the quick designer or as a design task):
-
-- Ask only what changes the prompt: unclear scope, success criteria, places,
-  constraints, risky actions (push, delete, deploy). Don't ask what the
-  project shows.
-- At most 3-4 questions a round, each with 2-4 likely answers; stop asking
-  once the prompt would not get better.
-- Propose: a short title (a few words, imperative), the prompt (sections as
-  above, plain and specific), skills that fit (by name), a kind or profile
-  if one fits better than the default, and a budget when the job is
-  open-ended.
-- Decide what belongs where, and suggest it (the person takes or leaves each):
-  - a **repo skill** (`.agents/skills/<name>/SKILL.md`) for a procedure that
-    will come up again (how to release, how to fix this kind of failure):
-    the steps go there and the prompt names the skill;
-  - a **cron entry** when the work recurs on a schedule (weekly updates, a
-    nightly check);
-  - a **trigger** when the work should follow an event (CI failing, an issue
-    opened, a webhook): its script finds the event and prints it, its
-    templates make each task's prompt (`reagent-cron-and-triggers`); in the
-    repo unless it's private to this machine.
-  The task itself is what's to be done now; when the goal is only to set up
-  something recurring, its prompt can be a first run, or say so in the note.
-  Ask when it's unclear whether the person wants it once or for good.
+- Read before you ask; ask only what changes the result: scope, success
+  criteria, places, constraints, risky actions (push, delete, deploy), once
+  or for good. About ten questions at most; propose when told to.
+- Decide what belongs where: a one-off is a task; recurring work a cron
+  entry; work that follows an event a trigger (its script prints one JSON
+  line per event; its templates use `{{key}}`, `{{vars.x}}`); a procedure
+  that will come up again a skill, which the prompts name instead of
+  repeating it. A cron entry's prompt runs again and again: it must make
+  sense every time.
+- Prompts as above, plain and specific; a title of a few words; skills,
+  kinds and profiles only by names that exist; a budget when the job is
+  open-ended; `why` in a line for each item.

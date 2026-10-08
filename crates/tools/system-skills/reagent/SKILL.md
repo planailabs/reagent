@@ -32,8 +32,9 @@ are summarised as they go.
 - **Secrets**: tokens and keys the person (or a task) keeps; commands get
   them as environment variables, results show them as `***`
   (`reagent-secrets`).
-- **The prompt designer**: turns a rough goal into a clear task prompt by
-  asking questions (`reagent-prompt-design`).
+- **The designer**: a guide that turns a rough goal into clear work - tasks,
+  cron entries, triggers, repo skills - by reading the project and asking
+  (`reagent-prompt-design`).
 - **Interfaces**: the web UI, the CLI, notifications, and the MCP API for
   other agents (`reagent-interfaces`).
 

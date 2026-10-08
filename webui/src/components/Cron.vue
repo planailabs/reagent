@@ -67,7 +67,7 @@ onMounted(load);
     </table>
     <p v-if="!crons.length" class="dim">no cron entries</p>
     <h2>{{ form.id ? "change" : "add" }} an entry</h2>
-    <Designer :project="slug" target="cron" @use="(p) => Object.assign(form, { title: p.title, prompt: p.prompt })" />
+    <Designer :project="slug" target="cron" />
     <form class="stack" @submit.prevent="save">
       <div class="row">
         <label>schedule <input v-model="form.expr" aria-label="schedule" required /></label>

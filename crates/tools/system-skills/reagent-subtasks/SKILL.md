@@ -22,10 +22,11 @@ project or another one the policy allows. Subtasks never wait in the queue.
 
 ## How
 
-1. **Design the prompt.** A subtask knows only what you write. Use
-   `tasks.prompt_design(goal)` for anything non-trivial: it asks you
-   questions (answer them from what you know) and returns a clear title and
-   prompt. See `reagent-prompt-design`.
+1. **Write a clear prompt.** A subtask knows only what you write: the goal,
+   where, what done means, constraints, what to report
+   (`reagent-prompt-design`). When the work is big, unclear or the person's to
+   shape, `tasks.prompt_design(goal)` starts a design task that asks the
+   person and proposes the work; its proposal comes to you as a message.
 2. **Start it**: `tasks.task_spawn(title, prompt, project?, profile?, kind?,
    skills?, budget?)`. Give the paths, branch, constraints, what "done"
    means, and what to put in the report.

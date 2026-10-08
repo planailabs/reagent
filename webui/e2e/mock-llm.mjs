@@ -25,6 +25,14 @@ function reply(body) {
     if (tools.length === 1) return call("p2", "todo__todo_update", { id: 1, status: "done" });
     return text("planned and started");
   }
+  if (title.startsWith("Design:")) {
+    if (!tools.length) return call("d1", "ask__ask", { question: "Which page?", options: ["home", "about"] });
+    const items = [
+      { type: "task", title: "Polish the page", prompt: "Make the page **nicer**.", why: "once now" },
+      { type: "skill", name: "page-polish", description: "How to polish a page", body: "1. Look.\n2. Polish.", why: "it comes up again" },
+    ];
+    return text("The plan.\n```json\n" + JSON.stringify({ note: `the ${last} page`, items }) + "\n```");
+  }
   if (title.startsWith("Ask")) {
     if (!tools.length) return call("q1", "ask__ask", { question: "which color?", options: ["red", "blue"] });
     return text(`you chose ${last}`);
@@ -47,16 +55,6 @@ http
     req.on("data", (c) => (data += c));
     req.on("end", () => {
       const body = JSON.parse(data || "{}");
-      // The prompt designer (not streamed): questions, then a proposal.
-      if (body.stream === false) {
-        const user = body.messages?.[1]?.content || "";
-        const answer = user.includes("- Q:")
-          ? { proposal: { title: "Polish the page", prompt: "Make the page **nicer**.", skills: [], note: "assumed the home page", suggestions: [{ type: "skill", name: "page-polish", description: "How to polish a page", body: "1. Look.\n2. Polish.", why: "it comes up again" }] } }
-          : { questions: [{ question: "Which page?", options: ["home", "about"] }] };
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: JSON.stringify(answer) } }] }));
-        return;
-      }
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.end(reply(body));
     });

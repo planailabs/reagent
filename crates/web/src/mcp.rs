@@ -126,23 +126,17 @@ pub struct Search {
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Design {
     pub project: String,
-    /// What the task should achieve, roughly.
+    /// What should be done, roughly.
     pub goal: String,
-    /// The answers to the designer's questions so far.
-    #[serde(default)]
-    pub answers: Vec<reagent_tools::design::Answer>,
-    /// Propose now, without more questions.
-    #[serde(default)]
-    pub propose: bool,
-    /// task (default), cron or trigger.
+    /// What it's for: task (default), cron or trigger.
     pub target: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
-pub struct DesignApply {
+pub struct DesignCreate {
     pub project: String,
-    /// Suggestions from prompt_design's proposal, as they came (the ones to make).
-    pub suggestions: Vec<Value>,
+    /// Items from design_proposal (as they came, edited if you like): the ones to make.
+    pub items: Vec<Value>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -302,26 +296,33 @@ impl ReagentTools {
         }
     }
 
-    #[tool(description = "Design a task's prompt before task_start: give a rough goal; it asks questions (answer them and call again with `answers`) or proposes a title, prompt, skills, kind, profile and budget.")]
+    #[tool(description = "Start reagent's designer for a rough goal: a design task reads the project, asks the person what it can't find out (task_wait shows its questions; task_answer answers them), and reports a proposal: tasks, cron entries, triggers, repo skills. design_proposal reads it, design_create makes the items you pick.")]
     async fn prompt_design(&self, Parameters(a): Parameters<Design>) -> Result<String, String> {
         let target = a.target.as_deref().unwrap_or("task");
         if !matches!(target, "task" | "cron" | "trigger") {
             return Err("target: task, cron or trigger".into());
         }
-        let step = self.0.design(&a.project, target, &a.goal, &a.answers, a.propose).await?;
-        j(step)
+        let t = self.0.start_design_task(&a.project, target, &a.goal, None).await?;
+        j(json!({"task": t.id, "state": t.state}))
     }
 
-    #[tool(description = "Make suggestions from a prompt_design proposal: a repo skill, a cron entry, a trigger (pass the ones you want, as they came).")]
-    async fn design_apply(&self, Parameters(a): Parameters<DesignApply>) -> Result<String, String> {
-        let p = self.0.project(&a.project).await?;
+    #[tool(description = "A design task's proposal: its note and items (null while it isn't done).")]
+    async fn design_proposal(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
+        j(self.0.proposal(&a.task).await?)
+    }
+
+    #[tool(description = "Make items from a design proposal (pass the ones you want, as they came or edited): tasks start, cron entries, triggers and repo skills are made.")]
+    async fn design_create(&self, Parameters(a): Parameters<DesignCreate>) -> Result<String, String> {
+        let mut items = vec![];
         let mut out = vec![];
-        for v in a.suggestions {
-            let line = match serde_json::from_value::<reagent_tools::design::Suggestion>(v) {
-                Ok(s) => reagent_tools::design::apply(&self.0.store, &p, &s).await.unwrap_or_else(|e| format!("not made: {e}")),
-                Err(e) => format!("not a suggestion: {e}"),
-            };
-            out.push(line);
+        for v in a.items {
+            match serde_json::from_value::<reagent_tools::design::Item>(v) {
+                Ok(i) => items.push(i),
+                Err(e) => out.push(format!("not an item: {e}")),
+            }
+        }
+        for r in self.0.create_items(&a.project, &items).await? {
+            out.push(r.unwrap_or_else(|e| format!("not made: {e}")));
         }
         Ok(out.join("\n"))
     }

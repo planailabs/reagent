@@ -330,29 +330,57 @@ impl App {
         self.store.task_by_agent(agent).await.map_err(|e| e.to_string())?.ok_or_else(|| format!("agent {agent} isn't a reagent task"))
     }
 
-    // --- the prompt designer ----------------------------------------------
+    // --- the designer ---------------------------------------------------
 
-    /// A round of the prompt designer for a project (`target`: task, cron, trigger or subtask).
-    pub async fn design(&self, project: &str, target: &str, goal: &str, answers: &[crate::design::Answer], propose: bool) -> Result<crate::design::Step, String> {
-        let p = self.project(project).await?;
-        crate::design::step(&self.config, &self.paths.data, &self.paths.skills, &self.paths.system_skills, &p, target, goal, answers, propose).await
-    }
-
-    /// The designer as a task: it reads the project (only reads), asks the
-    /// person, and reports a proposal.
-    pub async fn start_design_task(&self, project: &str, target: &str, goal: &str) -> Result<Task, String> {
-        let first = goal.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-        let short: String = first.chars().take(60).collect();
+    /// A design task: it reads the project (only reads), asks the person,
+    /// and reports a proposal (`target`: what the person started from, or
+    /// `subtask` with the task that asked as its parent).
+    pub async fn start_design_task(&self, project: &str, target: &str, goal: &str, parent: Option<&Task>) -> Result<Task, String> {
+        if goal.trim().is_empty() {
+            return Err("what do you want done? (a rough goal is enough)".into());
+        }
+        let goal = match parent {
+            Some(t) => format!("{}\n\n(Asked by the task \"{}\", which will start what you propose.)", goal.trim(), t.title),
+            None => goal.trim().to_string(),
+        };
         self.start_task(StartTask {
             project: project.into(),
-            title: format!("Design: {short}{}", if first.chars().count() > 60 { "…" } else { "" }),
-            prompt: crate::design::task_prompt(target, goal),
+            title: crate::design::title(&goal),
+            prompt: crate::design::task_prompt(target, &goal),
             skills: vec!["reagent-prompt-design".into()],
             origin: Some("design".into()),
+            parent: parent.map(|t| t.id.clone()),
             profile: self.config.design_profile.clone(),
             ..Default::default()
         })
         .await
+    }
+
+    /// A design task's proposal (from its report), once it has one.
+    pub async fn proposal(&self, id: &str) -> Result<Option<crate::design::Proposal>, String> {
+        let t = self.task(id).await?;
+        if t.origin != "design" {
+            return Err(format!("{} isn't a design task", t.title));
+        }
+        let p = self.project(&t.project).await?;
+        let skills: Vec<String> = self.skills_for(Path::new(&p.path), &p).into_iter().map(|s| s.name).collect();
+        Ok(t.report.as_deref().and_then(|r| crate::design::parse_report(r, &self.config, &skills)))
+    }
+
+    /// Makes the items the person chose: tasks start, the rest are made; a line (or why not) each.
+    pub async fn create_items(&self, project: &str, items: &[crate::design::Item]) -> Result<Vec<Result<String, String>>, String> {
+        let p = self.project(project).await?;
+        let mut out = vec![];
+        for item in items {
+            out.push(match item {
+                crate::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => self
+                    .start_task(StartTask { project: p.slug.clone(), title: title.clone(), prompt: prompt.clone(), skills: skills.clone(), kind: kind.clone(), profile: profile.clone(), budget: budget.clone(), ..Default::default() })
+                    .await
+                    .map(|t| format!("task {} {} ({})", t.title, if t.state == "queued" { "queued" } else { "started" }, t.id)),
+                other => crate::design::make(&self.store, &p, other).await,
+            });
+        }
+        Ok(out)
     }
 
     // --- memory and skills ----------------------------------------------

@@ -36,7 +36,7 @@ async fn another_agent_starts_and_follows_a_task_with_a_token() {
     let c = client(&r.run.web_url, token).await.unwrap();
     let mut tools: Vec<String> = c.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
     tools.sort();
-    assert!(["projects", "search", "prompt_design", "design_apply", "docs_list", "docs_read", "task_answer", "task_approve", "task_cancel", "task_get", "task_list", "task_merge", "task_message", "task_pause", "task_raise_budget", "task_resume", "task_retry", "task_start", "task_transcript", "task_wait"].iter().all(|t| tools.contains(&t.to_string())), "{tools:?}");
+    assert!(["projects", "search", "prompt_design", "design_proposal", "design_create", "docs_list", "docs_read", "task_answer", "task_approve", "task_cancel", "task_get", "task_list", "task_merge", "task_message", "task_pause", "task_raise_budget", "task_resume", "task_retry", "task_start", "task_transcript", "task_wait"].iter().all(|t| tools.contains(&t.to_string())), "{tools:?}");
     let (_, p) = call(&c, "projects", json!({})).await;
     assert!(p.contains("\"id\": \"site\""), "{p}");
 

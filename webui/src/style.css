@@ -109,3 +109,5 @@ textarea.code { font-family: ui-monospace, monospace; min-height: 8em; }
 .docs .doc-list a.on { font-weight: bold; }
 .docs article { flex: 1; min-width: 0; }
 @media (max-width: 700px) { .docs { flex-direction: column; } }
+.proposal .item { border-top: 1px solid var(--line); padding: 6px 0; }
+.proposal .item-text { max-height: 30vh; overflow: auto; }

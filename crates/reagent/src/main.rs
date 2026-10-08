@@ -222,15 +222,23 @@ enum TriggerCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// Turn a rough goal into a task prompt: the designer asks, you answer, it proposes.
+    /// Start the designer for a rough goal: a design task that reads the project, asks you
+    /// (in the web UI, or by notification), and proposes tasks, cron entries, triggers, skills.
+    /// The running reagent starts it.
     Design {
         goal: String,
         #[arg(long)]
         project: String,
-        /// task, cron or trigger (what the prompt is for).
+        /// What it's for: task, cron or trigger.
         #[arg(long, default_value = "task")]
         target: String,
-        /// Print the proposal as JSON.
+    },
+    /// A design task's proposal; --make all|1,3 makes those items (tasks are queued for the running reagent).
+    Proposal {
+        task: String,
+        #[arg(long)]
+        make: Option<String>,
+        /// Print it as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -474,67 +482,55 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Cmd::Task { cmd: TaskCmd::Design { goal, project, target, json } } => {
-            anyhow::ensure!(matches!(target.as_str(), "task" | "cron" | "trigger"), "--target: task, cron or trigger");
+        Cmd::Task { cmd } => {
             let config = reagent::load_config(&data)?;
             let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
-            let p = store.project(&project).await?.ok_or_else(|| anyhow::anyhow!("no project {project:?}"))?;
-            let paths = reagent_tools::app::Paths::new(&data);
-            reagent_tools::skills::write_system(&paths.system_skills)?;
-            let mut answers: Vec<reagent_tools::design::Answer> = vec![];
-            let mut propose = false;
-            eprintln!("Answer with an option's number, your own words, or nothing (it decides); `propose` to get the proposal now.\n");
-            let proposal = loop {
-                let step = reagent_tools::design::step(&config, &data, &paths.skills, &paths.system_skills, &p, &target, &goal, &answers, propose).await.map_err(anyhow::Error::msg)?;
-                if let Some(pr) = step.proposal {
-                    break pr;
+            // A task the running reagent starts (it starts queued ones as places free).
+            let queue = |p: &reagent_store::Project, title: String, prompt: String, origin: &str, skills: Vec<String>, profile: Option<String>, kind: Option<String>, budget: Option<reagent_store::Budget>| {
+                let store = store.clone();
+                let new = reagent_store::NewTask { project: p.slug.clone(), parent: None, title, prompt, origin: origin.into(), cwd: p.path.clone(), profile: profile.or(p.profile.clone()).unwrap_or(config.default_profile.clone()), budget: budget.unwrap_or_default(), skills, kind };
+                async move {
+                    let t = store.add_task(&new).await?;
+                    store.set_state(&t.id, "queued", None).await?;
+                    anyhow::Ok(t)
                 }
-                for q in step.questions {
-                    eprintln!("{}", q.question);
-                    for (i, o) in q.options.iter().enumerate() {
-                        eprintln!("  {}. {o}", i + 1);
-                    }
-                    eprint!("> ");
-                    let mut line = String::new();
-                    std::io::stdin().read_line(&mut line)?;
-                    let line = line.trim();
-                    if line == "propose" {
-                        propose = true;
-                        break;
-                    }
-                    let answer = match line.parse::<usize>().ok().and_then(|n| q.options.get(n.wrapping_sub(1))) {
-                        Some(o) => o.clone(),
-                        None if line.is_empty() => "no preference: decide".into(),
-                        None => line.to_string(),
-                    };
-                    answers.push(reagent_tools::design::Answer { question: q.question, answer });
-                }
-                eprintln!();
             };
-            // Suggestions: each made if the person says so.
-            for s in &proposal.suggestions {
-                let (what, why) = match s {
-                    reagent_tools::design::Suggestion::Skill { name, description, why, .. } => (format!("a repo skill {name}: {description}"), why),
-                    reagent_tools::design::Suggestion::Cron { expr, tz, title, why, .. } => (format!("a cron entry ({expr} {tz}): {title}"), why),
-                    reagent_tools::design::Suggestion::Trigger { name, mode, title, repo, why, .. } => (format!("a {mode} trigger {name}{}: {title}", if *repo { " in the repo" } else { "" }), why),
-                };
-                eprint!("Suggested: {what}\n  ({why})\nMake it? [y/N] ");
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line)?;
-                if line.trim().eq_ignore_ascii_case("y") {
-                    match reagent_tools::design::apply(&store, &p, s).await {
-                        Ok(done) => eprintln!("  {done}"),
-                        Err(e) => eprintln!("  not made: {e}"),
-                    }
+            match cmd {
+                TaskCmd::Design { goal, project, target } => {
+                    anyhow::ensure!(matches!(target.as_str(), "task" | "cron" | "trigger"), "--target: task, cron or trigger");
+                    anyhow::ensure!(!goal.trim().is_empty(), "what do you want done?");
+                    let p = store.project(&project).await?.ok_or_else(|| anyhow::anyhow!("no project {project:?}"))?;
+                    let t = queue(&p, reagent_tools::design::title(&goal), reagent_tools::design::task_prompt(&target, &goal), "design", vec!["reagent-prompt-design".into()], config.design_profile.clone(), None, None).await?;
+                    println!("{}", t.id);
+                    eprintln!("design task queued: the running reagent starts it; answer its questions in the web UI (or a notification), then `reagent task proposal {}`", t.id);
                 }
-            }
-            if json {
-                println!("{}", serde_json::to_string_pretty(&proposal)?);
-            } else {
-                println!("Title: {}\n\n{}\n", proposal.title, proposal.prompt);
-                for (k, v) in [("skills", proposal.skills.join(", ")), ("kind", proposal.kind.unwrap_or_default()), ("profile", proposal.profile.unwrap_or_default()), ("budget", proposal.budget.map(|b| serde_json::to_string(&b).unwrap_or_default()).unwrap_or_default()), ("note", proposal.note)] {
-                    if !v.is_empty() {
-                        println!("{k}: {v}");
+                TaskCmd::Proposal { task, make, json } => {
+                    let t = store.task(&task).await?.ok_or_else(|| anyhow::anyhow!("no task {task:?}"))?;
+                    anyhow::ensure!(t.origin == "design", "{} isn't a design task", t.title);
+                    let p = store.project(&t.project).await?.ok_or_else(|| anyhow::anyhow!("its project is gone"))?;
+                    let paths = reagent_tools::app::Paths::new(&data);
+                    let skills: Vec<String> = reagent_tools::skills::discover(std::path::Path::new(&p.path), std::path::Path::new(&p.path), &paths.skills, Some(&paths.system_skills)).into_iter().map(|s| s.name).collect();
+                    let Some(prop) = t.report.as_deref().and_then(|r| reagent_tools::design::parse_report(r, &config, &skills)) else {
+                        anyhow::bail!("no proposal yet ({} is {})", t.title, t.state);
+                    };
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&prop)?);
+                    } else {
+                        println!("{}\n", prop.note);
+                        for (i, item) in prop.items.iter().enumerate() {
+                            println!("{}. {}", i + 1, item.label());
+                        }
+                    }
+                    if let Some(which) = make {
+                        let picked: Vec<usize> = if which == "all" { (0..prop.items.len()).collect() } else { which.split(',').map(|n| n.trim().parse::<usize>().map(|n| n - 1)).collect::<Result<_, _>>()? };
+                        for i in picked {
+                            let item = prop.items.get(i).ok_or_else(|| anyhow::anyhow!("there's no item {}", i + 1))?;
+                            let done = match item {
+                                reagent_tools::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => queue(&p, title.clone(), prompt.clone(), "ui", skills.clone(), profile.clone(), kind.clone(), budget.clone()).await.map(|t| format!("task {} queued ({})", t.title, t.id)).map_err(|e| e.to_string()),
+                                other => reagent_tools::design::make(&store, &p, other).await,
+                            };
+                            eprintln!("{}. {}", i + 1, done.unwrap_or_else(|e| format!("not made: {e}")));
+                        }
                     }
                 }
             }

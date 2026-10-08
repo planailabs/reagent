@@ -112,7 +112,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <TaskRow v-for="r in rows" :key="r.t.id" :t="r.t" :depth="r.depth" />
     </template>
 
-    <Designer v-if="tab === 'new'" :project="slug" @use="useProposal" />
+    <Designer v-if="tab === 'new'" :project="slug" />
     <form v-if="tab === 'new'" class="stack" @submit.prevent="startTask">
       <input v-model="start.title" placeholder="title" aria-label="title" required />
       <textarea v-model="start.prompt" placeholder="what to do" aria-label="what to do" required></textarea>
