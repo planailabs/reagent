@@ -35,6 +35,13 @@ pub struct SecretName {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct SecretSet {
+    /// An environment variable's name (letters, digits, _).
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TodoAdd {
     /// The items, in order (each a short line).
     pub items: Vec<String>,
@@ -508,6 +515,25 @@ impl SecretTools {
         let (_, p) = caller(&self.0, &ctx).await?;
         let s = self.0.store.secrets_for(&p.slug).await?;
         Ok(if s.is_empty() { "no secrets (the person sets them in reagent's web UI)".into() } else { s.iter().map(|s| format!("{} ({})", s.name, if s.project.is_some() { "this project's" } else { "every project's" })).collect::<Vec<_>>().join("\n") })
+    }
+
+    #[tool(description = "Set one of this project's secrets (a token, a key): your commands (and the project's other tasks') get it as $NAME from now on, and its value shows as *** in results. Replaces the project's own secret of that name; the person is told.")]
+    async fn secrets_set(&self, Parameters(a): Parameters<SecretSet>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, p) = caller(&self.0, &ctx).await?;
+        let had = self.0.store.secrets(Some(&p.slug)).await?.iter().any(|s| s.name == a.name);
+        self.0.store.set_secret(Some(&p.slug), &a.name, &a.value).await?;
+        self.0.notify("secret", Some(&t), &format!("{} {} the secret {}", t.title, if had { "changed" } else { "set" }, a.name), &format!("for {} (the value is on the project's secrets tab)", p.name)).await;
+        Ok(format!("{} {} for this project (commands get it as ${})", a.name, if had { "changed" } else { "set" }, a.name))
+    }
+
+    #[tool(description = "Remove one of this project's own secrets (every project's secrets are the person's to change). The person is told.")]
+    async fn secrets_remove(&self, Parameters(a): Parameters<SecretName>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, p) = caller(&self.0, &ctx).await?;
+        if !self.0.store.remove_secret(Some(&p.slug), &a.name).await.map_err(|e| e.to_string())? {
+            return Err(format!("this project has no secret {:?} of its own (secrets_list shows whose each is)", a.name));
+        }
+        self.0.notify("secret", Some(&t), &format!("{} removed the secret {}", t.title, a.name), &format!("from {}", p.name)).await;
+        Ok(format!("removed {}", a.name))
     }
 
     #[tool(description = "A secret's value. Your commands already get it as an environment variable (use $NAME there); a value appearing in other tool results is shown as ***.")]

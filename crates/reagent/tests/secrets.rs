@@ -69,3 +69,39 @@ async fn the_person_manages_secrets() {
     assert_eq!(r.run.app.store.secrets_for("site").await.unwrap()[0].value, "k1");
     assert_eq!(reqwest::get(format!("{base}/api/secrets")).await.unwrap().status(), 401);
 }
+
+#[tokio::test]
+async fn a_task_sets_and_removes_its_projects_secrets() {
+    let r = start().await;
+    r.allow_all().await;
+    r.run.app.store.set_secret(None, "SHARED", "every-project-value").await.unwrap();
+    r.push("Keep", |_| call("c1", "secrets.secrets_set", json!({"name": "DEPLOY_KEY", "value": "dk_new_value_1"})));
+    r.push("Keep", |b| {
+        assert_eq!(last_result(b), "DEPLOY_KEY set for this project (commands get it as $DEPLOY_KEY)");
+        call("c2", "shell.exec", json!({"cmd": "echo key=$DEPLOY_KEY"}))
+    });
+    r.push("Keep", |b| {
+        assert!(last_result(b).contains("key=***"), "its commands get it, masked: {}", last_result(b));
+        call("c3", "secrets.secrets_set", json!({"name": "bad-name", "value": "x"}))
+    });
+    r.push("Keep", |b| {
+        assert!(last_result(b).contains("environment variable"), "{}", last_result(b));
+        call("c4", "secrets.secrets_remove", json!({"name": "SHARED"}))
+    });
+    r.push("Keep", |b| {
+        assert!(last_result(b).contains("no secret \"SHARED\" of its own"), "every project's isn't the task's: {}", last_result(b));
+        call("c5", "secrets.secrets_remove", json!({"name": "DEPLOY_KEY"}))
+    });
+    r.push("Keep", |b| {
+        assert_eq!(last_result(b), "removed DEPLOY_KEY");
+        text("kept and dropped")
+    });
+    let t = r.start_task("Keep", "x").await;
+    r.done(&t.id).await;
+    assert!(r.run.app.store.secrets(Some("site")).await.unwrap().is_empty());
+    assert_eq!(r.run.app.store.secrets(None).await.unwrap()[0].value, "every-project-value");
+    let notes = r.run.app.store.notifications(20).await.unwrap();
+    assert!(notes.iter().any(|n| n.kind == "secret" && n.title == "Keep set the secret DEPLOY_KEY"), "{notes:?}");
+    assert!(notes.iter().any(|n| n.kind == "secret" && n.title == "Keep removed the secret DEPLOY_KEY"));
+    assert!(notes.iter().all(|n| !n.body.contains("dk_new_value_1")), "the value is never told");
+}

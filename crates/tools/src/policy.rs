@@ -161,7 +161,8 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("skills.*", None, "allow"),
         r("ask.*", None, "allow"),
         r("todo.*", None, "allow"),
-        r("secrets.*", None, "allow"),
+        // Reading is free; setting and removing go by the project's default.
+        r("secrets.secrets_{list,get}", None, "allow"),
         r("git.worktree_status", None, "allow"),
         r("git.worktree_diff", None, "allow"),
         r("git.worktree_start", None, "allow"),
@@ -257,5 +258,7 @@ mod tests {
         assert_eq!(act(&rules, "shell.exec", Some("git push --force")), Action::Ask);
         assert_eq!(act(&rules, "shell.exec", Some("rm -rf /home")), Action::Deny);
         assert_eq!(act(&rules, "shell.exec", Some("curl x")), Action::Ask);
+        assert_eq!(act(&rules, "secrets.secrets_get", None), Action::Allow);
+        assert_eq!(act(&rules, "secrets.secrets_set", None), Action::Ask, "changing a secret goes by the default");
     }
 }
