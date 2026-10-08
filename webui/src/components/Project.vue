@@ -9,6 +9,7 @@ import Memory from "./Memory.vue";
 import McpServers from "./McpServers.vue";
 import Secrets from "./Secrets.vue";
 import Triggers from "./Triggers.vue";
+import Designer from "./Designer.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -77,7 +78,23 @@ async function remove() {
   }
 }
 
-onMounted(load);
+/** A designer's proposal fills the form. */
+function useProposal(pr) {
+  const b = pr.budget ?? {};
+  start.value = { ...start.value, title: pr.title, prompt: pr.prompt, profile: pr.profile ?? "", kind: pr.kind ?? "", skills: pr.skills ?? [], tokens: b.tokens ?? "", cost: b.cost ?? "", minutes: b.minutes ?? "" };
+}
+
+onMounted(() => {
+  load();
+  // A design task's proposal, brought over from its page.
+  try {
+    const kept = JSON.parse(sessionStorage.getItem(`reagent-proposal-${props.slug}`) || "null");
+    if (kept) {
+      sessionStorage.removeItem(`reagent-proposal-${props.slug}`);
+      useProposal(kept);
+    }
+  } catch {}
+});
 watch(() => [props.slug, showAll.value, live.tick], load);
 </script>
 
@@ -95,7 +112,8 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <TaskRow v-for="r in rows" :key="r.t.id" :t="r.t" :depth="r.depth" />
     </template>
 
-    <form v-else-if="tab === 'new'" class="stack" @submit.prevent="startTask">
+    <Designer v-if="tab === 'new'" :project="slug" @use="useProposal" />
+    <form v-if="tab === 'new'" class="stack" @submit.prevent="startTask">
       <input v-model="start.title" placeholder="title" aria-label="title" required />
       <textarea v-model="start.prompt" placeholder="what to do" aria-label="what to do" required></textarea>
       <div class="row">
@@ -122,7 +140,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <button type="submit">start</button>
     </form>
 
-    <Cron v-else-if="tab === 'cron'" :slug="slug" :config="config" />
+    <Cron v-if="tab === 'cron'" :slug="slug" :config="config" />
     <Triggers v-else-if="tab === 'triggers'" :slug="slug" :config="config" />
     <Rules v-else-if="tab === 'policy'" :slug="slug" />
     <Memory v-else-if="tab === 'memory'" :scope="slug" />

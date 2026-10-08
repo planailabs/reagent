@@ -62,6 +62,25 @@ async function cloneTask() {
   }
 }
 
+/** A design task's proposal: the ```json block in its report. */
+const proposal = computed(() => {
+  if (t.value?.origin !== "design" || !t.value.report) return null;
+  const m = t.value.report.match(/```json\s*([\s\S]*?)```/);
+  try {
+    const p = m && JSON.parse(m[1]);
+    return p?.title && p?.prompt ? p : null;
+  } catch {
+    return null;
+  }
+});
+
+function useProposal() {
+  try {
+    sessionStorage.setItem(`reagent-proposal-${t.value.project}`, JSON.stringify(proposal.value));
+  } catch {}
+  location.hash = `#/project/${t.value.project}/new`;
+}
+
 function cancelTask() {
   if (confirm("Cancel this task (and its commands)?")) act("cancel");
 }
@@ -182,6 +201,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     <div v-if="t.report && t.state !== 'failed'" class="report">
       <div class="dim">report</div>
       <div class="md" v-html="markdown(t.report)"></div>
+      <button v-if="proposal" @click="useProposal">use this proposal</button>
     </div>
 
     <form class="row" @submit.prevent="send">

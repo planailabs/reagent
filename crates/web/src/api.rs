@@ -354,7 +354,9 @@ async fn set_rules(State(s): State<S>, Path(slug): Path<String>, Json(rules): Js
 
 async fn skills(State(s): State<S>, Path(slug): Path<String>) -> R {
     let p = s.w.app.project(&slug).await?;
-    let list = s.w.app.skills_for(std::path::Path::new(&p.path), &p);
+    let mut list = s.w.app.skills_for(std::path::Path::new(&p.path), &p);
+    // The project's and global ones first; reagent's own docs after.
+    list.sort_by_key(|sk| sk.source == "system");
     let out: Vec<Value> = list
         .iter()
         .map(|sk| {

@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from "vue";
 import { del, get, post } from "../lib/api.js";
+import Designer from "./Designer.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, config: Object });
 const crons = ref([]);
@@ -66,6 +67,7 @@ onMounted(load);
     </table>
     <p v-if="!crons.length" class="dim">no cron entries</p>
     <h2>{{ form.id ? "change" : "add" }} an entry</h2>
+    <Designer :project="slug" target="cron" @use="(p) => Object.assign(form, { title: p.title, prompt: p.prompt })" />
     <form class="stack" @submit.prevent="save">
       <div class="row">
         <label>schedule <input v-model="form.expr" aria-label="schedule" required /></label>

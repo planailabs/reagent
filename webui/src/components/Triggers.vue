@@ -2,6 +2,7 @@
 import { inject, onMounted, ref, watch } from "vue";
 import { del, get, post, put } from "../lib/api.js";
 import { markdown } from "../lib/markdown.js";
+import Designer from "./Designer.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, config: Object });
 const live = inject("live");
@@ -122,6 +123,7 @@ watch(() => [props.slug, live.tick], load);
     </div>
 
     <h2>{{ form.editing ? `change ${form.name}` : "add a trigger" }}</h2>
+    <Designer :project="slug" target="trigger" @use="(p) => Object.assign(form, { title: p.title, prompt: p.prompt })" />
     <form class="stack" @submit.prevent="save">
       <div class="row">
         <label>name <input v-model="form.name" :disabled="form.editing" aria-label="trigger name" required /></label>

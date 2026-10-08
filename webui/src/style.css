@@ -101,3 +101,11 @@ code { color: var(--hi); }
 textarea.code { font-family: ui-monospace, monospace; min-height: 8em; }
 .runs details pre { max-height: 40vh; overflow: auto; }
 .runs summary { cursor: pointer; }
+.designer summary { cursor: pointer; }
+.designer .question { border-left: 2px solid var(--line); padding-left: 8px; }
+.designer .suggestion details pre { max-height: 30vh; overflow: auto; }
+.docs { display: flex; gap: 16px; align-items: flex-start; }
+.docs .doc-list { min-width: 14em; }
+.docs .doc-list a.on { font-weight: bold; }
+.docs article { flex: 1; min-width: 0; }
+@media (max-width: 700px) { .docs { flex-direction: column; } }

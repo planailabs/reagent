@@ -281,6 +281,32 @@ test("over the limit a task is queued, and started now by hand", async ({ page }
   await expect(page.getByLabel("tasks at once")).toHaveValue("");
 });
 
+test("the guide asks, proposes, makes a suggested skill and fills the task", async ({ page }) => {
+  await page.goto("/#/project/site/new");
+  await page.getByText("design it with the guide").click();
+  await page.getByLabel("goal").fill("make the page nicer");
+  await page.getByRole("button", { name: "design", exact: true }).click();
+  const q = page.getByLabel("designer question 1");
+  await expect(q).toContainText("Which page?");
+  await q.getByLabel("home").check();
+  await page.getByRole("button", { name: "next" }).click();
+  const p = page.getByLabel("proposal");
+  await expect(p).toContainText("Polish the page");
+  await expect(p.locator("strong")).toHaveText("nicer");
+  await p.getByRole("button", { name: "make the ticked ones" }).click();
+  await expect(p).toContainText("✓ skill page-polish written");
+  await p.getByRole("button", { name: "use it below" }).click();
+  await expect(page.getByLabel("title", { exact: true })).toHaveValue("Polish the page");
+  await expect(page.getByLabel("what to do")).toHaveValue("Make the page **nicer**.");
+});
+
+test("reagent's docs are readable", async ({ page }) => {
+  await page.goto("/#/docs");
+  await expect(page.locator("article")).toContainText("reagent runs coding agents");
+  await page.getByRole("link", { name: "reagent-subtasks" }).click();
+  await expect(page.locator("article h1")).toHaveText("Subtasks");
+});
+
 test("logging out locks the API", async ({ page }) => {
   await page.getByRole("button", { name: "log out" }).click();
   await expect(page.getByLabel("password")).toBeVisible();

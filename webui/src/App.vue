@@ -10,6 +10,7 @@ import Task from "./components/Task.vue";
 import Search from "./components/Search.vue";
 import Settings from "./components/Settings.vue";
 import Mcp from "./components/Mcp.vue";
+import Docs from "./components/Docs.vue";
 
 // Hash routes: #/inbox, #/projects, #/project/<slug>, #/task/<id>, #/search, #/settings.
 const route = ref(location.hash.slice(1) || "/inbox");
@@ -91,6 +92,7 @@ onUnmounted(() => {
       <a href="#/search" :class="{ on: page === 'search' }">search</a>
       <a href="#/mcp" :class="{ on: page === 'mcp' }">mcp</a>
       <a href="#/settings" :class="{ on: page === 'settings' }">settings</a>
+      <a href="#/docs" :class="{ on: page === 'docs' }">docs</a>
       <span class="grow"></span>
       <button @click="logout">log out</button>
     </header>
@@ -102,6 +104,7 @@ onUnmounted(() => {
       <Search v-else-if="page === 'search'" />
       <Settings v-else-if="page === 'settings'" />
       <Mcp v-else-if="page === 'mcp'" />
+      <Docs v-else-if="page === 'docs'" :name="arg" />
       <p v-else class="dim">nothing here: <a href="#/inbox">the inbox</a></p>
     </main>
   </template>

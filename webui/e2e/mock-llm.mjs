@@ -47,6 +47,16 @@ http
     req.on("data", (c) => (data += c));
     req.on("end", () => {
       const body = JSON.parse(data || "{}");
+      // The prompt designer (not streamed): questions, then a proposal.
+      if (body.stream === false) {
+        const user = body.messages?.[1]?.content || "";
+        const answer = user.includes("- Q:")
+          ? { proposal: { title: "Polish the page", prompt: "Make the page **nicer**.", skills: [], note: "assumed the home page", suggestions: [{ type: "skill", name: "page-polish", description: "How to polish a page", body: "1. Look.\n2. Polish.", why: "it comes up again" }] } }
+          : { questions: [{ question: "Which page?", options: ["home", "about"] }] };
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: JSON.stringify(answer) } }] }));
+        return;
+      }
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.end(reply(body));
     });
