@@ -1,5 +1,6 @@
-//! Agent skills in the generic layout: `<dir>/.agents/skills/<name>/SKILL.md`
-//! (and `.agent/skills/`), frontmatter `name` and `description`, then the
+//! Agent skills: `<dir>/<place>/<name>/SKILL.md` with `<place>` one of
+//! `.agents/skills`, `.agent/skills`, Claude Code's `.claude/skills` and
+//! Codex's `.codex/skills`; frontmatter `name` and `description`, then the
 //! instructions; the folder may hold scripts and references.
 
 use std::path::{Path, PathBuf};
@@ -39,7 +40,7 @@ pub fn parse(text: &str) -> (Option<String>, Option<String>, String) {
 
 fn found_in(base: &Path, source: &str) -> Vec<Skill> {
     let mut out = vec![];
-    for sub in [".agents/skills", ".agent/skills", ".claude/skills"] {
+    for sub in [".agents/skills", ".agent/skills", ".claude/skills", ".codex/skills"] {
         let Ok(rd) = std::fs::read_dir(base.join(sub)) else { continue };
         let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("SKILL.md").is_file()).collect();
         dirs.sort();
@@ -51,6 +52,23 @@ fn found_in(base: &Path, source: &str) -> Vec<Skill> {
             out.push(Skill { name, description, dir, source: source.into() });
         }
     }
+    out
+}
+
+/// The global skills folders, in order: the generic one, Claude Code's,
+/// Codex's (`$CODEX_HOME/skills`, else `~/.codex/skills`), reagent's own.
+pub fn global_places(home: Option<&Path>, codex_home: Option<&Path>, data: &Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    if let Some(h) = home {
+        out.push(h.join(".agents/skills"));
+        out.push(h.join(".claude/skills"));
+    }
+    match (codex_home, home) {
+        (Some(c), _) => out.push(c.join("skills")),
+        (None, Some(h)) => out.push(h.join(".codex/skills")),
+        _ => {}
+    }
+    out.push(data.join("skills"));
     out
 }
 
@@ -176,13 +194,15 @@ mod tests {
         skill(&proj, ".agents/skills", "deploy", "ship it (project)");
         skill(&proj, ".agent/skills", "lint", "check style");
         skill(&proj, ".claude/skills", "rebase", "rebase the fork");
+        skill(&proj, ".codex/skills", "triage", "sort issues");
         skill(&wt, ".agents/skills", "deploy", "ship it (worktree)");
         std::fs::create_dir_all(&global).unwrap();
         skill(&global, "", "deploy", "ship it (global)");
         skill(&global, "", "review", "review code");
         let found = discover(&wt, &proj, &[global.clone()], None);
         let by = |n: &str| found.iter().find(|s| s.name == n).unwrap().clone();
-        assert_eq!(found.len(), 4, "{found:?}");
+        assert_eq!(found.len(), 5, "{found:?}");
+        assert_eq!(by("triage").source, "project", ".codex/skills count too");
         assert_eq!(by("rebase").source, "project", ".claude/skills count too");
         assert_eq!((by("deploy").description.as_str(), by("deploy").source.as_str()), ("ship it (worktree)", "worktree"));
         assert_eq!(by("lint").source, "project");
@@ -214,6 +234,20 @@ mod tests {
             }
         }
         assert!(system_text("nope").is_none());
+    }
+
+    #[test]
+    fn global_places_include_claude_and_codex() {
+        let (h, d) = (Path::new("/home/u"), Path::new("/data"));
+        assert_eq!(global_places(Some(h), None, d), ["/home/u/.agents/skills", "/home/u/.claude/skills", "/home/u/.codex/skills", "/data/skills"].map(PathBuf::from));
+        assert_eq!(global_places(Some(h), Some(Path::new("/opt/codex")), d)[2], PathBuf::from("/opt/codex/skills"), "CODEX_HOME wins");
+        assert_eq!(global_places(None, None, d), [PathBuf::from("/data/skills")]);
+        // A skill in Claude Code's global folder is found.
+        let t = tempfile::tempdir().unwrap();
+        let places = global_places(Some(t.path()), None, &t.path().join("data"));
+        skill(&t.path().join(".claude/skills"), "", "review", "review code");
+        let found = discover(&t.path().join("p"), &t.path().join("p"), &places, None);
+        assert_eq!((found[0].name.as_str(), found[0].source.as_str()), ("review", "global"));
     }
 
     #[test]

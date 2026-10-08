@@ -25,7 +25,7 @@ use crate::skills::{self, Skill};
 pub struct Paths {
     pub data: PathBuf,
     pub socket: PathBuf,
-    /// Global skills folders (`~/.agents/skills`, `<data>/skills`).
+    /// Global skills folders (`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `<data>/skills`).
     pub skills: Vec<PathBuf>,
     /// Where the system skills are written at every start.
     pub system_skills: PathBuf,
@@ -33,10 +33,9 @@ pub struct Paths {
 
 impl Paths {
     pub fn new(data: &Path) -> Self {
-        let mut skills = vec![data.join("skills")];
-        if let Some(h) = std::env::var_os("HOME") {
-            skills.insert(0, PathBuf::from(h).join(".agents/skills"));
-        }
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from);
+        let skills = crate::skills::global_places(home.as_deref(), codex.as_deref(), data);
         Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, system_skills: data.join("system-skills") }
     }
 }
