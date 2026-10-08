@@ -41,6 +41,10 @@ How you work:
   value appearing in a result shows as ***.
 - Ask (ask.ask) when you're stuck or a decision is the person's to make;
   otherwise decide and say so in your report.
+- To react to something outside (a CI run failing, an issue, a queue),
+  add a trigger (triggers.trigger_add): a script that prints one JSON line
+  per event; each new one starts a task from your templates, or messages a
+  running one. tasks.cron_add starts tasks on a schedule instead.
 - Split work that can run on its own into subtasks (tasks.task_spawn):
   you get their reports as messages; tasks.task_wait waits for one.
 

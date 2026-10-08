@@ -62,6 +62,14 @@ pub fn routes() -> Router<S> {
         .route("/api/projects/{slug}/rules", get(rules).put(set_rules))
         .route("/api/projects/{slug}/skills", get(skills))
         .route("/api/projects/{slug}/cron", get(crons))
+        .route("/api/projects/{slug}/triggers", get(triggers))
+        .route("/api/triggers/{project}/{name}", put(put_trigger).delete(remove_trigger))
+        .route("/api/triggers/{project}/{name}/run", post(run_trigger))
+        .route("/api/triggers/{project}/{name}/enabled", post(enable_trigger))
+        .route("/api/triggers/{project}/{name}/move", post(move_trigger))
+        .route("/api/triggers/{project}/{name}/approve", post(approve_trigger))
+        .route("/api/triggers/{project}/{name}/runs", get(trigger_runs))
+        .route("/hook/{project}/{name}", post(hook))
         .route("/api/memory", get(memory_read).put(memory_write).delete(memory_remove))
         .route("/api/cron", post(put_cron))
         .route("/api/cron/{id}", delete(remove_cron))
@@ -171,7 +179,9 @@ async fn inbox(State(s): State<S>) -> R {
     let waiting: Vec<_> = tasks.into_iter().filter(|t| t.state == "waiting" || t.state == "failed").collect();
     let failed = db(s.w.app.store.tasks(None, None, false, 200).await)?.into_iter().filter(|t| t.state == "failed").collect::<Vec<_>>();
     let unseen: Vec<_> = db(s.w.app.store.notifications(100).await)?.into_iter().filter(|n| !n.seen).collect();
-    Ok(Json(json!({"waiting": waiting, "failed": failed, "notifications": unseen})))
+    // Triggers whose script waits for the person's approval.
+    let triggers: Vec<_> = db(s.w.app.store.triggers(None).await)?.into_iter().filter(|t| t.state.0.asking.is_some()).collect();
+    Ok(Json(json!({"waiting": waiting, "failed": failed, "notifications": unseen, "triggers": triggers})))
 }
 
 async fn notifications(State(s): State<S>) -> R {
@@ -344,6 +354,93 @@ async fn remove_cron(State(s): State<S>, Path(id): Path<i64>) -> R {
 async fn run_cron(State(s): State<S>, Path(id): Path<i64>) -> R {
     let c = db(s.w.app.store.cron(id).await)?.ok_or_else(|| E(StatusCode::NOT_FOUND, "no such cron entry".into()))?;
     Ok(Json(json!(reagent_tools::cron::run(&s.w.app, &c).await?)))
+}
+
+// --- triggers -------------------------------------------------------------
+
+/// A project's triggers (each with its webhook path), and repo files that couldn't be read.
+async fn triggers(State(s): State<S>, Path(slug): Path<String>) -> R {
+    s.w.app.project(&slug).await?;
+    let list: Vec<Value> = db(s.w.app.store.triggers(Some(&slug)).await)?
+        .into_iter()
+        .map(|t| {
+            let mut v = json!(t);
+            v["hash"] = json!(reagent_tools::triggers::script_hash(&t));
+            if t.mode == "webhook" {
+                v["hook"] = json!(format!("/hook/{}/{}", t.project, t.name));
+            }
+            v
+        })
+        .collect();
+    let errors = s.w.app.triggers.repo_errors.lock().unwrap().get(&slug).cloned().unwrap_or_default();
+    Ok(Json(json!({"triggers": list, "errors": errors})))
+}
+
+/// Adds or changes a trigger (the person's: its script is allowed).
+async fn put_trigger(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(mut t): Json<reagent_store::Trigger>) -> R {
+    let p = s.w.app.project(&project).await?;
+    t.name = name;
+    t.made_by = "person".into();
+    let t = reagent_tools::triggers::save(&s.w.app.store, &p, t, true).await?;
+    s.w.app.emit_trigger(&project, &t.name).await;
+    Ok(Json(json!(t)))
+}
+
+async fn remove_trigger(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    reagent_tools::triggers::remove(&s.w.app, &project, &name).await?;
+    Ok(Json(json!({"removed": true})))
+}
+
+async fn run_trigger(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    Ok(Json(json!({"ok": reagent_tools::triggers::run_now(&s.w.app, &project, &name).await?})))
+}
+
+#[derive(Deserialize)]
+struct Enabled {
+    enabled: bool,
+}
+
+async fn enable_trigger(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(e): Json<Enabled>) -> R {
+    if !db(s.w.app.store.set_trigger_enabled(&project, &name, e.enabled).await)? {
+        return Err(E(StatusCode::NOT_FOUND, format!("no trigger {name:?} in {project}")));
+    }
+    s.w.app.emit_trigger(&project, &name).await;
+    Ok(Json(json!({"enabled": e.enabled})))
+}
+
+#[derive(Deserialize)]
+struct MoveTo {
+    to: String,
+}
+
+async fn move_trigger(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(m): Json<MoveTo>) -> R {
+    let p = s.w.app.project(&project).await?;
+    let t = reagent_tools::triggers::move_to(&s.w.app.store, &p, &name, &m.to).await?;
+    s.w.app.emit_trigger(&project, &name).await;
+    Ok(Json(json!(t)))
+}
+
+#[derive(Deserialize)]
+struct TriggerApproval {
+    approved: bool,
+    #[serde(default)]
+    always: bool,
+}
+
+async fn approve_trigger(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(a): Json<TriggerApproval>) -> R {
+    Ok(Json(json!(reagent_tools::triggers::approve(&s.w.app, &project, &name, a.approved, a.always).await?)))
+}
+
+async fn trigger_runs(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    Ok(Json(json!(db(s.w.app.store.trigger_runs(&project, &name).await)?)))
+}
+
+/// A webhook (no login: the trigger's secret signs it).
+async fn hook(State(s): State<S>, Path((project, name)): Path<(String, String)>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    match reagent_tools::triggers::webhook(s.w.app.clone(), &project, &name, &headers, body).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response(),
+        Err((code, e)) => (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_REQUEST), Json(json!({"error": e}))).into_response(),
+    }
 }
 
 // --- tasks ----------------------------------------------------------------
@@ -652,6 +749,10 @@ struct OutQ {
 /// The project whose secrets a job's output is masked with.
 async fn job_project(s: &S, job: &str) -> Option<String> {
     let owner = s.w.app.sup.job(job).await.ok()?.owner?;
+    // A watcher's job: its trigger's project.
+    if let Some(id) = owner.strip_prefix("trigger:") {
+        return id.split_once('/').map(|(p, _)| p.to_string());
+    }
     Some(s.w.app.task(&owner).await.ok()?.project)
 }
 

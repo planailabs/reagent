@@ -212,6 +212,7 @@ pub struct CronOptions {
 pub struct Trigger {
     #[serde(default)]
     pub project: String,
+    #[serde(default)]
     pub name: String,
     /// db (kept here) or repo (`.agents/triggers/<name>/TRIGGER.md`).
     #[serde(default = "db_source")]

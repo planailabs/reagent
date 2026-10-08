@@ -44,6 +44,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: SecretCmd,
     },
+    /// Triggers: scripts that watch something and start tasks (a running reagent picks changes up within a second).
+    Trigger {
+        #[command(subcommand)]
+        cmd: TriggerCmd,
+    },
     /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
     Token {
         #[command(subcommand)]
@@ -115,6 +120,98 @@ enum SecretCmd {
         name: String,
         #[arg(long)]
         project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TriggerCmd {
+    /// Add (or change) a trigger; the script from --script or --script-file.
+    Add {
+        name: String,
+        #[arg(long)]
+        project: String,
+        /// poll, watch or webhook.
+        #[arg(long, default_value = "poll")]
+        mode: String,
+        /// poll: how often (90s, 2m, 1h).
+        #[arg(long)]
+        every: Option<String>,
+        /// poll: a cron expression instead.
+        #[arg(long)]
+        cron: Option<String>,
+        #[arg(long, default_value = "UTC")]
+        tz: String,
+        #[arg(long)]
+        script: Option<String>,
+        #[arg(long)]
+        script_file: Option<PathBuf>,
+        /// The tasks' title and prompt (templates: {{key}}, {{vars.x}}, {{message}}).
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        prompt: Option<String>,
+        #[arg(long)]
+        prompt_file: Option<PathBuf>,
+        #[arg(long, default_value = "skip")]
+        overlap: String,
+        #[arg(long, default_value_t = 60)]
+        timeout: i64,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long = "skill")]
+        skills: Vec<String>,
+        /// A webhook's secret: the name of one of the project's secrets.
+        #[arg(long)]
+        secret: Option<String>,
+        /// Not in the project's nix dev shell.
+        #[arg(long)]
+        no_devshell: bool,
+        #[arg(long, default_value = "")]
+        description: String,
+    },
+    List {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    Remove {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    Enable {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    Disable {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    /// Run a poll now (or restart a watcher).
+    Run {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    /// Into the repo (its files written into the project folder) or back into reagent (db).
+    Move {
+        name: String,
+        to: String,
+        #[arg(long)]
+        project: String,
+    },
+    /// Allow (or --deny) a trigger's script that waits for approval; --always adds a rule.
+    Approve {
+        name: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        deny: bool,
+        #[arg(long)]
+        always: bool,
     },
 }
 
@@ -258,6 +355,101 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 SecretCmd::Remove { name, project } => {
                     anyhow::ensure!(store.remove_secret(project.as_deref(), &name).await?, "no secret {name:?}");
                     println!("removed {name}");
+                }
+            }
+            Ok(())
+        }
+        Cmd::Trigger { cmd } => {
+            std::fs::create_dir_all(&data)?;
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let project = |store: reagent_store::Store, slug: String| async move { store.project(&slug).await?.ok_or_else(|| anyhow::anyhow!("no project {slug:?}")) };
+            let trigger = |store: reagent_store::Store, slug: String, name: String| async move { store.trigger(&slug, &name).await?.ok_or_else(|| anyhow::anyhow!("no trigger {name:?} in {slug}")) };
+            match cmd {
+                TriggerCmd::Add { name, project: slug, mode, every, cron, tz, script, script_file, title, prompt, prompt_file, overlap, timeout, profile, kind, skills, secret, no_devshell, description } => {
+                    let p = project(store.clone(), slug).await?;
+                    let script = match (script, script_file) {
+                        (Some(s), None) => s,
+                        (None, Some(f)) => std::fs::read_to_string(&f).map_err(|e| anyhow::anyhow!("{}: {e}", f.display()))?,
+                        (None, None) => String::new(),
+                        _ => anyhow::bail!("--script or --script-file, not both"),
+                    };
+                    let prompt = match (prompt, prompt_file) {
+                        (Some(s), None) => s,
+                        (None, Some(f)) => std::fs::read_to_string(&f)?,
+                        _ => anyhow::bail!("--prompt or --prompt-file"),
+                    };
+                    let def = reagent_tools::triggers::Def { name, mode, every, cron, tz: Some(tz), script: Some(script), timeout: Some(timeout), overlap: Some(overlap), title, prompt, description: Some(description), profile, kind, skills, secret, devshell: Some(!no_devshell) };
+                    let t = reagent_tools::triggers::save(&store, &p, def.into_trigger(&p.slug, "person").map_err(anyhow::Error::msg)?, true).await.map_err(anyhow::Error::msg)?;
+                    println!("{}", reagent_tools::triggers::line(&t));
+                    if t.mode == "webhook" {
+                        println!("its URL: <reagent>/hook/{}/{}", t.project, t.name);
+                    }
+                }
+                TriggerCmd::List { project } => {
+                    for t in store.triggers(project.as_deref()).await? {
+                        println!("{}\t{}", t.project, reagent_tools::triggers::line(&t));
+                    }
+                }
+                TriggerCmd::Remove { name, project: slug } => {
+                    let p = project(store.clone(), slug.clone()).await?;
+                    let t = trigger(store.clone(), slug.clone(), name.clone()).await?;
+                    if let Some(j) = &t.state.0.job {
+                        let _ = reagent_supervisor::Client::new(&data.join("supervisor.sock")).kill(j, None).await;
+                    }
+                    if t.source == "repo" {
+                        store.put_trigger(&reagent_store::Trigger { source: "db".into(), ..t.clone() }).await?;
+                        reagent_tools::triggers::remove_repo(&p, &t).map_err(anyhow::Error::msg)?;
+                    }
+                    store.remove_trigger(&slug, &name).await?;
+                    println!("removed {name}");
+                }
+                TriggerCmd::Enable { name, project: slug } => {
+                    anyhow::ensure!(store.set_trigger_enabled(&slug, &name, true).await?, "no trigger {name:?} in {slug}");
+                    println!("{name} is on");
+                }
+                TriggerCmd::Disable { name, project: slug } => {
+                    anyhow::ensure!(store.set_trigger_enabled(&slug, &name, false).await?, "no trigger {name:?} in {slug}");
+                    println!("{name} is off");
+                }
+                TriggerCmd::Run { name, project: slug } => {
+                    let t = trigger(store.clone(), slug.clone(), name.clone()).await?;
+                    let mut st = t.state.0.clone();
+                    match t.mode.as_str() {
+                        "webhook" => anyhow::bail!("a webhook runs when it's called"),
+                        "watch" => {
+                            if let Some(j) = &st.job {
+                                reagent_supervisor::Client::new(&data.join("supervisor.sock")).kill(j, None).await.map_err(anyhow::Error::msg)?;
+                            }
+                            st.next_run = None;
+                        }
+                        _ => st.next_run = Some(0),
+                    }
+                    store.set_trigger_state(&slug, &name, &st).await?;
+                    println!("a running reagent runs {name} within a second");
+                }
+                TriggerCmd::Move { name, to, project: slug } => {
+                    let p = project(store.clone(), slug).await?;
+                    let t = reagent_tools::triggers::move_to(&store, &p, &name, &to).await.map_err(anyhow::Error::msg)?;
+                    println!("{} is {}", t.name, if t.source == "repo" { format!("in the repo: {}", reagent_tools::triggers::repo_dir(&p, &t.name).display()) } else { "kept in reagent".into() });
+                }
+                TriggerCmd::Approve { name, project: slug, deny, always } => {
+                    let t = trigger(store.clone(), slug.clone(), name.clone()).await?;
+                    let hash = reagent_tools::triggers::script_hash(&t);
+                    if always && !deny {
+                        let rule = reagent_store::Rule { id: 0, project: slug.clone(), pos: 0, tool: "triggers.run".into(), command: Some(reagent_tools::triggers::command_line(&t)), target: None, action: "allow".into() };
+                        store.prepend_rule(&slug, &rule).await?;
+                    }
+                    let mut st = t.state.0.clone();
+                    st.asking = None;
+                    if deny {
+                        st.denied = Some(hash);
+                    } else {
+                        st.approved = Some(hash);
+                        st.denied = None;
+                        st.next_run = None;
+                    }
+                    store.set_trigger_state(&slug, &name, &st).await?;
+                    println!("{name}: {}", if deny { "denied" } else { "allowed" });
                 }
             }
             Ok(())

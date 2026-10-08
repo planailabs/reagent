@@ -176,6 +176,7 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("shell.jobs", None, "allow"),
         r("tasks.task_wait", None, "allow"),
         r("tasks.cron_list", None, "allow"),
+        r("triggers.trigger_list", None, "allow"),
         r("shell.jobs", None, "allow"),
         r("shell.job_output", None, "allow"),
         r("shell.job_wait", None, "allow"),

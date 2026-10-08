@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use reagent_store::{CronOptions, Json, Project, Store, Task, Trigger, TriggerRun, TriggerState};
 use reagent_supervisor::SpawnArgs;
+use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -322,6 +323,91 @@ pub async fn move_to(store: &Store, p: &Project, name: &str, to: &str) -> Result
         _ => return Err("to: repo or db".into()),
     }
     store.trigger(&p.slug, name).await.map_err(|e| e.to_string())?.ok_or_else(|| "it went away".into())
+}
+
+/// A trigger as the tools take it (tasks', outside agents').
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
+pub struct Def {
+    /// Lowercase letters, digits, - and _. An existing trigger of this name is replaced.
+    pub name: String,
+    /// poll (runs every so often), watch (runs for good, a line per event) or webhook (POST /hook/<project>/<name>).
+    pub mode: String,
+    /// poll: how often (90s, 2m, 1h), or `cron`.
+    pub every: Option<String>,
+    /// poll: a five-field cron expression instead of `every`.
+    pub cron: Option<String>,
+    /// The cron's time zone (default UTC).
+    pub tz: Option<String>,
+    /// The script (sh, or a #! line). It prints one JSON object per line per event:
+    /// {"key": "unique id", "to": "new" | "running" | "<task id>", "title"?, "message"?, "vars": {…}}.
+    /// It gets $REAGENT_STATE (a folder it keeps), $REAGENT_LAST_RUN, $REAGENT_TASKS (its tasks going, with keys), the project's env and secrets.
+    /// A webhook's script reads {headers, body} on stdin (none: the body is the event).
+    pub script: Option<String>,
+    /// Seconds a run may take (default 60).
+    pub timeout: Option<i64>,
+    /// While a task it started still goes: skip (default), queue or parallel.
+    pub overlap: Option<String>,
+    /// The tasks' title and prompt: templates with {{key}}, {{vars.x}}, {{message}}.
+    pub title: String,
+    pub prompt: String,
+    pub description: Option<String>,
+    pub profile: Option<String>,
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    /// A webhook's secret: the name of one of the project's secrets.
+    pub secret: Option<String>,
+    /// false: not in the project's nix dev shell.
+    pub devshell: Option<bool>,
+}
+
+impl Def {
+    pub fn into_trigger(self, project: &str, made_by: &str) -> Result<Trigger, String> {
+        Ok(Trigger {
+            project: project.into(),
+            name: self.name,
+            source: "db".into(),
+            made_by: made_by.into(),
+            description: self.description.unwrap_or_default(),
+            mode: self.mode,
+            every: self.every.as_deref().map(parse_every).transpose()?,
+            cron: self.cron,
+            tz: self.tz.unwrap_or_else(|| "UTC".into()),
+            script: self.script.unwrap_or_default(),
+            script_file: "run".into(),
+            timeout: self.timeout.unwrap_or(60),
+            overlap: self.overlap.unwrap_or_else(|| "skip".into()),
+            title: self.title,
+            prompt: self.prompt,
+            options: Json(CronOptions { profile: self.profile, kind: self.kind, budget: None, skills: self.skills }),
+            secret: self.secret,
+            devshell: self.devshell.unwrap_or(true),
+            enabled: true,
+            state: Default::default(),
+            created: 0,
+        })
+    }
+}
+
+/// A trigger in a line or two, for tools.
+pub fn line(t: &Trigger) -> String {
+    let when = match (&t.mode[..], &t.cron, t.every) {
+        ("poll", Some(c), _) => format!("cron `{c}` {}", t.tz),
+        ("poll", _, Some(e)) => format!("every {e}s"),
+        (m, _, _) => m.to_string(),
+    };
+    let st = &t.state.0;
+    let mut flags = vec![];
+    if !t.enabled {
+        flags.push("off".to_string());
+    }
+    if st.asking.is_some() {
+        flags.push("waits for approval".into());
+    }
+    if st.failures > 0 {
+        flags.push(format!("{} failures: {}", st.failures, st.last_error.as_deref().unwrap_or("").lines().next().unwrap_or("")));
+    }
+    format!("{} ({}, {}, in {}, by {}){}  → {}", t.name, t.mode, when, if t.source == "repo" { "the repo" } else { "reagent" }, t.made_by, if flags.is_empty() { String::new() } else { format!(" [{}]", flags.join("; ")) }, t.title)
 }
 
 // --- events -----------------------------------------------------------------

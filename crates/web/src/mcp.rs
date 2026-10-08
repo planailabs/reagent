@@ -123,6 +123,33 @@ pub struct Search {
     pub page: Option<u32>,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct TriggerAdd {
+    /// The project it watches for.
+    pub project: String,
+    #[serde(flatten)]
+    pub def: reagent_tools::triggers::Def,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct TriggerRef {
+    pub project: String,
+    pub name: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct TriggerMove {
+    pub project: String,
+    pub name: String,
+    /// repo (its files into the project folder) or db (kept in reagent).
+    pub to: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct Project {
+    pub project: Option<String>,
+}
+
 fn j(v: impl serde::Serialize) -> Result<String, String> {
     serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
 }
@@ -246,6 +273,39 @@ impl ReagentTools {
                 return j(json!({"task": t.id, "state": t.state, "timed_out": true}));
             }
         }
+    }
+
+    #[tool(description = "Triggers (of a project, or all): scripts that watch something and start tasks or message running ones.")]
+    async fn trigger_list(&self, Parameters(a): Parameters<Project>) -> Result<String, String> {
+        let v = self.0.store.triggers(a.project.as_deref()).await.map_err(|e| e.to_string())?;
+        Ok(if v.is_empty() { "no triggers".into() } else { v.iter().map(|t| format!("{}: {}", t.project, reagent_tools::triggers::line(t))).collect::<Vec<_>>().join("\n") })
+    }
+
+    #[tool(description = "Add (or replace) a trigger in a project: a script that prints one JSON line per event; each new event starts a task from the title and prompt templates, or messages a running one. The project's policy decides whether its script runs (it may ask the person).")]
+    async fn trigger_add(&self, Parameters(a): Parameters<TriggerAdd>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        let t = reagent_tools::triggers::save(&self.0.store, &p, a.def.into_trigger(&p.slug, "mcp")?, false).await?;
+        self.0.emit_trigger(&p.slug, &t.name).await;
+        Ok(format!("added: {}{}", reagent_tools::triggers::line(&t), if t.mode == "webhook" { format!("; its URL: <reagent>/hook/{}/{}", p.slug, t.name) } else { String::new() }))
+    }
+
+    #[tool(description = "Remove a trigger (a repo trigger's files too).")]
+    async fn trigger_remove(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
+        reagent_tools::triggers::remove(&self.0, &a.project, &a.name).await?;
+        Ok("removed".into())
+    }
+
+    #[tool(description = "Run a poll trigger now (or restart a watcher).")]
+    async fn trigger_run(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
+        reagent_tools::triggers::run_now(&self.0, &a.project, &a.name).await
+    }
+
+    #[tool(description = "Move a trigger into the project's repo (.agents/triggers/<name>/) or back into reagent.")]
+    async fn trigger_move(&self, Parameters(a): Parameters<TriggerMove>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        let t = reagent_tools::triggers::move_to(&self.0.store, &p, &a.name, &a.to).await?;
+        self.0.emit_trigger(&p.slug, &t.name).await;
+        Ok(format!("{} is {} now", t.name, if t.source == "repo" { "in the repo" } else { "kept in reagent" }))
     }
 
     #[tool(description = "Search tasks' whole conversations for a regex: one task's (paged), or every task's (of a project), a few hits each.")]
