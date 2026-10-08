@@ -49,6 +49,18 @@ async function act(path, body = {}) {
   }
 }
 
+/** A new task from this one's start (same prompt, profile, kind, skills, budget): its own conversation and worktree. */
+async function cloneTask() {
+  error.value = "";
+  try {
+    const { project, title, prompt, profile, kind, skills, budget } = t.value;
+    const n = await post("/api/tasks", { project, title, prompt, profile, kind, skills, budget });
+    location.hash = `#/task/${n.id}`;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 function cancelTask() {
   if (confirm("Cancel this task (and its commands)?")) act("cancel");
 }
@@ -110,6 +122,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <button :disabled="!['running', 'waiting'].includes(t.state)" title="finish this turn, then stop" @click="act('pause', { mode: 'safe' })">pause after this turn</button>
       <button :disabled="t.state !== 'paused'" @click="act('resume')">resume</button>
       <button v-if="t.state === 'failed'" @click="act('retry')">retry from the failure</button>
+      <button v-if="['done', 'failed', 'cancelled'].includes(t.state)" title="a new task from the same prompt, settings and budget" @click="cloneTask">clone and restart</button>
       <button :disabled="['done', 'cancelled'].includes(t.state)" @click="cancelTask">cancel</button>
       <button @click="openTerminal">open a terminal</button>
       <select v-model="switchTo" aria-label="switch model">

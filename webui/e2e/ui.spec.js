@@ -50,6 +50,16 @@ test("a task runs and reports", async ({ page }) => {
   await expect(page.locator(".task-row", { hasText: "Hello there" })).toContainText("✓");
 });
 
+test("a finished task is cloned and restarted", async ({ page }) => {
+  await startTask(page, "Twice over");
+  await expect(page.locator(".report")).toContainText("Done: Twice over");
+  const first = page.url();
+  await page.getByRole("button", { name: "clone and restart" }).click();
+  await expect(page).not.toHaveURL(first);
+  await expect(page.getByRole("heading", { name: "Twice over" })).toBeVisible();
+  await expect(page.locator(".report")).toContainText("Done: Twice over");
+});
+
 test("a call the policy asks about is approved from the inbox", async ({ page }) => {
   await startTask(page, "Touch a file");
   await page.getByRole("link", { name: /inbox/ }).click();
