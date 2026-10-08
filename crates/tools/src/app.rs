@@ -827,6 +827,12 @@ impl App {
         self.emit(json!({"kind": "todos", "task": id, "todos": todos}));
     }
 
+    /// Tells the UI a task's working memory changed.
+    pub async fn wm_changed(&self, id: &str) {
+        let wm = self.store.working_memory(id).await.unwrap_or_default();
+        self.emit(json!({"kind": "wm", "task": id, "wm": wm}));
+    }
+
     // --- questions and merges waiting for the person ---------------------
 
     /// What a task waits for, as stored, when it's of `kind`.

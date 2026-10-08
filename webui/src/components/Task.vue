@@ -91,6 +91,7 @@ async function openTerminal() {
   }
 }
 
+const wm = computed(() => Object.entries(live.wm[props.id] ?? t.value?.working_memory ?? {}));
 const todos = computed(() => live.todos[props.id] ?? t.value?.todos ?? []);
 const todoMark = (s) => ({ in_progress: "[~]", done: "[x]", cancelled: "[-]" })[s] ?? "[ ]";
 const streaming = computed(() => (t.value?.agent ? live.streams[t.value.agent] : ""));
@@ -221,7 +222,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     </div>
 
     <nav class="row tabs">
-      <a v-for="x in ['transcript', 'jobs', 'terminals', 'diff']" :key="x" href="#" :class="{ on: tab === x }" @click.prevent="tab = x">{{ x }}</a>
+      <a v-for="x in ['transcript', 'jobs', 'terminals', 'diff', 'working memory']" :key="x" href="#" :class="{ on: tab === x }" @click.prevent="tab = x">{{ x }}</a>
     </nav>
 
     <div v-if="tab === 'transcript' && tr" class="transcript">
@@ -263,6 +264,12 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
         <pre>{{ diff.stat }}</pre>
         <pre class="diff">{{ diff.diff }}</pre>
       </template>
+    </div>
+    <div v-else-if="tab === 'working memory'">
+      <p v-if="!wm.length" class="dim">nothing in its working memory</p>
+      <table v-else aria-label="working memory">
+        <tr v-for="[k, v] in wm" :key="k"><th>{{ k }}</th><td><pre>{{ typeof v === "string" ? v : JSON.stringify(v, null, 2) }}</pre></td></tr>
+      </table>
     </div>
   </section>
   <p v-else-if="error" class="err">{{ error }}</p>

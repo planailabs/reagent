@@ -555,6 +555,7 @@ impl WorkingMemoryTools {
             return Err("a slot needs a key".into());
         }
         self.0.store.set_working_memory(&t.id, key, &a.value).await.map_err(|e| e.to_string())?;
+        self.0.wm_changed(&t.id).await;
         Ok(format!("{key} set"))
     }
 
@@ -564,6 +565,7 @@ impl WorkingMemoryTools {
         if !self.0.store.remove_working_memory(&t.id, &a.key).await.map_err(|e| e.to_string())? {
             return Err(format!("there's no slot {:?}", a.key));
         }
+        self.0.wm_changed(&t.id).await;
         Ok(format!("{} removed", a.key))
     }
 }

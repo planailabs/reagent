@@ -14,7 +14,7 @@ description: How people and other agents use reagent - the web UI (inbox, projec
   secrets, settings.
 - **Task**: state, cost, todo list, what it waits for, the report, a message
   box, the transcript (live, markdown rendered), jobs (logs), terminals, the
-  worktree's diff; pause, resume, start now, retry, clone and restart,
+  worktree's diff, the working memory; pause, resume, start now, retry, clone and restart,
   cancel, switch model.
 - **Settings**: notifications on this browser, tasks at once, model
   profiles, every project's secrets, API tokens, global memory.

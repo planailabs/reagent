@@ -92,6 +92,15 @@ test("a task's todo list shows", async ({ page }) => {
   await expect(list.locator(".todo.pending")).toContainText("do the thing");
 });
 
+test("a task's working memory shows on its tab", async ({ page }) => {
+  await startTask(page, "Remember things");
+  await expect(page.locator(".report")).toContainText("remembered");
+  await page.getByRole("link", { name: "working memory" }).click();
+  const wm = page.getByLabel("working memory");
+  await expect(wm.locator("tr", { hasText: "pr" })).toContainText("42");
+  await expect(wm.locator("tr", { hasText: "plan" })).toContainText('"step": 2');
+});
+
 test("a question is answered with an option", async ({ page }) => {
   await startTask(page, "Ask a color");
   // Pinned on top; it folds to one line and back.

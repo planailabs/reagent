@@ -207,6 +207,7 @@ impl ReagentTools {
         let mut v = json!(t);
         v["subtasks"] = json!(kids.iter().map(|k| json!({"task": k.id, "title": k.title, "state": k.state})).collect::<Vec<_>>());
         v["todos"] = json!(self.0.store.todos(&a.task).await.map_err(|e| e.to_string())?);
+        v["working_memory"] = json!(self.0.store.working_memory(&a.task).await.map_err(|e| e.to_string())?);
         j(v)
     }
 
