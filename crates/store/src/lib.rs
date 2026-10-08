@@ -53,6 +53,9 @@ pub struct Project {
     /// Its tasks' kind when nothing else picks one.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Tasks of this project running at once (none: only the global limit).
+    #[serde(default)]
+    pub max_tasks: Option<i64>,
 }
 
 fn auto() -> String {
@@ -76,6 +79,7 @@ impl Project {
             devshell: auto(),
             devshell_attr: None,
             kind: None,
+            max_tasks: None,
         }
     }
 }
@@ -120,7 +124,7 @@ pub struct Task {
     pub profile: String,
     pub budget: Json<Budget>,
     pub skills: Json<Vec<String>>,
-    /// running, waiting, paused, done, failed, cancelled.
+    /// queued, running, waiting, paused, done, failed, cancelled.
     pub state: String,
     pub wait: Option<Json<serde_json::Value>>,
     pub report: Option<String>,
@@ -133,11 +137,14 @@ pub struct Task {
     /// Used by its earlier agents (before an upgrade or a model switch).
     pub base_tokens: i64,
     pub base_cost: f64,
+    /// When its agent started (a queued task hasn't yet).
+    #[serde(default)]
+    pub started: Option<i64>,
 }
 
 impl Task {
     pub fn is_active(&self) -> bool {
-        matches!(self.state.as_str(), "running" | "waiting" | "paused")
+        matches!(self.state.as_str(), "running" | "waiting" | "paused" | "queued")
     }
 }
 
@@ -463,10 +470,10 @@ impl Store {
     /// Adds a project, or changes one (by its slug).
     pub async fn put_project(&self, p: &Project) -> R<()> {
         sqlx::query(
-            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              on conflict (slug) do update set name = $2, path = $3, memory = $4, worktrees = $5, merge = $6,
-               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13",
+               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14",
         )
         .bind(&p.slug)
         .bind(&p.name)
@@ -481,6 +488,7 @@ impl Store {
         .bind(&p.devshell)
         .bind(&p.devshell_attr)
         .bind(&p.kind)
+        .bind(p.max_tasks)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -563,7 +571,7 @@ impl Store {
     pub async fn tasks(&self, project: Option<&str>, parent: Option<&str>, active: bool, limit: i64) -> R<Vec<Task>> {
         sqlx::query_as(
             "select * from tasks where ($1 is null or project = $1) and ($2 is null or parent = $2)
-             and (not $3 or state in ('running', 'waiting', 'paused')) order by created desc limit $4",
+             and (not $3 or state in ('running', 'waiting', 'paused', 'queued')) order by created desc limit $4",
         )
         .bind(project)
         .bind(parent)
@@ -592,7 +600,23 @@ impl Store {
     }
 
     pub async fn set_agent(&self, id: &str, agent: &str) -> R<()> {
-        sqlx::query("update tasks set agent = $2, updated = unixepoch() where id = $1").bind(id).bind(agent).execute(&self.pool).await?;
+        sqlx::query("update tasks set agent = $2, started = coalesce(started, unixepoch()), updated = unixepoch() where id = $1").bind(id).bind(agent).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Tasks taking a place (running or waiting; not subtasks): of a project, or all.
+    pub async fn running_tasks(&self, project: Option<&str>) -> R<i64> {
+        sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting') and ($1 is null or project = $1)").bind(project).fetch_one(&self.pool).await
+    }
+
+    /// Queued tasks, oldest first.
+    pub async fn queued_tasks(&self) -> R<Vec<Task>> {
+        sqlx::query_as("select * from tasks where state = 'queued' order by created, rowid").fetch_all(&self.pool).await
+    }
+
+    /// A queued task's prompt (a message for it is added before it starts).
+    pub async fn set_prompt(&self, id: &str, prompt: &str) -> R<()> {
+        sqlx::query("update tasks set prompt = $2, updated = unixepoch() where id = $1").bind(id).bind(prompt).execute(&self.pool).await?;
         Ok(())
     }
 

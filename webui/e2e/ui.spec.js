@@ -264,6 +264,23 @@ test("a task moves onto another model", async ({ page }) => {
   expect(t.find((x) => x.title === "Switch me").profile).toBe("big");
 });
 
+test("over the limit a task is queued, and started now by hand", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("tasks at once").fill("1");
+  await page.getByRole("button", { name: "save" }).first().click();
+  await expect(page.getByText(/running, \d+ queued/)).toBeVisible();
+  // One waits for an answer (it holds the place), the next is queued.
+  await startTask(page, "Ask holder");
+  await expect(page.getByLabel("question")).toBeVisible();
+  await startTask(page, "Queued one");
+  await page.getByRole("button", { name: "start now" }).click();
+  await expect(page.locator(".report")).toContainText("Done: Queued one");
+  await page.goto("/#/settings");
+  await page.getByLabel("tasks at once").fill("");
+  await page.getByRole("button", { name: "save" }).first().click();
+  await expect(page.getByLabel("tasks at once")).toHaveValue("");
+});
+
 test("logging out locks the API", async ({ page }) => {
   await page.getByRole("button", { name: "log out" }).click();
   await expect(page.getByLabel("password")).toBeVisible();

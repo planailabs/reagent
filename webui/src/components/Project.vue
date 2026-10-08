@@ -59,7 +59,7 @@ async function save() {
   error.value = "";
   try {
     const s = settings.value;
-    const body = { kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
+    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
     p.value = await put(`/api/projects/${props.slug}`, body);
     error.value = "saved";
   } catch (e) {
@@ -147,6 +147,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <label>nix dev shell <select v-model="settings.devshell"><option>auto</option><option>on</option><option>off</option></select>
         <input v-model="settings.devshell_attr" size="10" placeholder="default" aria-label="dev shell" />
         <span class="dim">auto: when there's a flake.nix; commands and terminals run in `nix develop`</span></label>
+      <label>tasks at once <input v-model="settings.max_tasks" size="4" inputmode="numeric" placeholder="any" aria-label="project tasks at once" /> <span class="dim">more wait, queued (the global limit holds too)</span></label>
       <label>calls no rule covers <select v-model="settings.default_action"><option>ask</option><option>allow</option><option>deny</option></select></label>
       <label v-if="config?.kinds?.length">default kind
         <select v-model="settings.kind"><option :value="null">none</option><option v-for="k in config.kinds" :key="k.name" :value="k.name">{{ k.name }}</option></select>

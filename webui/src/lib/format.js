@@ -2,13 +2,13 @@
 
 /** A glyph per state (state is never shown by colour alone). */
 export function glyph(state) {
-  return { running: "▶", waiting: "?", paused: "‖", done: "✓", failed: "✗", cancelled: "–" }[state] ?? "·";
+  return { queued: "◷", running: "▶", waiting: "?", paused: "‖", done: "✓", failed: "✗", cancelled: "–" }[state] ?? "·";
 }
 
 /** What a waiting task waits for, in words. */
 export function waitText(t) {
   const w = t?.wait;
-  if (!w) return t?.state === "failed" ? "failed" : "";
+  if (!w) return t?.state === "failed" ? "failed" : t?.state === "queued" ? "queued: waits for a place" : "";
   switch (w.kind) {
     case "approval":
       return `approve ${toolName(w.call?.function?.name)}`;

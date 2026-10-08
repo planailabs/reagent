@@ -122,6 +122,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <button :disabled="!['running', 'waiting'].includes(t.state)" @click="act('pause', { mode: 'quick' })">pause</button>
       <button :disabled="!['running', 'waiting'].includes(t.state)" title="finish this turn, then stop" @click="act('pause', { mode: 'safe' })">pause after this turn</button>
       <button :disabled="t.state !== 'paused'" @click="act('resume')">resume</button>
+      <button v-if="t.state === 'queued'" title="it waits for a place among the tasks running at once" @click="act('start')">start now</button>
       <button v-if="t.state === 'failed'" @click="act('retry')">retry from the failure</button>
       <button v-if="['done', 'failed', 'cancelled'].includes(t.state)" title="a new task from the same prompt, settings and budget" @click="cloneTask">clone and restart</button>
       <button :disabled="['done', 'cancelled'].includes(t.state)" @click="cancelTask">cancel</button>

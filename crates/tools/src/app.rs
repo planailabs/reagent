@@ -382,12 +382,12 @@ impl App {
         budget.cost = budget.cost.or(p.budget.cost);
         budget.minutes = budget.minutes.or(p.budget.minutes);
         let skills = self.skills_for(Path::new(&p.path), &p);
-        let mut preload = String::new();
         for name in &req.skills {
-            let s = skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
-            let (body, files) = skills::load(s)?;
-            preload.push_str(&format!("\n\n## Skill: {name} (in {})\n\n{body}\n{}", s.dir.display(), if files.is_empty() { String::new() } else { format!("\nIts files: {}\n", files.join(", ")) }));
+            skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
         }
+        // Over the limit of tasks running at once: it waits (subtasks never do: their parent waits for them).
+        // ponytail: two starts at the same moment may both find the last place; add a lock if that matters.
+        let queue = req.parent.is_none() && !self.has_room(&p).await;
         let t = self
             .store
             .add_task(&NewTask {
@@ -404,13 +404,77 @@ impl App {
             })
             .await
             .map_err(|e| e.to_string())?;
+        if queue {
+            self.store.set_state(&t.id, "queued", None).await.map_err(|e| e.to_string())?;
+            self.task_changed(&t.id).await;
+            tracing::info!(task = %t.id, title = %t.title, project = %p.slug, "task queued: as many as may run at once already do");
+            return self.task(&t.id).await;
+        }
+        self.spawn(&t).await
+    }
+
+    /// The limits of tasks running at once: the global one (`max_tasks` in
+    /// the settings) and the project's; none: no limit.
+    pub async fn max_tasks(&self) -> Option<i64> {
+        self.store.setting("max_tasks").await.ok().flatten().and_then(|v| v.parse().ok()).filter(|n| *n > 0)
+    }
+
+    /// Whether another task of this project may start now.
+    async fn has_room(&self, p: &Project) -> bool {
+        if let Some(max) = self.max_tasks().await
+            && self.store.running_tasks(None).await.unwrap_or(0) >= max
+        {
+            return false;
+        }
+        if let Some(max) = p.max_tasks.filter(|n| *n > 0)
+            && self.store.running_tasks(Some(&p.slug)).await.unwrap_or(0) >= max
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Starts queued tasks, oldest first, while there's room.
+    pub async fn start_queued(&self) {
+        for t in self.store.queued_tasks().await.unwrap_or_default() {
+            let Ok(p) = self.project(&t.project).await else { continue };
+            if !self.has_room(&p).await {
+                continue;
+            }
+            match self.spawn(&t).await {
+                Ok(_) => tracing::info!(task = %t.id, "queued task started"),
+                Err(e) => tracing::warn!(task = %t.id, error = %e, "a queued task didn't start"),
+            }
+        }
+    }
+
+    /// Starts a queued task now, whatever the limits.
+    pub async fn start_now(&self, id: &str) -> Result<Task, String> {
+        let t = self.task(id).await?;
+        if t.state != "queued" {
+            return Err(format!("{} isn't queued (it's {})", t.title, t.state));
+        }
+        self.spawn(&t).await
+    }
+
+    /// A task's agent: spawned with its first message (the skills it starts with loaded).
+    async fn spawn(&self, t: &Task) -> Result<Task, String> {
+        let p = self.project(&t.project).await?;
+        let profile = t.profile.clone();
+        let skills = self.skills_for(Path::new(&p.path), &p);
+        let mut preload = String::new();
+        for name in t.skills.iter() {
+            let s = skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
+            let (body, files) = skills::load(s)?;
+            preload.push_str(&format!("\n\n## Skill: {name} (in {})\n\n{body}\n{}", s.dir.display(), if files.is_empty() { String::new() } else { format!("\nIts files: {}\n", files.join(", ")) }));
+        }
         let first = format!(
             "Task: {}\nProject: {} ({})\nWorking directory: {}\n\n{}{}",
             t.title,
             p.name,
             p.slug,
             p.path,
-            req.prompt.trim(),
+            t.prompt.trim(),
             if preload.is_empty() { String::new() } else { format!("\n\n# Skills loaded for this task{preload}") }
         );
         // A project with servers of its own has its own mixture.
@@ -426,6 +490,9 @@ impl App {
         };
         let agent = spawned["id"].as_str().ok_or("the hub didn't say the agent's id")?.to_string();
         self.store.set_agent(&t.id, &agent).await.map_err(|e| e.to_string())?;
+        if t.state == "queued" {
+            self.store.set_state(&t.id, "running", None).await.map_err(|e| e.to_string())?;
+        }
         self.task_changed(&t.id).await;
         tracing::info!(task = %t.id, title = %t.title, project = %p.slug, "task started");
         self.task(&t.id).await
@@ -439,6 +506,12 @@ impl App {
     /// finished one goes on with it).
     pub async fn message(&self, id: &str, text: &str) -> Result<(), String> {
         let t = self.task(id).await?;
+        // Not started yet: it reads it with its prompt.
+        if t.state == "queued" {
+            self.store.set_prompt(id, &format!("{}\n\n[a message that came while it was queued] {text}", t.prompt.trim_end())).await.map_err(|e| e.to_string())?;
+            self.task_changed(id).await;
+            return Ok(());
+        }
         let agent = Self::agent_of(&t)?;
         self.hub()?.op(&root(), Op::Send { to: Addr::Agent(agent), content: text.into() }).await?;
         if matches!(t.state.as_str(), "done" | "failed") {
@@ -499,7 +572,7 @@ impl App {
         self.store.set_task_limits(id, &profile, &budget).await.map_err(|e| e.to_string())?;
         self.notified.lock().unwrap().remove(&(id.to_string(), "budget".to_string()));
         if t.wait.as_ref().is_some_and(|w| w.0["kind"] == "budget") {
-            let minutes = (chrono::Utc::now().timestamp() - t.created) / 60;
+            let minutes = (chrono::Utc::now().timestamp() - t.started.unwrap_or(t.created)) / 60;
             let over = budget.tokens.is_some_and(|l| t.tokens as u64 > l) || budget.cost.is_some_and(|l| t.cost > l) || budget.minutes.is_some_and(|l| minutes as u64 > l);
             if over {
                 self.task_changed(id).await;
@@ -915,7 +988,7 @@ impl App {
         self.record_usage(t).await;
         let Ok(t) = self.task(&t.id).await else { return };
         let b = &t.budget.0;
-        let minutes = (chrono::Utc::now().timestamp() - t.created) / 60;
+        let minutes = (chrono::Utc::now().timestamp() - t.started.unwrap_or(t.created)) / 60;
         let over = b.tokens.is_some_and(|l| t.tokens as u64 > l) || b.cost.is_some_and(|l| t.cost > l) || b.minutes.is_some_and(|l| minutes as u64 > l);
         if !over {
             return;
@@ -1061,7 +1134,7 @@ impl App {
             }
             // Over budget: paused (quick), and the person hears it.
             let b = &t.budget.0;
-            let minutes = (chrono::Utc::now().timestamp() - t.created) / 60;
+            let minutes = (chrono::Utc::now().timestamp() - t.started.unwrap_or(t.created)) / 60;
             // All the task's agents together.
             let (all_tokens, all_cost) = (t.base_tokens as u64 + input + output, t.base_cost + cost);
             let over = b.tokens.is_some_and(|l| all_tokens > l) || b.cost.is_some_and(|l| all_cost > l) || b.minutes.is_some_and(|l| minutes as u64 > l);
@@ -1145,6 +1218,7 @@ impl App {
                 if let Err(e) = me.sync().await {
                     tracing::warn!(error = %e, "following tasks");
                 }
+                me.start_queued().await;
                 // Agents left on an older version (an upgrade that failed while the
                 // node was still coming up, say) are moved on as soon as it can.
                 if n % 10 == 0 {

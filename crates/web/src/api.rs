@@ -50,6 +50,7 @@ pub fn routes() -> Router<S> {
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/config", get(config))
+        .route("/api/settings", get(settings).put(put_settings))
         .route("/api/events", get(events))
         .route("/api/inbox", get(inbox))
         .route("/api/notifications", get(notifications))
@@ -82,6 +83,7 @@ pub fn routes() -> Router<S> {
         .route("/api/tasks/{id}/resume", post(resume))
         .route("/api/tasks/{id}/cancel", post(cancel))
         .route("/api/tasks/{id}/retry", post(retry))
+        .route("/api/tasks/{id}/start", post(start_now))
         .route("/api/tasks/{id}/limits", post(limits))
         .route("/api/tasks/{id}/raise", post(raise))
         .route("/api/tasks/{id}/profile", post(switch_profile))
@@ -164,6 +166,26 @@ async fn config(State(s): State<S>) -> R {
     let profiles: Vec<Value> = c.profile.iter().map(|(n, p)| json!({"name": n, "model": p.model, "provider": p.provider, "price": p.price, "context": p.context, "fallback": p.fallback})).collect();
     let kinds: Vec<Value> = c.kind.iter().map(|(n, k)| json!({"name": n, "description": k.description, "profile": k.profile, "escalate": k.escalate, "escalate_after": k.escalate_after})).collect();
     Ok(Json(json!({"kinds": kinds, "default_kind": c.default_kind, "routing": c.routing, "profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
+}
+
+/// What the person sets in the web UI: how many tasks may run at once (none: no limit).
+async fn settings(State(s): State<S>) -> R {
+    let running = db(s.w.app.store.running_tasks(None).await)?;
+    let queued = db(s.w.app.store.queued_tasks().await)?.len();
+    Ok(Json(json!({"max_tasks": s.w.app.max_tasks().await, "running": running, "queued": queued})))
+}
+
+#[derive(Deserialize)]
+struct Settings {
+    max_tasks: Option<i64>,
+}
+
+async fn put_settings(State(s): State<S>, Json(v): Json<Settings>) -> R {
+    let n = v.max_tasks.filter(|n| *n > 0);
+    db(s.w.app.store.set_setting("max_tasks", &n.map(|n| n.to_string()).unwrap_or_default()).await)?;
+    // More room: queued tasks start.
+    s.w.app.start_queued().await;
+    settings(State(s)).await
 }
 
 /// Live: task changes, notifications, agent events, job ends.
@@ -515,6 +537,10 @@ async fn resume(State(s): State<S>, Path(id): Path<String>) -> R {
 async fn cancel(State(s): State<S>, Path(id): Path<String>) -> R {
     s.w.app.cancel(&id).await?;
     Ok(Json(json!({"ok": true})))
+}
+
+async fn start_now(State(s): State<S>, Path(id): Path<String>) -> R {
+    Ok(Json(json!(s.w.app.start_now(&id).await?)))
 }
 
 async fn retry(State(s): State<S>, Path(id): Path<String>) -> R {

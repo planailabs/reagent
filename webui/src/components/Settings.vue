@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from "vue";
-import { del, get, post } from "../lib/api.js";
+import { del, get, post, put } from "../lib/api.js";
 import Memory from "./Memory.vue";
 import Secrets from "./Secrets.vue";
 
@@ -72,9 +72,25 @@ async function disablePush() {
   push.value = "off";
 }
 
+const limits = ref(null);
+const maxTasks = ref("");
+async function loadLimits() {
+  limits.value = await get("/api/settings").catch((e) => ((error.value = e.message), null));
+  maxTasks.value = limits.value?.max_tasks ?? "";
+}
+async function saveLimits() {
+  error.value = "";
+  try {
+    limits.value = await put("/api/settings", { max_tasks: maxTasks.value === "" ? null : Number(maxTasks.value) });
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 onMounted(() => {
   load();
   loadTokens();
+  loadLimits();
 });
 </script>
 
@@ -87,6 +103,12 @@ onMounted(() => {
       <button v-if="push === 'on'" @click="disablePush">turn off</button>
       <span class="dim">apprise: {{ config.notify.apprise ? "set up" : "not set up (reagent.hcl)" }}</span>
     </div>
+    <h2>tasks at once</h2>
+    <form class="row" @submit.prevent="saveLimits">
+      <label>at most <input v-model="maxTasks" size="4" inputmode="numeric" placeholder="any" aria-label="tasks at once" /> tasks run at once</label>
+      <button type="submit">save</button>
+      <span class="dim">more wait, queued, and start oldest first; subtasks don't count; a project can set its own limit too. Now: {{ limits?.running ?? "?" }} running, {{ limits?.queued ?? "?" }} queued.</span>
+    </form>
     <h2>model profiles <span class="dim">(reagent.hcl)</span></h2>
     <table>
       <tr><th>profile</th><th>model</th><th>provider</th><th>price in/out per M</th><th>context</th></tr>
