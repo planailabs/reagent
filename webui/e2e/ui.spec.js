@@ -44,6 +44,12 @@ test("a wrong password is refused", async ({ browser }) => {
 test("a task runs and reports", async ({ page }) => {
   await startTask(page, "Hello there");
   await expect(page.locator(".report")).toContainText("Done: Hello there");
+  await page.setViewportSize({ width: 800, height: 200 });
+  await page.getByRole("button", { name: "to the bottom" }).click();
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "to the top" }).click();
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole("link", { name: "projects" }).click();
   await page.getByRole("link", { name: "Site" }).click();
   await page.getByLabel("finished ones too").check();

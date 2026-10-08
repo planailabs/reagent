@@ -33,7 +33,8 @@ header a { text-decoration: none; padding: 2px 8px; color: var(--dim); }
 header a.on, header a:hover, .tabs a.on { color: var(--hi); border-bottom: 1px solid var(--hi); }
 header .brand { color: var(--hi); margin-right: 12px; }
 header { display: flex; gap: 4px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
-main { padding: 12px; max-width: 1400px; }
+/* The left gutter keeps content out from under the .jump buttons. */
+main { padding: 12px 12px 12px 56px; max-width: 1400px; }
 .badge { margin-left: 4px; border: 1px solid var(--hi); padding: 0 5px; color: var(--hi); }
 .login { max-width: 420px; margin: 15vh auto; }
 .login h1 { font-size: 18px; color: var(--hi); }
@@ -113,3 +114,5 @@ textarea.code { font-family: ui-monospace, monospace; min-height: 8em; }
 .proposal .item-text { max-height: 30vh; overflow: auto; }
 .pinned { position: sticky; top: 0; z-index: 5; background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--err, #c33); padding: 6px 8px; margin: 0 0 8px; max-height: 60vh; overflow: auto; }
 .pinned .wait { margin: 6px 0 0; }
+.jump { position: fixed; left: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 3; }
+.jump button { width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1; }

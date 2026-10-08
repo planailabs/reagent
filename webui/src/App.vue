@@ -64,6 +64,9 @@ async function logout() {
   session.value = { logged_in: false, password_set: true };
 }
 
+// scrollTo turns Infinity into 0, so clamp to the page height.
+const jump = (top) => scrollTo({ top: Math.min(top, document.documentElement.scrollHeight), behavior: "smooth" });
+
 const onLoggedOut = () => {
   stop?.();
   stop = null;
@@ -107,5 +110,9 @@ onUnmounted(() => {
       <Docs v-else-if="page === 'docs'" :name="arg" />
       <p v-else class="dim">nothing here: <a href="#/inbox">the inbox</a></p>
     </main>
+    <nav class="jump">
+      <button title="to the top" aria-label="to the top" @click="jump(0)">↑</button>
+      <button title="to the bottom" aria-label="to the bottom" @click="jump(Infinity)">↓</button>
+    </nav>
   </template>
 </template>
