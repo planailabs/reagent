@@ -50,7 +50,7 @@ function start() {
       if (applyAgent(live.streams, n)) live.agentTick[n.agent] = (live.agentTick[n.agent] || 0) + 1;
     } else if (e.kind === "todos") {
       live.todos[e.task] = e.todos;
-    } else if (e.kind === "job" || e.kind === "project") {
+    } else if (e.kind === "job" || e.kind === "project" || e.kind === "trigger") {
       live.tick++;
     }
   });

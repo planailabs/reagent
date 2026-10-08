@@ -98,3 +98,6 @@ code { color: var(--hi); }
 .md table { border-collapse: collapse; }
 .md th, .md td { border: 1px solid var(--line); padding: 2px 6px; }
 .md h1, .md h2, .md h3, .md h4 { font-size: 1em; margin: 0.6em 0 0.3em; }
+textarea.code { font-family: ui-monospace, monospace; min-height: 8em; }
+.runs details pre { max-height: 40vh; overflow: auto; }
+.runs summary { cursor: pointer; }

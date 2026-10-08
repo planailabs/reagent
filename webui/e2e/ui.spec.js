@@ -230,6 +230,29 @@ test("secrets are set, shown on demand and removed", async ({ page }) => {
   await expect(own.locator("tr", { hasText: "SITE_ONLY" })).toHaveCount(0);
 });
 
+test("a trigger is added, starts a task, moves to the repo and goes", async ({ page }) => {
+  await page.goto("/#/project/site/triggers");
+  await page.getByLabel("trigger name").fill("ping");
+  await page.getByLabel("every").fill("1h");
+  await page.getByLabel("script").fill(`echo '{"key": "k1", "vars": {"what": "the build"}}'`);
+  await page.getByLabel("trigger title").fill("Triggered {{key}}");
+  await page.getByLabel("trigger prompt").fill("Check {{vars.what}}");
+  await page.getByRole("button", { name: "save" }).click();
+  const card = page.getByLabel("trigger ping");
+  await expect(card).toContainText("every 1h");
+  await card.getByRole("button", { name: "runs" }).click();
+  await expect(card.locator(".runs summary").first()).toContainText("ok · 1 events");
+  await page.goto("/#/project/site");
+  await page.getByLabel("finished ones too").check();
+  await expect(page.locator(".task-row", { hasText: "Triggered k1" })).toBeVisible();
+  await page.goto("/#/project/site/triggers");
+  await card.getByRole("button", { name: "move to repo" }).click();
+  await expect(card).toContainText("in the repo");
+  page.once("dialog", (d) => d.accept());
+  await card.getByRole("button", { name: "remove" }).click();
+  await expect(card).toHaveCount(0);
+});
+
 test("a task moves onto another model", async ({ page }) => {
   await startTask(page, "Switch me");
   await expect(page.locator(".report")).toContainText("Done: Switch me");
