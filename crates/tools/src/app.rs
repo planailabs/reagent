@@ -27,6 +27,8 @@ pub struct Paths {
     pub socket: PathBuf,
     /// Global skills folders (`~/.agents/skills`, `<data>/skills`).
     pub skills: Vec<PathBuf>,
+    /// Where the system skills are written at every start.
+    pub system_skills: PathBuf,
 }
 
 impl Paths {
@@ -35,7 +37,7 @@ impl Paths {
         if let Some(h) = std::env::var_os("HOME") {
             skills.insert(0, PathBuf::from(h).join(".agents/skills"));
         }
-        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills }
+        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, system_skills: data.join("system-skills") }
     }
 }
 
@@ -329,6 +331,31 @@ impl App {
         self.store.task_by_agent(agent).await.map_err(|e| e.to_string())?.ok_or_else(|| format!("agent {agent} isn't a reagent task"))
     }
 
+    // --- the prompt designer ----------------------------------------------
+
+    /// A round of the prompt designer for a project (`target`: task, cron, trigger or subtask).
+    pub async fn design(&self, project: &str, target: &str, goal: &str, answers: &[crate::design::Answer], propose: bool) -> Result<crate::design::Step, String> {
+        let p = self.project(project).await?;
+        crate::design::step(&self.config, &self.paths.data, &self.paths.skills, &self.paths.system_skills, &p, target, goal, answers, propose).await
+    }
+
+    /// The designer as a task: it reads the project (only reads), asks the
+    /// person, and reports a proposal.
+    pub async fn start_design_task(&self, project: &str, target: &str, goal: &str) -> Result<Task, String> {
+        let first = goal.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        let short: String = first.chars().take(60).collect();
+        self.start_task(StartTask {
+            project: project.into(),
+            title: format!("Design: {short}{}", if first.chars().count() > 60 { "…" } else { "" }),
+            prompt: crate::design::task_prompt(target, goal),
+            skills: vec!["reagent-prompt-design".into()],
+            origin: Some("design".into()),
+            profile: self.config.design_profile.clone(),
+            ..Default::default()
+        })
+        .await
+    }
+
     // --- memory and skills ----------------------------------------------
 
     pub fn global_memory(&self) -> Memory {
@@ -338,15 +365,11 @@ impl App {
     }
 
     pub fn project_memory(&self, p: &Project) -> Memory {
-        let dir = match p.memory.as_str() {
-            "repo" => PathBuf::from(&p.path).join(".reagent/memory"),
-            _ => self.paths.data.join("memory/projects").join(&p.slug),
-        };
-        Memory::new(dir, &format!("Memory of {}", p.name))
+        crate::memory::of_project(&self.paths.data, p)
     }
 
     pub fn skills_for(&self, cwd: &Path, p: &Project) -> Vec<Skill> {
-        skills::discover(cwd, Path::new(&p.path), &self.paths.skills)
+        skills::discover(cwd, Path::new(&p.path), &self.paths.skills, Some(&self.paths.system_skills))
     }
 
     pub fn worktree_dir(&self, p: &Project, branch: &str) -> PathBuf {

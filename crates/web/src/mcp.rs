@@ -124,6 +124,33 @@ pub struct Search {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct Design {
+    pub project: String,
+    /// What the task should achieve, roughly.
+    pub goal: String,
+    /// The answers to the designer's questions so far.
+    #[serde(default)]
+    pub answers: Vec<reagent_tools::design::Answer>,
+    /// Propose now, without more questions.
+    #[serde(default)]
+    pub propose: bool,
+    /// task (default), cron or trigger.
+    pub target: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct DesignApply {
+    pub project: String,
+    /// Suggestions from prompt_design's proposal, as they came (the ones to make).
+    pub suggestions: Vec<Value>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct DocName {
+    pub name: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TriggerAdd {
     /// The project it watches for.
     pub project: String,
@@ -273,6 +300,40 @@ impl ReagentTools {
                 return j(json!({"task": t.id, "state": t.state, "timed_out": true}));
             }
         }
+    }
+
+    #[tool(description = "Design a task's prompt before task_start: give a rough goal; it asks questions (answer them and call again with `answers`) or proposes a title, prompt, skills, kind, profile and budget.")]
+    async fn prompt_design(&self, Parameters(a): Parameters<Design>) -> Result<String, String> {
+        let target = a.target.as_deref().unwrap_or("task");
+        if !matches!(target, "task" | "cron" | "trigger") {
+            return Err("target: task, cron or trigger".into());
+        }
+        let step = self.0.design(&a.project, target, &a.goal, &a.answers, a.propose).await?;
+        j(step)
+    }
+
+    #[tool(description = "Make suggestions from a prompt_design proposal: a repo skill, a cron entry, a trigger (pass the ones you want, as they came).")]
+    async fn design_apply(&self, Parameters(a): Parameters<DesignApply>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        let mut out = vec![];
+        for v in a.suggestions {
+            let line = match serde_json::from_value::<reagent_tools::design::Suggestion>(v) {
+                Ok(s) => reagent_tools::design::apply(&self.0.store, &p, &s).await.unwrap_or_else(|e| format!("not made: {e}")),
+                Err(e) => format!("not a suggestion: {e}"),
+            };
+            out.push(line);
+        }
+        Ok(out.join("\n"))
+    }
+
+    #[tool(description = "reagent's documentation (its system skills): how tasks, subtasks, policy, triggers, memory and the rest work.")]
+    async fn docs_list(&self) -> Result<String, String> {
+        Ok(reagent_tools::skills::system().into_iter().map(|(n, d, _)| format!("{n} — {d}")).collect::<Vec<_>>().join("\n"))
+    }
+
+    #[tool(description = "One of reagent's docs (docs_list names them).")]
+    async fn docs_read(&self, Parameters(a): Parameters<DocName>) -> Result<String, String> {
+        reagent_tools::skills::system_text(&a.name).map(|t| reagent_tools::skills::parse(&t).2).ok_or_else(|| format!("no doc {:?} (docs_list names them)", a.name))
     }
 
     #[tool(description = "Triggers (of a project, or all): scripts that watch something and start tasks or message running ones.")]

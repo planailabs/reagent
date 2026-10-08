@@ -30,6 +30,20 @@ pub struct TodoTools(pub Arc<App>);
 pub struct SecretTools(pub Arc<App>);
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct Design {
+    /// What the subtask should achieve, roughly.
+    pub goal: String,
+    /// Your answers to the designer's questions so far.
+    #[serde(default)]
+    pub answers: Vec<crate::design::Answer>,
+    /// Propose now, without more questions.
+    #[serde(default)]
+    pub propose: bool,
+    /// Another project (default: this one).
+    pub project: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct SecretName {
     pub name: String,
 }
@@ -302,6 +316,15 @@ fn task_line(t: &reagent_store::Task) -> String {
 
 #[tool_router(server_handler)]
 impl TaskTools {
+    #[tool(description = "Design a prompt for a subtask before starting it: give a rough goal; it asks you questions (answer them from what you know, and call again with `answers`) or proposes a title, prompt, skills, kind and budget for tasks.task_spawn. `propose: true` asks for the proposal now. Worth it for any subtask that isn't trivial.")]
+    async fn prompt_design(&self, Parameters(a): Parameters<Design>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, p) = caller(&self.0, &ctx).await?;
+        let project = a.project.unwrap_or(p.slug);
+        let goal = format!("{}\n\n(Asked by the task \"{}\", which will start it as its subtask.)", a.goal.trim(), t.title);
+        let step = self.0.design(&project, "subtask", &goal, &a.answers, a.propose).await?;
+        Ok(crate::design::step_text(&step))
+    }
+
     #[tool(description = "Start a subtask: another task working on its own (in this project, or another if the policy allows). Its report comes to you as a message when it ends.")]
     async fn task_spawn(&self, Parameters(a): Parameters<Spawn>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;

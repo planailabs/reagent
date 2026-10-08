@@ -49,6 +49,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TriggerCmd,
     },
+    /// Tasks: design a task's prompt with the prompt designer.
+    Task {
+        #[command(subcommand)]
+        cmd: TaskCmd,
+    },
     /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
     Token {
         #[command(subcommand)]
@@ -212,6 +217,22 @@ enum TriggerCmd {
         deny: bool,
         #[arg(long)]
         always: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskCmd {
+    /// Turn a rough goal into a task prompt: the designer asks, you answer, it proposes.
+    Design {
+        goal: String,
+        #[arg(long)]
+        project: String,
+        /// task, cron or trigger (what the prompt is for).
+        #[arg(long, default_value = "task")]
+        target: String,
+        /// Print the proposal as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -449,6 +470,72 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     }
                     store.set_trigger_state(&slug, &name, &st).await?;
                     println!("{name}: {}", if deny { "denied" } else { "allowed" });
+                }
+            }
+            Ok(())
+        }
+        Cmd::Task { cmd: TaskCmd::Design { goal, project, target, json } } => {
+            anyhow::ensure!(matches!(target.as_str(), "task" | "cron" | "trigger"), "--target: task, cron or trigger");
+            let config = reagent::load_config(&data)?;
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let p = store.project(&project).await?.ok_or_else(|| anyhow::anyhow!("no project {project:?}"))?;
+            let paths = reagent_tools::app::Paths::new(&data);
+            reagent_tools::skills::write_system(&paths.system_skills)?;
+            let mut answers: Vec<reagent_tools::design::Answer> = vec![];
+            let mut propose = false;
+            eprintln!("Answer with an option's number, your own words, or nothing (it decides); `propose` to get the proposal now.\n");
+            let proposal = loop {
+                let step = reagent_tools::design::step(&config, &data, &paths.skills, &paths.system_skills, &p, &target, &goal, &answers, propose).await.map_err(anyhow::Error::msg)?;
+                if let Some(pr) = step.proposal {
+                    break pr;
+                }
+                for q in step.questions {
+                    eprintln!("{}", q.question);
+                    for (i, o) in q.options.iter().enumerate() {
+                        eprintln!("  {}. {o}", i + 1);
+                    }
+                    eprint!("> ");
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line)?;
+                    let line = line.trim();
+                    if line == "propose" {
+                        propose = true;
+                        break;
+                    }
+                    let answer = match line.parse::<usize>().ok().and_then(|n| q.options.get(n.wrapping_sub(1))) {
+                        Some(o) => o.clone(),
+                        None if line.is_empty() => "no preference: decide".into(),
+                        None => line.to_string(),
+                    };
+                    answers.push(reagent_tools::design::Answer { question: q.question, answer });
+                }
+                eprintln!();
+            };
+            // Suggestions: each made if the person says so.
+            for s in &proposal.suggestions {
+                let (what, why) = match s {
+                    reagent_tools::design::Suggestion::Skill { name, description, why, .. } => (format!("a repo skill {name}: {description}"), why),
+                    reagent_tools::design::Suggestion::Cron { expr, tz, title, why, .. } => (format!("a cron entry ({expr} {tz}): {title}"), why),
+                    reagent_tools::design::Suggestion::Trigger { name, mode, title, repo, why, .. } => (format!("a {mode} trigger {name}{}: {title}", if *repo { " in the repo" } else { "" }), why),
+                };
+                eprint!("Suggested: {what}\n  ({why})\nMake it? [y/N] ");
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                if line.trim().eq_ignore_ascii_case("y") {
+                    match reagent_tools::design::apply(&store, &p, s).await {
+                        Ok(done) => eprintln!("  {done}"),
+                        Err(e) => eprintln!("  not made: {e}"),
+                    }
+                }
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&proposal)?);
+            } else {
+                println!("Title: {}\n\n{}\n", proposal.title, proposal.prompt);
+                for (k, v) in [("skills", proposal.skills.join(", ")), ("kind", proposal.kind.unwrap_or_default()), ("profile", proposal.profile.unwrap_or_default()), ("budget", proposal.budget.map(|b| serde_json::to_string(&b).unwrap_or_default()).unwrap_or_default()), ("note", proposal.note)] {
+                    if !v.is_empty() {
+                        println!("{k}: {v}");
+                    }
                 }
             }
             Ok(())

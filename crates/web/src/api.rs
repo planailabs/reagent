@@ -51,6 +51,11 @@ pub fn routes() -> Router<S> {
         .route("/api/logout", post(logout))
         .route("/api/config", get(config))
         .route("/api/settings", get(settings).put(put_settings))
+        .route("/api/design", post(design))
+        .route("/api/design/task", post(design_task))
+        .route("/api/design/apply", post(design_apply))
+        .route("/api/docs", get(docs))
+        .route("/api/docs/{name}", get(doc))
         .route("/api/events", get(events))
         .route("/api/inbox", get(inbox))
         .route("/api/notifications", get(notifications))
@@ -186,6 +191,64 @@ async fn put_settings(State(s): State<S>, Json(v): Json<Settings>) -> R {
     // More room: queued tasks start.
     s.w.app.start_queued().await;
     settings(State(s)).await
+}
+
+#[derive(Deserialize)]
+struct DesignReq {
+    project: String,
+    goal: String,
+    /// task (default), cron or trigger.
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    answers: Vec<reagent_tools::design::Answer>,
+    #[serde(default)]
+    propose: bool,
+}
+
+/// A round of the prompt designer: questions, or a proposal.
+async fn design(State(s): State<S>, Json(d): Json<DesignReq>) -> R {
+    let target = d.target.as_deref().unwrap_or("task");
+    if !matches!(target, "task" | "cron" | "trigger") {
+        return Err(E(StatusCode::BAD_REQUEST, "target: task, cron or trigger".into()));
+    }
+    Ok(Json(json!(s.w.app.design(&d.project, target, &d.goal, &d.answers, d.propose).await?)))
+}
+
+/// The designer as a read-only task that looks at the project first.
+async fn design_task(State(s): State<S>, Json(d): Json<DesignReq>) -> R {
+    Ok(Json(json!(s.w.app.start_design_task(&d.project, d.target.as_deref().unwrap_or("task"), &d.goal).await?)))
+}
+
+#[derive(Deserialize)]
+struct Apply {
+    project: String,
+    suggestions: Vec<reagent_tools::design::Suggestion>,
+}
+
+/// Makes the suggestions the person chose; what became of each.
+async fn design_apply(State(s): State<S>, Json(a): Json<Apply>) -> R {
+    let p = s.w.app.project(&a.project).await?;
+    let mut out = vec![];
+    for sug in &a.suggestions {
+        out.push(match reagent_tools::design::apply(&s.w.app.store, &p, sug).await {
+            Ok(done) => json!({"ok": true, "done": done}),
+            Err(e) => json!({"ok": false, "error": e}),
+        });
+    }
+    s.w.app.start_queued().await;
+    Ok(Json(json!(out)))
+}
+
+/// reagent's own documentation (the system skills).
+async fn docs() -> R {
+    Ok(Json(json!(reagent_tools::skills::system().into_iter().map(|(name, description, _)| json!({"name": name, "description": description})).collect::<Vec<_>>())))
+}
+
+async fn doc(Path(name): Path<String>) -> R {
+    let text = reagent_tools::skills::system_text(&name).ok_or_else(|| E(StatusCode::NOT_FOUND, format!("no doc {name:?}")))?;
+    let (_, description, body) = reagent_tools::skills::parse(&text);
+    Ok(Json(json!({"name": name, "description": description, "body": body})))
 }
 
 /// Live: task changes, notifications, agent events, job ends.

@@ -32,6 +32,7 @@ uuid.workspace = true
 sqlx.workspace = true
 sha2.workspace = true
 hmac.workspace = true
+rust-embed.workspace = true
 nix.workspace = true
 web-push-native.workspace = true
 axum.workspace = true

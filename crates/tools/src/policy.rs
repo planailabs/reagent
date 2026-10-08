@@ -169,6 +169,7 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("git.worktree_merge", None, "allow"),
         Rule { target: Some(slug.into()), ..r("tasks.task_spawn", None, "allow") },
         r("tasks.task_list", None, "allow"),
+        r("tasks.prompt_design", None, "allow"),
         r("tasks.task_message", None, "allow"),
         r("tasks.task_escalate", None, "allow"),
         r("tasks.search_history", None, "allow"),

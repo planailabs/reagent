@@ -54,15 +54,60 @@ fn found_in(base: &Path, source: &str) -> Vec<Skill> {
     out
 }
 
-/// The skills a task sees, nearest first winning on a name: its working
-/// directory (a worktree), the project folder, then the global places.
-pub fn discover(cwd: &Path, project: &Path, global: &[PathBuf]) -> Vec<Skill> {
+/// reagent's own documentation, built in (`crates/tools/system-skills`).
+#[derive(rust_embed::Embed)]
+#[folder = "system-skills"]
+struct System;
+
+/// Writes the system skills into `dir` (as they are in this build; what was
+/// there before goes), so they're read like any other skill.
+pub fn write_system(dir: &Path) -> std::io::Result<()> {
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)?;
+    }
+    for f in System::iter() {
+        let path = dir.join(f.as_ref());
+        std::fs::create_dir_all(path.parent().unwrap_or(dir))?;
+        std::fs::write(&path, System::get(&f).map(|e| e.data).unwrap_or_default())?;
+    }
+    Ok(())
+}
+
+/// A system skill's text (its SKILL.md), from the build.
+pub fn system_text(name: &str) -> Option<String> {
+    System::get(&format!("{name}/SKILL.md")).map(|f| String::from_utf8_lossy(&f.data).into_owned())
+}
+
+/// The system skills: name, description and body.
+pub fn system() -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = System::iter()
+        .filter(|f| f.ends_with("/SKILL.md"))
+        .filter_map(|f| {
+            let text = String::from_utf8_lossy(&System::get(&f)?.data).into_owned();
+            let (name, description, body) = parse(&text);
+            Some((name.unwrap_or_else(|| f.trim_end_matches("/SKILL.md").to_string()), description.unwrap_or_default(), body))
+        })
+        .collect();
+    // The overview first, then by name.
+    out.sort_by_key(|(n, _, _)| (n != "reagent", n.clone()));
+    out
+}
+
+/// The skills a task sees: reagent's own (system), then nearest first
+/// winning on a name: its working directory (a worktree), the project
+/// folder, then the global places.
+pub fn discover(cwd: &Path, project: &Path, global: &[PathBuf], system_dir: Option<&Path>) -> Vec<Skill> {
+    let mut out: Vec<Skill> = vec![];
+    if let Some(dir) = system_dir {
+        for (name, description, _) in system() {
+            out.push(Skill { dir: dir.join(&name), name, description, source: "system".into() });
+        }
+    }
     let mut places: Vec<(PathBuf, &str)> = vec![];
     if cwd != project {
         places.push((cwd.to_path_buf(), "worktree"));
     }
     places.push((project.to_path_buf(), "project"));
-    let mut out: Vec<Skill> = vec![];
     for (p, src) in places {
         for s in found_in(&p, src) {
             if !out.iter().any(|o| o.name == s.name) {
@@ -135,7 +180,7 @@ mod tests {
         std::fs::create_dir_all(&global).unwrap();
         skill(&global, "", "deploy", "ship it (global)");
         skill(&global, "", "review", "review code");
-        let found = discover(&wt, &proj, &[global.clone()]);
+        let found = discover(&wt, &proj, &[global.clone()], None);
         let by = |n: &str| found.iter().find(|s| s.name == n).unwrap().clone();
         assert_eq!(found.len(), 4, "{found:?}");
         assert_eq!(by("rebase").source, "project", ".claude/skills count too");
@@ -147,6 +192,28 @@ mod tests {
         assert!(body.starts_with("# deploy") && body.contains("Do the deploy thing."), "{body}");
         assert_eq!(files, ["run.sh"]);
         assert!(listing(&found).contains("- review — review code"));
+    }
+
+    #[test]
+    fn system_skills_are_built_in_and_win() {
+        let t = tempfile::tempdir().unwrap();
+        let sys = t.path().join("system-skills");
+        write_system(&sys).unwrap();
+        skill(t.path(), ".agents/skills", "reagent-tasks", "a project's own of that name");
+        let found = discover(t.path(), t.path(), &[], Some(&sys));
+        assert_eq!(found[0].name, "reagent", "the overview first");
+        let tasks = found.iter().find(|s| s.name == "reagent-tasks").unwrap();
+        assert_eq!(tasks.source, "system", "a system skill's name is taken");
+        let (body, _) = load(tasks).unwrap();
+        assert!(body.contains("# Tasks"));
+        for (name, description, body) in system() {
+            assert!(name.starts_with("reagent") && !description.is_empty() && body.len() > 200, "{name}");
+            // Every skill another names exists.
+            for r in regex::Regex::new(r"`(reagent-[a-z-]+)`").unwrap().captures_iter(&body) {
+                assert!(system_text(&r[1]).is_some(), "{name} names {}", &r[1]);
+            }
+        }
+        assert!(system_text("nope").is_none());
     }
 
     #[test]

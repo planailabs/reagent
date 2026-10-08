@@ -36,6 +36,9 @@ pub struct Config {
     /// Kinds by where a task comes from.
     #[serde(default)]
     pub routing: Routing,
+    /// The profile the prompt designer asks (default: `default_profile`).
+    #[serde(default)]
+    pub design_profile: Option<String>,
 }
 
 /// A kind of task (research, chore, …).
@@ -212,6 +215,7 @@ profile "default" {
 # grep_result searches or reads the whole. 0 turns it off. A profile may set its own.
 grep_results = { over = 12000, except = ["skills.skill_load", "fs.read", "shell.job_output"] }
 search_history = true
+# design_profile = "default"                   # the model the prompt designer asks
 
 notify {
   apprise = []                                 # apprise URLs: tgram://…, ntfys://…, mailto://…
@@ -231,6 +235,9 @@ impl Config {
         anyhow::ensure!(!self.profile.is_empty(), "reagent.hcl has no profile");
         anyhow::ensure!(self.profile.contains_key(&self.default_profile), "default_profile {:?} isn't a profile", self.default_profile);
         self.check_kinds()?;
+        if let Some(d) = &self.design_profile {
+            anyhow::ensure!(self.profile.contains_key(d), "design_profile {d:?} isn't a profile");
+        }
         for g in std::iter::once(&self.grep_results).chain(self.profile.values().filter_map(|p| p.grep_results.as_ref())) {
             anyhow::ensure!(g.over == 0 || g.over >= 500, "grep_results.over: 0 (off) or at least 500 characters");
         }

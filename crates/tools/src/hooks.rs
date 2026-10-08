@@ -85,8 +85,16 @@ pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String
         parts.push(("todos".into(), format!("Your todo list (todo.todo_update keeps it current):\n{}", crate::mcp::misc::todo_text(&todos))));
     }
     let skills = app.skills_for(Path::new(&task.cwd), &p);
-    if !skills.is_empty() {
-        parts.push(("skills".into(), format!("Skills you have (load one with skills.skill_load):\n{}", crate::skills::listing(&skills))));
+    let (system, own): (Vec<_>, Vec<_>) = skills.into_iter().partition(|s| s.source == "system");
+    let mut text = String::new();
+    if !own.is_empty() {
+        text.push_str(&format!("Skills you have (load one with skills.skill_load):\n{}\n\n", crate::skills::listing(&own)));
+    }
+    if !system.is_empty() {
+        text.push_str(&format!("reagent's own documentation, as skills (skills.skill_load when you need to know how reagent works: start with `reagent`): {}", system.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")));
+    }
+    if !text.is_empty() {
+        parts.push(("skills".into(), text.trim_end().to_string()));
     }
     parts
 }
@@ -104,6 +112,10 @@ impl HookTools {
         // Subnet's own tools (search_history, grep_result, …) read the task's own history.
         if !tool.contains('.') {
             return Ok(json!({"decision": "allow"}).to_string());
+        }
+        // A design task only reads (and asks).
+        if t.origin == "design" && !crate::design::design_task_may(&tool) {
+            return Ok(json!({"decision": "deny", "reason": format!("a design task only reads and asks: {tool} isn't for it")}).to_string());
         }
         // A subtask without a project is in this one.
         let target = target_of(&tool, args).or((tool == "tasks.task_spawn").then_some(p.slug.as_str()));

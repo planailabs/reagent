@@ -57,6 +57,8 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     std::fs::create_dir_all(&o.data)?;
     let config = load_config(&o.data)?;
     let paths = Paths::new(&o.data);
+    // reagent's own documentation, as this build has it.
+    reagent_tools::skills::write_system(&paths.system_skills)?;
     let store = Store::open(&o.data.join("reagent.db")).await?;
     let sup = if o.in_process_supervisor {
         let s = reagent_supervisor::server::Supervisor::new(&o.data)?;

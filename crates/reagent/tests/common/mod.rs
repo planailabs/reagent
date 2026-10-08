@@ -18,8 +18,12 @@ pub struct Brain {
     pub requests: Vec<Value>,
 }
 
-/// The task a request is from: its first message says `Task: <title>`.
+/// The task a request is from: its first message says `Task: <title>`;
+/// the prompt designer's are "designer".
 pub fn title_of(body: &Value) -> String {
+    if body["messages"][0]["content"].as_str().is_some_and(|c| c.starts_with("You are reagent's prompt designer")) {
+        return "designer".into();
+    }
     body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "user").find_map(|m| m["content"].as_str().and_then(|c| c.strip_prefix("Task: ")).map(|c| c.lines().next().unwrap_or("").to_string())).unwrap_or_default()
 }
 
@@ -34,6 +38,12 @@ async fn handle(State(brain): State<Arc<Mutex<Brain>>>, Json(body): Json<Value>)
         return Response::builder().status(500).body(Body::from(format!("no scripted reply for task {title:?}"))).unwrap();
     };
     let chunks = reply(&body);
+    // Not streamed: one answer with the chunks' text.
+    if body["stream"] == false {
+        let content: String = chunks.iter().filter_map(|c| serde_json::from_str::<Value>(c).ok()).filter_map(|v| v["choices"][0]["delta"]["content"].as_str().map(String::from)).collect();
+        let v = json!({"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 100, "completion_tokens": 20}});
+        return Response::builder().header("content-type", "application/json").body(Body::from(v.to_string())).unwrap();
+    }
     let s: String = chunks.into_iter().map(|c| format!("data: {c}\n\n")).collect();
     Response::builder().header("content-type", "text/event-stream").body(Body::from(s)).unwrap()
 }

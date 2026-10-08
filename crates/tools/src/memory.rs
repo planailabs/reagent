@@ -29,6 +29,15 @@ fn section_of(path: &str) -> &'static str {
     SECTIONS.iter().find(|(p, _)| path.starts_with(p)).map(|(_, s)| *s).unwrap_or("Other")
 }
 
+/// A project's memory: in its folder (`repo`) or in reagent's data.
+pub fn of_project(data: &std::path::Path, p: &reagent_store::Project) -> Memory {
+    let dir = match p.memory.as_str() {
+        "repo" => PathBuf::from(&p.path).join(".reagent/memory"),
+        _ => data.join("memory/projects").join(&p.slug),
+    };
+    Memory::new(dir, &format!("Memory of {}", p.name))
+}
+
 impl Memory {
     pub fn new(dir: PathBuf, title: &str) -> Self {
         Memory { dir, title: title.into(), skip: vec![] }
