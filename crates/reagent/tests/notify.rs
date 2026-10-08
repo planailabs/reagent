@@ -50,7 +50,7 @@ async fn a_finished_task_goes_out_by_apprise_and_web_push() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     let args = std::fs::read_to_string(&out).expect("apprise ran");
-    assert!(args.contains("-t\nPing — done\n-b\nall good"), "{args}");
+    assert!(args.contains("-i\nmarkdown\n-t\nPing — done\n-b\nall good"), "{args}");
     assert!(args.contains(&format!("https://reagent.example/#/task/{}", t.id)) && args.trim_end().ends_with("json://localhost/hook"), "{args}");
     let pushes = got.lock().unwrap().clone();
     let (h, len) = &pushes[0];

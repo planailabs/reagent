@@ -50,6 +50,12 @@ test("a task runs and reports", async ({ page }) => {
   await expect(page.locator(".task-row", { hasText: "Hello there" })).toContainText("✓");
 });
 
+test("messages and the report render markdown", async ({ page }) => {
+  await startTask(page, "Say **loud**");
+  await expect(page.locator(".report strong")).toHaveText("loud");
+  await expect(page.locator(".msg.assistant strong")).toHaveText("loud");
+});
+
 test("a finished task is cloned and restarted", async ({ page }) => {
   await startTask(page, "Twice over");
   await expect(page.locator(".report")).toContainText("Done: Twice over");

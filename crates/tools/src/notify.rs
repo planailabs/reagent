@@ -60,7 +60,7 @@ impl Notifier {
                 None => body.to_string(),
             };
             let mut cmd = tokio::process::Command::new("apprise");
-            cmd.arg("-t").arg(title).arg("-b").arg(text).args(&urls).stdin(std::process::Stdio::null());
+            cmd.arg("-i").arg("markdown").arg("-t").arg(title).arg("-b").arg(text).args(&urls).stdin(std::process::Stdio::null());
             tokio::spawn(async move {
                 match cmd.output().await {
                     Ok(o) if o.status.success() => {}

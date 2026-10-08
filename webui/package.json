@@ -12,6 +12,7 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "markdown-it": "^14.3.2",
     "vue": "^3.5.43"
   },
   "devDependencies": {

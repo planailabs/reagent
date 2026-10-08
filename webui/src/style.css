@@ -88,3 +88,13 @@ code { color: var(--hi); }
 .modal .cmd { white-space: pre-wrap; word-break: break-all; max-height: 6em; overflow: auto; }
 .modal-log { flex: 1; max-height: none; min-height: 40vh; height: 75vh; margin: 0; }
 .modal-log .earlier { display: block; margin-bottom: 6px; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: 0.4em 0; }
+.md pre { background: var(--line); padding: 6px 8px; overflow: auto; white-space: pre; }
+.md code { font-family: inherit; }
+.md :not(pre) > code { background: var(--line); padding: 0 3px; }
+.md blockquote { border-left: 2px solid var(--line); padding-left: 8px; color: var(--dim); }
+.md table { border-collapse: collapse; }
+.md th, .md td { border: 1px solid var(--line); padding: 2px 6px; }
+.md h1, .md h2, .md h3, .md h4 { font-size: 1em; margin: 0.6em 0 0.3em; }

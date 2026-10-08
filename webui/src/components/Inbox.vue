@@ -1,4 +1,5 @@
 <script setup>
+import { markdown } from "../lib/markdown.js";
 import { inject, onMounted, ref, watch } from "vue";
 import { get, post } from "../lib/api.js";
 import { ago } from "../lib/format.js";
@@ -44,7 +45,7 @@ watch(() => live.tick, load);
       <span class="dim">{{ ago(n.at) }} · {{ n.kind }}</span>
       <a v-if="n.task" :href="`#/task/${n.task}`" class="hi">{{ n.title }}</a>
       <span v-else class="hi">{{ n.title }}</span>
-      <pre class="dim">{{ n.body }}</pre>
+      <div class="dim md" v-html="markdown(n.body)"></div>
     </div>
   </section>
 </template>

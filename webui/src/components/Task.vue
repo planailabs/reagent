@@ -3,6 +3,7 @@ import { computed, inject, onMounted, ref, watch } from "vue";
 import { get, post } from "../lib/api.js";
 import { ago, budget, glyph, messageText, money, toolName, waitText } from "../lib/format.js";
 import { sections } from "../lib/transcript.js";
+import { markdown } from "../lib/markdown.js";
 import TaskRow from "./TaskRow.vue";
 import Jobs from "./Jobs.vue";
 import Terminal from "./Terminal.vue";
@@ -179,7 +180,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     </div>
     <div v-if="t.report && t.state !== 'failed'" class="report">
       <div class="dim">report</div>
-      <pre>{{ t.report }}</pre>
+      <div class="md" v-html="markdown(t.report)"></div>
     </div>
 
     <form class="row" @submit.prevent="send">
@@ -205,22 +206,24 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <template v-for="(s, k) in sections(tr.messages, tr.compacted)" :key="k">
         <details v-if="s.compacted" class="compacted">
           <summary>summarised: {{ s.items.length }} messages (a checkpoint in the project's memory)</summary>
-          <pre class="summary">{{ s.compacted.summary }}</pre>
+          <div class="summary md" v-html="markdown(s.compacted.summary)"></div>
           <div v-for="{ m, i } in s.items" :key="i" :class="['msg', m.role]">
             <div class="who">{{ m.role }}<span v-if="m.tool_call_id"> · {{ m.tool_call_id }}</span></div>
-            <pre>{{ messageText(m) }}</pre>
+            <div v-if="m.content && m.role !== 'tool'" class="md" v-html="markdown(m.content)"></div>
+            <pre v-if="m.role === 'tool' || m.tool_calls?.length">{{ m.role === 'tool' ? m.content : messageText({ tool_calls: m.tool_calls }) }}</pre>
           </div>
         </details>
         <template v-else>
           <div v-for="{ m, i } in s.items" :key="i" :class="['msg', m.role]">
             <div class="who">{{ m.role }}<span v-if="m.tool_call_id"> · {{ m.tool_call_id }}</span></div>
-            <pre>{{ messageText(m) }}</pre>
+            <div v-if="m.content && m.role !== 'tool'" class="md" v-html="markdown(m.content)"></div>
+            <pre v-if="m.role === 'tool' || m.tool_calls?.length">{{ m.role === 'tool' ? m.content : messageText({ tool_calls: m.tool_calls }) }}</pre>
           </div>
         </template>
       </template>
       <div v-if="streaming" class="msg assistant partial">
         <div class="who">assistant · writing</div>
-        <pre>{{ streaming }}</pre>
+        <div class="md" v-html="markdown(streaming)"></div>
       </div>
     </div>
     <Jobs v-else-if="tab === 'jobs'" :task="id" />

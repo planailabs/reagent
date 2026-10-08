@@ -1,3 +1,5 @@
+import { plain } from "./lib/markdown.js";
+
 // Push notifications: shown with their buttons (each a one-time token that
 // does its action without a login); a click elsewhere opens the task.
 self.addEventListener("push", (e) => {
@@ -5,7 +7,7 @@ self.addEventListener("push", (e) => {
   const actions = (d.actions || []).slice(0, 2);
   e.waitUntil(
     self.registration.showNotification(d.title || "reagent", {
-      body: d.body || "",
+      body: plain(d.body),
       tag: d.task || undefined,
       actions: actions.map((a, i) => ({ action: `a${i}`, title: a.title })),
       data: { task: d.task, tokens: Object.fromEntries(actions.map((a, i) => [`a${i}`, a.token])) },
