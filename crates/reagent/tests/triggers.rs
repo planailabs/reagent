@@ -211,8 +211,13 @@ async fn a_watcher_that_ends_is_started_again() {
     let runs = until("two runs", async || Some(r.runs("w").await).filter(|x| x.len() >= 2)).await;
     assert!(runs.iter().all(|x| x.ok && x.output.contains("once")), "{runs:?}");
     // Not a task's: its end isn't a message to anyone, and it's acknowledged.
-    let jobs = r.run.app.sup.jobs(Some("trigger:site/w")).await.unwrap();
-    assert!(jobs.iter().filter(|j| !j.running()).all(|j| j.acked));
+    // (A run that just ended is taken within a second.)
+    r.run.app.store.set_trigger_enabled("site", "w", false).await.unwrap();
+    until("its ended runs taken", async || {
+        let jobs = r.run.app.sup.jobs(Some("trigger:site/w")).await.unwrap();
+        jobs.iter().all(|j| !j.running() && j.acked).then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]
