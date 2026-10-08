@@ -94,6 +94,8 @@ pub struct App {
     errors_in_a_row: Mutex<HashMap<String, u32>>,
     /// Profiles a task failed over from (no going back and forth).
     fell_back: Mutex<HashMap<String, HashSet<String>>>,
+    /// Triggers' runs going on.
+    pub triggers: crate::triggers::Runs,
 }
 
 /// Prompt, completion and cached prompt tokens from an agent's usage.
@@ -132,6 +134,7 @@ impl App {
             applying: Default::default(),
             errors_in_a_row: Default::default(),
             fell_back: Default::default(),
+            triggers: Default::default(),
         })
     }
 
@@ -145,6 +148,12 @@ impl App {
 
     fn emit(&self, v: Value) {
         let _ = self.events.send(v);
+    }
+
+    /// A trigger changed (or went): the UI hears it.
+    pub async fn emit_trigger(&self, project: &str, name: &str) {
+        let t = self.store.trigger(project, name).await.ok().flatten();
+        self.emit(json!({"kind": "trigger", "project": project, "name": name, "trigger": t}));
     }
 
     async fn task_changed(&self, id: &str) {
@@ -898,6 +907,7 @@ impl App {
             let _ = self.message(parent, &format!("[subtask {} ({}) {state}]\n{content}", t.title, t.id)).await;
         }
         crate::cron::task_ended(self, t).await;
+        crate::triggers::task_ended(self, t).await;
     }
 
     /// Pauses a task over its budget (quick: before its next step) and says so.
@@ -1081,6 +1091,10 @@ impl App {
             return;
         }
         let Some(owner) = &j.owner else { return };
+        // A watcher's end: its trigger reads it.
+        if owner.starts_with("trigger:") {
+            return;
+        }
         let Ok(t) = self.task(owner).await else { return };
         let how = match (j.exit, j.signal, j.lost) {
             (_, _, true) => "was lost (the supervisor stopped while it ran)".to_string(),

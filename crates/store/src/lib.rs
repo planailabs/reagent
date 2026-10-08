@@ -206,6 +206,130 @@ pub struct CronOptions {
     pub skills: Vec<String>,
 }
 
+/// A trigger: a script that watches something (poll, watch, webhook) and
+/// turns what it sees into events that start tasks or message running ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Trigger {
+    #[serde(default)]
+    pub project: String,
+    pub name: String,
+    /// db (kept here) or repo (`.agents/triggers/<name>/TRIGGER.md`).
+    #[serde(default = "db_source")]
+    pub source: String,
+    /// person, task:<id>, mcp:<token name> or repo.
+    #[serde(default = "person")]
+    pub made_by: String,
+    #[serde(default)]
+    pub description: String,
+    /// poll, watch or webhook.
+    pub mode: String,
+    /// poll: seconds between runs (or `cron`).
+    #[serde(default)]
+    pub every: Option<i64>,
+    #[serde(default)]
+    pub cron: Option<String>,
+    #[serde(default = "utc")]
+    pub tz: String,
+    /// The script (sh, unless it starts with `#!`).
+    #[serde(default)]
+    pub script: String,
+    /// A repo trigger's script file, beside its TRIGGER.md.
+    #[serde(default = "run_file")]
+    pub script_file: String,
+    /// Seconds a poll or webhook run may take.
+    #[serde(default = "sixty")]
+    pub timeout: i64,
+    /// skip, queue or parallel (while a task it started still goes).
+    #[serde(default = "skip")]
+    pub overlap: String,
+    pub title: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub options: Json<CronOptions>,
+    /// A webhook's secret: one of the project's secrets, by name.
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default = "yes")]
+    pub devshell: bool,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub state: Json<TriggerState>,
+    #[serde(default)]
+    pub created: i64,
+}
+
+impl Trigger {
+    /// `<project>/<name>`.
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.project, self.name)
+    }
+}
+
+/// What reagent keeps about a trigger's runs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TriggerState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run: Option<i64>,
+    /// Failed runs in a row.
+    #[serde(default)]
+    pub failures: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// The script (by hash) the person or the policy allowed, or denied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denied: Option<String>,
+    /// Waits for the person to allow this script (hash), and the command shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asking: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The repair task started for this failure streak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<String>,
+    /// Events waiting for a task to end (overlap = queue).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queue: Vec<serde_json::Value>,
+    /// Its tasks still going, with the key of the event that started each.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub tasks: std::collections::BTreeMap<String, String>,
+    /// A watcher's job, and how many of its output lines were read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    #[serde(default)]
+    pub line: usize,
+}
+
+/// One run of a trigger's script.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TriggerRun {
+    pub id: i64,
+    pub started: i64,
+    pub ended: Option<i64>,
+    pub exit: Option<i64>,
+    pub ok: bool,
+    pub events: i64,
+    pub output: String,
+    pub error: Option<String>,
+}
+
+fn db_source() -> String {
+    "db".into()
+}
+fn person() -> String {
+    "person".into()
+}
+fn run_file() -> String {
+    "run".into()
+}
+fn sixty() -> i64 {
+    60
+}
+
 /// A header for an HTTP MCP server, its value from an environment variable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct McpCredential {
@@ -580,6 +704,95 @@ impl Store {
 
     pub async fn remove_cron(&self, id: i64) -> R<bool> {
         Ok(sqlx::query("delete from cron where id = $1").bind(id).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    // --- triggers -------------------------------------------------------
+
+    pub async fn triggers(&self, project: Option<&str>) -> R<Vec<Trigger>> {
+        sqlx::query_as("select * from triggers where $1 is null or project = $1 order by project, name").bind(project).fetch_all(&self.pool).await
+    }
+
+    pub async fn trigger(&self, project: &str, name: &str) -> R<Option<Trigger>> {
+        sqlx::query_as("select * from triggers where project = $1 and name = $2").bind(project).bind(name).fetch_optional(&self.pool).await
+    }
+
+    /// Adds or changes a trigger's definition (its state and when it was made stay).
+    pub async fn put_trigger(&self, t: &Trigger) -> R<()> {
+        sqlx::query(
+            "insert into triggers (project, name, source, made_by, description, mode, every, cron, tz, script, script_file, timeout, overlap, title, prompt, options, secret, devshell, enabled, state)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+             on conflict (project, name) do update set source = $3, made_by = $4, description = $5, mode = $6, every = $7, cron = $8, tz = $9, script = $10,
+               script_file = $11, timeout = $12, overlap = $13, title = $14, prompt = $15, options = $16, secret = $17, devshell = $18, enabled = $19",
+        )
+        .bind(&t.project)
+        .bind(&t.name)
+        .bind(&t.source)
+        .bind(&t.made_by)
+        .bind(&t.description)
+        .bind(&t.mode)
+        .bind(t.every)
+        .bind(&t.cron)
+        .bind(&t.tz)
+        .bind(&t.script)
+        .bind(&t.script_file)
+        .bind(t.timeout)
+        .bind(&t.overlap)
+        .bind(&t.title)
+        .bind(&t.prompt)
+        .bind(&t.options)
+        .bind(&t.secret)
+        .bind(t.devshell)
+        .bind(t.enabled)
+        .bind(&t.state)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_trigger_state(&self, project: &str, name: &str, state: &TriggerState) -> R<()> {
+        sqlx::query("update triggers set state = $3 where project = $1 and name = $2").bind(project).bind(name).bind(Json(state)).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn set_trigger_enabled(&self, project: &str, name: &str, enabled: bool) -> R<bool> {
+        Ok(sqlx::query("update triggers set enabled = $3 where project = $1 and name = $2").bind(project).bind(name).bind(enabled).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    pub async fn remove_trigger(&self, project: &str, name: &str) -> R<bool> {
+        Ok(sqlx::query("delete from triggers where project = $1 and name = $2").bind(project).bind(name).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    /// Notes an event's key: true the first time (within 30 days).
+    pub async fn trigger_key_new(&self, project: &str, name: &str, key: &str) -> R<bool> {
+        sqlx::query("delete from trigger_keys where seen < unixepoch() - 30 * 86400").execute(&self.pool).await?;
+        Ok(sqlx::query("insert into trigger_keys (project, name, key) values ($1, $2, $3) on conflict do nothing").bind(project).bind(name).bind(key).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    /// Records a run (the last 20 are kept); its id.
+    pub async fn add_trigger_run(&self, project: &str, name: &str, r: &TriggerRun) -> R<i64> {
+        let id = sqlx::query_scalar("insert into trigger_runs (project, name, started, ended, exit, ok, events, output, error) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id")
+            .bind(project)
+            .bind(name)
+            .bind(r.started)
+            .bind(r.ended)
+            .bind(r.exit)
+            .bind(r.ok)
+            .bind(r.events)
+            .bind(&r.output)
+            .bind(&r.error)
+            .fetch_one(&self.pool)
+            .await?;
+        sqlx::query("delete from trigger_runs where project = $1 and name = $2 and id not in (select id from trigger_runs where project = $1 and name = $2 order by id desc limit 20)")
+            .bind(project)
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(id)
+    }
+
+    /// A trigger's last runs, newest first.
+    pub async fn trigger_runs(&self, project: &str, name: &str) -> R<Vec<TriggerRun>> {
+        sqlx::query_as("select id, started, ended, exit, ok, events, output, error from trigger_runs where project = $1 and name = $2 order by id desc").bind(project).bind(name).fetch_all(&self.pool).await
     }
 
     // --- settings, sessions, push ---------------------------------------

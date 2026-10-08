@@ -169,7 +169,7 @@ pub struct Notify {
     /// Or an environment variable with them (space separated): they're often secret.
     #[serde(default)]
     pub apprise_env: Option<String>,
-    /// Which events go out (default all): done, failed, waiting, budget, cron.
+    /// Which events go out (default all): done, failed, waiting, budget, cron, model, trigger.
     #[serde(default)]
     pub events: Option<Vec<String>>,
     /// The web UI's public URL, for links in notifications.

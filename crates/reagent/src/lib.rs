@@ -108,6 +108,7 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     app.follow();
     app.watch_mcp();
     reagent_tools::cron::schedule(app.clone());
+    reagent_tools::triggers::schedule(app.clone());
 
     let web = Arc::new(reagent_web::Web { app: app.clone(), hub_url: hub_url.clone(), hub_token: admin_token.clone(), dist: o.dist.clone() });
     let web_l = tokio::net::TcpListener::bind(&listen).await.map_err(|e| anyhow::anyhow!("listening on {listen}: {e}"))?;

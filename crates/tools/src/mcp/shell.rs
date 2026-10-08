@@ -120,6 +120,13 @@ async fn place(app: &App, t: &Task, p: &Project, tool: &str, cwd: Option<&str>) 
 
 /// What a task's commands get: the project's env, its secrets, reagent's PATH, who it is.
 pub async fn env(app: &App, t: &Task, p: &Project) -> Vec<(String, String)> {
+    let mut e = project_env(app, p).await;
+    e.push(("REAGENT_TASK".into(), t.id.clone()));
+    e
+}
+
+/// What any command of a project gets (a task's, a trigger's).
+pub async fn project_env(app: &App, p: &Project) -> Vec<(String, String)> {
     let mut e: Vec<(String, String)> = p.env.0.iter().map(|(k, v)| (k.clone(), v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))).collect();
     match app.store.secrets_for(&p.slug).await {
         Ok(secrets) => e.extend(secrets.into_iter().map(|s| (s.name, s.value))),
@@ -130,7 +137,6 @@ pub async fn env(app: &App, t: &Task, p: &Project) -> Vec<(String, String)> {
     if let Ok(path) = std::env::var("PATH") {
         e.push(("PATH".into(), path));
     }
-    e.push(("REAGENT_TASK".into(), t.id.clone()));
     e.push(("REAGENT_PROJECT".into(), p.slug.clone()));
     // Commands are run unattended: nothing should wait for a pager or an editor.
     e.push(("PAGER".into(), "cat".into()));

@@ -183,3 +183,33 @@ async fn action_tokens_are_taken_once_and_expire() {
     assert!(s.take_action_token("h2").await.unwrap().is_none(), "expired");
     assert!(s.take_action_token("nope").await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn triggers_keys_and_runs() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let mut t: Trigger = serde_json::from_value(serde_json::json!({"project": "site", "name": "ci", "mode": "poll", "every": 60, "title": "Fix {{key}}", "prompt": "p", "script": "echo"})).unwrap();
+    assert_eq!((t.source.as_str(), t.made_by.as_str(), t.timeout, t.overlap.as_str(), t.enabled), ("db", "person", 60, "skip", true));
+    s.put_trigger(&t).await.unwrap();
+    let mut st = TriggerState { failures: 2, ..Default::default() };
+    st.tasks.insert("t1".into(), "k1".into());
+    s.set_trigger_state("site", "ci", &st).await.unwrap();
+    // A new definition keeps the state.
+    t.prompt = "q".into();
+    s.put_trigger(&t).await.unwrap();
+    let got = s.trigger("site", "ci").await.unwrap().unwrap();
+    assert_eq!((got.prompt.as_str(), got.state.0.failures, got.id()), ("q", 2, "site/ci".to_string()));
+    assert!(s.trigger_key_new("site", "ci", "k1").await.unwrap());
+    assert!(!s.trigger_key_new("site", "ci", "k1").await.unwrap(), "seen");
+    assert!(s.trigger_key_new("site", "ci", "k2").await.unwrap());
+    for i in 0..25 {
+        s.add_trigger_run("site", "ci", &TriggerRun { id: 0, started: i, ended: Some(i), exit: Some(0), ok: true, events: 0, output: format!("run {i}"), error: None }).await.unwrap();
+    }
+    let runs = s.trigger_runs("site", "ci").await.unwrap();
+    assert_eq!((runs.len(), runs[0].output.as_str()), (20, "run 24"));
+    assert!(s.set_trigger_enabled("site", "ci", false).await.unwrap());
+    // A project's triggers go with it, and so do their keys and runs.
+    s.remove_project("site").await.unwrap();
+    assert!(s.triggers(None).await.unwrap().is_empty());
+    assert_eq!(sqlx::query_scalar::<_, i64>("select count(*) from trigger_runs").fetch_one(&s.pool).await.unwrap(), 0);
+}
