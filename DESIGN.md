@@ -176,6 +176,26 @@ A skill is a folder with a `SKILL.md` (YAML frontmatter `name`, `description`, t
 
 Per project: a five-field expression and a time zone (`croner`, `chrono-tz`), a task title and prompt, options (profile, budget, skills), what happens while the last run still goes (`skip`, default; `queue`: it starts when the last ends; `parallel`), and `catch_up` (a run missed while reagent was down runs once; without it, it's skipped). Checked every 15 s. Managed in the UI (next and last runs, run now, on/off) and by tasks. A run that can't start is a notification.
 
+## Triggers
+
+A trigger runs a script that watches something (a CI pipeline, a queue, an inbox) and turns what it sees into events; an event starts a task or goes to a running one as a message. Per project, three modes:
+
+- **poll**: run every `every` (`"60s"`) or on a cron expression (with `tz`); exits within `timeout` (default 60 s).
+- **watch**: runs for good in the supervisor (outlives restarts like any job), restarted with backoff when it ends.
+- **webhook**: `POST /hook/<trigger-id>`, outside the login, checked against a secret the trigger names (one of the project's secrets): GitHub's `X-Hub-Signature-256` (HMAC), GitLab's `X-Gitlab-Token`, or `Authorization: Bearer`. Answered `202` at once. With a script, `{headers, body}` goes to its stdin and it prints the events (to filter: only failed pipelines); without one, the body is one event (key: the delivery id header, else the body's hash; vars: the body).
+
+**Events.** A script prints one JSON object per line on stdout: `{"key": "pipeline-812", "to": "new", "title": "…", "message": "…", "vars": {…}}`. Exit 0 with no lines is "nothing happened"; any other exit is a failure. `to` is the script's choice: `new` (the default) starts a task from the trigger's title and prompt templates with `{{vars.x}}` (and `{{key}}`) filled in; `running` sends `message` to the active task this trigger started last (or starts one if none is); a task id sends it to that task. A key seen before (by this trigger, within 30 days) is dropped; for anything more (cursors, last-seen ids) the script keeps its own state in `$REAGENT_STATE` (`<data>/triggers/<id>/`, kept). New tasks follow the trigger's `overlap` (skip, queue, parallel; as cron) and options (profile, kind, skills, budget); their origin is `trigger:<id>`.
+
+**Running.** Like a task's commands: in the project folder, in its dev shell (by the project's setting; `devshell = false` per trigger), with the project's environment and secrets, under the supervisor, its output logged and masked (the triggers tab shows each run). It also gets `REAGENT_TRIGGER`, `REAGENT_STATE`, `REAGENT_LAST_RUN` (unix seconds) and `REAGENT_TASKS` (JSON: the trigger's active tasks with their keys, so it can choose `to`).
+
+**Made by** the person (the project's **triggers** tab, `reagent trigger add|list|run|enable|disable|remove [--project]`), by tasks (`triggers.trigger_add|trigger_list|trigger_remove`), by outside agents (the MCP API's `trigger_*`), and by the repo: `.agents/triggers/<name>/TRIGGER.md` in the project folder, like a skill: YAML frontmatter (`description`, `mode`, `every`|`cron`, `tz`, `script` (a file beside it, default `run`), `timeout`, `overlap`, `title`, `profile`, `kind`, `skills`, `budget`, `secret`, `devshell`) and the prompt template as the body. Repo triggers are read again when the files change; the person can switch one off (kept in `reagent.db`). A task's triggers are like anyone's: they outlive it. A trigger kept in `reagent.db` moves into the repo and back (the tab's "move to repo" / "move to reagent", `reagent trigger move <name> repo|db`, `trigger_move`): into the repo writes `.agents/triggers/<name>/TRIGGER.md` and its script into the project folder (left for the person to commit) and drops the stored copy; back reads them in and deletes the files. Names are unique within a project wherever a trigger lives, and its id (`<project>/<name>`), seen keys, state, failure streak and approval go with it.
+
+**Trust.** The policy decides whether a trigger's script runs: it's judged as the call `triggers.run` with the script's command line as the command (`allow triggers.run cmd "./.agents/triggers/*"`, or ask). An "ask" waits in the inbox (once, always, deny); an answer holds until the script changes (by hash). The person's own (UI, CLI) are allowed.
+
+**Failures.** A failing run (exit, crash, timeout, unparseable line) backs off (doubling, up to an hour) and shows as failing with its last output. After 5 in a row a task is started (origin `trigger-repair:<id>`, once per streak) with the trigger, its script and the last outputs, to repair it; a run that works again ends the streak.
+
+**Example: a failed CI run.** A poll every 2 minutes: `gh run list --branch main --status failure --json databaseId,url,displayTitle -L 5 | jq -c '.[] | {key: (.databaseId|tostring), vars: .}'`, prompt "CI run {{vars.url}} failed ({{vars.displayTitle}}). Find out why and fix it in a worktree." The first sighting of each failed run starts one task.
+
 ## Web interface
 
 Vue + Parcel (`webui/`), served by `reagent up`; live over SSE (`/api/events`).
@@ -260,4 +280,4 @@ prompts/task.md     the task agent's system prompt
 
 Implemented: everything above.
 
-Not done (yet): Windows; more than one user.
+Not done (yet): triggers (designed above); Windows; more than one user.
