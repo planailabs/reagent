@@ -26,6 +26,10 @@ const rejectText = ref("");
 const raiseForm = ref({ tokens: "", cost: "", minutes: "" });
 const error = ref("");
 const tab = ref("transcript");
+const waitOpen = ref(true);
+const reportOpen = ref(true);
+/** Something waits for the person: a call to approve, a question, a merge, the budget. */
+const waiting = computed(() => !!call.value || ["question", "merge", "budget"].includes(t.value?.wait?.kind));
 const ptys = ref([]);
 const term = ref(null);
 
@@ -110,6 +114,58 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
 
 <template>
   <section v-if="t">
+    <!-- What it waits for: pinned on top, foldable -->
+    <div v-if="waiting" class="pinned" aria-label="waits for you">
+      <div class="row">
+        <span class="hi grow">waits for you: {{ waitText(t) || t.wait?.kind || "approval" }}</span>
+        <button :aria-label="waitOpen ? 'fold' : 'unfold'" :title="waitOpen ? 'fold it to this line' : 'show it'" @click="waitOpen = !waitOpen">{{ waitOpen ? "▴" : "▾" }}</button>
+      </div>
+      <template v-if="waitOpen">
+      <div v-if="call" class="err wait" aria-label="approval">
+        <div>wants to run <span class="hi">{{ toolName(call.function.name) }}</span></div>
+        <pre>{{ args }}</pre>
+        <div class="row">
+          <button @click="act('approve', { call_id: call.id, approved: true })">allow once</button>
+          <button title="adds a rule allowing this tool with this command" @click="act('approve', { call_id: call.id, approved: true, always: true })">always allow this</button>
+          <button @click="act('approve', { call_id: call.id, approved: false })">deny</button>
+        </div>
+      </div>
+      <div v-if="t.wait?.kind === 'question'" class="err wait" aria-label="question">
+        <div class="hi">{{ t.wait.question }}</div>
+        <div class="row">
+          <button v-for="o in t.wait.options ?? []" :key="o" @click="answer(o)">{{ o }}</button>
+          <template v-if="t.origin === 'design'">
+            <button title="no preference: it decides" @click="answer('No preference: you decide.')">you decide</button>
+            <button title="no more questions" @click="answer('Enough questions: propose now with what you know.')">propose now</button>
+          </template>
+        </div>
+        <form class="row" @submit.prevent="answer(answerText)">
+          <input v-model="answerText" class="grow" placeholder="your answer" aria-label="answer" />
+          <button type="submit">answer</button>
+        </form>
+      </div>
+      <div v-if="t.wait?.kind === 'merge'" class="err wait" aria-label="merge">
+        <div>ready to merge <span class="hi">{{ t.wait.branch }}</span> into <span class="hi">{{ t.wait.base }}</span> ({{ t.wait.ahead }} commits, {{ t.wait.strategy }})</div>
+        <pre class="dim">{{ t.wait.stat }}</pre>
+        <div class="row">
+          <button @click="act('merge', { merge: true })">merge</button>
+          <input v-model="rejectText" class="grow" placeholder="what to change first" aria-label="send back" />
+          <button @click="act('merge', { merge: false, message: rejectText })">send back</button>
+          <button @click="tab = 'diff'">see the diff</button>
+        </div>
+      </div>
+      <div v-if="t.wait?.kind === 'budget'" class="err wait" aria-label="budget">
+        <div>over its budget: {{ t.wait.tokens }} tokens, {{ money(t.wait.cost) }}, {{ t.wait.minutes }} min (budget: {{ JSON.stringify(t.budget) }})</div>
+        <form class="row" @submit.prevent="act('raise', budget(raiseForm))">
+          raise by
+          <label>tokens <input v-model="raiseForm.tokens" size="8" aria-label="more tokens" /></label>
+          <label>cost <input v-model="raiseForm.cost" size="6" aria-label="more cost" /></label>
+          <label>minutes <input v-model="raiseForm.minutes" size="5" aria-label="more minutes" /></label>
+          <button type="submit">raise and go on</button>
+        </form>
+      </div>
+      </template>
+    </div>
     <div class="row">
       <span class="glyph big" :title="t.state">{{ glyph(t.state) }}</span>
       <h2 class="title">{{ t.title }}</h2>
@@ -136,59 +192,18 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     </div>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
-    <!-- What it waits for -->
-    <div v-if="call" class="err wait" aria-label="approval">
-      <div>wants to run <span class="hi">{{ toolName(call.function.name) }}</span></div>
-      <pre>{{ args }}</pre>
-      <div class="row">
-        <button @click="act('approve', { call_id: call.id, approved: true })">allow once</button>
-        <button title="adds a rule allowing this tool with this command" @click="act('approve', { call_id: call.id, approved: true, always: true })">always allow this</button>
-        <button @click="act('approve', { call_id: call.id, approved: false })">deny</button>
-      </div>
-    </div>
-    <div v-if="t.wait?.kind === 'question'" class="err wait" aria-label="question">
-      <div class="hi">{{ t.wait.question }}</div>
-      <div class="row">
-        <button v-for="o in t.wait.options ?? []" :key="o" @click="answer(o)">{{ o }}</button>
-        <template v-if="t.origin === 'design'">
-          <button title="no preference: it decides" @click="answer('No preference: you decide.')">you decide</button>
-          <button title="no more questions" @click="answer('Enough questions: propose now with what you know.')">propose now</button>
-        </template>
-      </div>
-      <form class="row" @submit.prevent="answer(answerText)">
-        <input v-model="answerText" class="grow" placeholder="your answer" aria-label="answer" />
-        <button type="submit">answer</button>
-      </form>
-    </div>
-    <div v-if="t.wait?.kind === 'merge'" class="err wait" aria-label="merge">
-      <div>ready to merge <span class="hi">{{ t.wait.branch }}</span> into <span class="hi">{{ t.wait.base }}</span> ({{ t.wait.ahead }} commits, {{ t.wait.strategy }})</div>
-      <pre class="dim">{{ t.wait.stat }}</pre>
-      <div class="row">
-        <button @click="act('merge', { merge: true })">merge</button>
-        <input v-model="rejectText" class="grow" placeholder="what to change first" aria-label="send back" />
-        <button @click="act('merge', { merge: false, message: rejectText })">send back</button>
-        <button @click="tab = 'diff'">see the diff</button>
-      </div>
-    </div>
-    <div v-if="t.wait?.kind === 'budget'" class="err wait" aria-label="budget">
-      <div>over its budget: {{ t.wait.tokens }} tokens, {{ money(t.wait.cost) }}, {{ t.wait.minutes }} min (budget: {{ JSON.stringify(t.budget) }})</div>
-      <form class="row" @submit.prevent="act('raise', budget(raiseForm))">
-        raise by
-        <label>tokens <input v-model="raiseForm.tokens" size="8" aria-label="more tokens" /></label>
-        <label>cost <input v-model="raiseForm.cost" size="6" aria-label="more cost" /></label>
-        <label>minutes <input v-model="raiseForm.minutes" size="5" aria-label="more minutes" /></label>
-        <button type="submit">raise and go on</button>
-      </form>
-    </div>
     <div v-if="t.state === 'failed'" class="err wait" aria-label="failed">
       <pre>{{ t.report }}</pre>
       <button @click="act('retry')">retry from the failure</button>
     </div>
-    <div v-if="t.report && t.state !== 'failed'" class="report">
-      <div class="dim">report</div>
-      <div class="md" v-html="markdown(t.report)"></div>
-    <Proposal v-if="t.origin === 'design' && t.state === 'done'" :task="t" />
+    <div v-if="t.report && t.state !== 'failed'" class="report" aria-label="report">
+      <div class="row">
+        <span class="dim grow">report</span>
+        <button :aria-label="reportOpen ? 'fold the report' : 'unfold the report'" @click="reportOpen = !reportOpen">{{ reportOpen ? "▴" : "▾" }}</button>
+      </div>
+      <div v-if="reportOpen" class="md" v-html="markdown(t.report)"></div>
     </div>
+    <Proposal v-if="t.origin === 'design' && t.state === 'done'" :task="t" />
 
     <form class="row" @submit.prevent="send">
       <input v-model="msg" class="grow" :placeholder="['done', 'failed'].includes(t.state) ? 'a message goes on with the task' : 'a message (read before its next step)'" aria-label="message" />

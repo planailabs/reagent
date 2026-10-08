@@ -111,3 +111,5 @@ textarea.code { font-family: ui-monospace, monospace; min-height: 8em; }
 @media (max-width: 700px) { .docs { flex-direction: column; } }
 .proposal .item { border-top: 1px solid var(--line); padding: 6px 0; }
 .proposal .item-text { max-height: 30vh; overflow: auto; }
+.pinned { position: sticky; top: 0; z-index: 5; background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--err, #c33); padding: 6px 8px; margin: 0 0 8px; max-height: 60vh; overflow: auto; }
+.pinned .wait { margin: 6px 0 0; }

@@ -88,9 +88,21 @@ test("a task's todo list shows", async ({ page }) => {
 
 test("a question is answered with an option", async ({ page }) => {
   await startTask(page, "Ask a color");
+  // Pinned on top; it folds to one line and back.
+  const pinned = page.getByLabel("waits for you");
+  await expect(pinned).toContainText("waits for you: answer: which color?");
+  await pinned.getByRole("button", { name: "fold" }).click();
+  await expect(page.getByLabel("question")).toHaveCount(0);
+  await pinned.getByRole("button", { name: "unfold" }).click();
   const box = page.getByLabel("question");
   await expect(box).toContainText("which color?");
   await box.getByRole("button", { name: "blue" }).click();
+  await expect(page.locator(".report")).toContainText("you chose blue");
+  await expect(pinned).toHaveCount(0);
+  // The report folds too.
+  await page.getByRole("button", { name: "fold the report" }).click();
+  await expect(page.locator(".report")).not.toContainText("you chose blue");
+  await page.getByRole("button", { name: "unfold the report" }).click();
   await expect(page.locator(".report")).toContainText("you chose blue");
 });
 
