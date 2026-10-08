@@ -1045,6 +1045,30 @@ impl Store {
         Ok(())
     }
 
+    // --- working memory ---------------------------------------------------
+
+    /// A task's working memory: its slots, by key.
+    pub async fn working_memory(&self, task: &str) -> R<serde_json::Map<String, serde_json::Value>> {
+        let rows: Vec<(String, Json<serde_json::Value>)> = sqlx::query_as("select key, value from working_memory where task = $1 order by key").bind(task).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|(k, v)| (k, v.0)).collect())
+    }
+
+    /// Sets a slot (a new one or a new value).
+    pub async fn set_working_memory(&self, task: &str, key: &str, value: &serde_json::Value) -> R<()> {
+        sqlx::query("insert into working_memory (task, key, value) values ($1, $2, $3) on conflict (task, key) do update set value = excluded.value, updated = unixepoch()")
+            .bind(task)
+            .bind(key)
+            .bind(Json(value))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Removes a slot; false when there was none.
+    pub async fn remove_working_memory(&self, task: &str, key: &str) -> R<bool> {
+        Ok(sqlx::query("delete from working_memory where task = $1 and key = $2").bind(task).bind(key).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
     // --- notifications --------------------------------------------------
 
     pub async fn add_notification(&self, kind: &str, task: Option<&str>, title: &str, body: &str) -> R<i64> {

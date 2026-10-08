@@ -20,6 +20,7 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("tasks", &["task_list", "cron_list", "prompt_design"]),
     ("ask", &["ask"]),
     ("todo", &["todo_list"]),
+    ("wm", &["wm_get"]),
     ("secrets", &["secrets_list", "secrets_get"]),
     ("triggers", &["trigger_list"]),
 ];

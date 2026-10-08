@@ -313,6 +313,34 @@ async fn a_task_keeps_a_todo_list_in_view() {
     assert_eq!(todos.iter().map(|x| x.status.as_str()).collect::<Vec<_>>(), ["done", "in_progress", "pending"]);
 }
 
+#[tokio::test]
+async fn a_task_keeps_a_working_memory() {
+    let r = start().await;
+    r.push("Remember", |b| {
+        assert!(tool_names(b).contains(&"wm__wm_get".into()), "the wm tools are there");
+        assert!(all_text(b).contains("after your history was summarised"), "the prompt says when to read it");
+        call("c1", "wm.wm_set", json!({"key": "pr", "value": 42}))
+    });
+    r.push("Remember", |_| call("c2", "wm.wm_set", json!({"key": "plan", "value": {"step": 2, "left": ["test"]}})));
+    r.push("Remember", |_| call("c3", "wm.wm_set", json!({"key": "pr", "value": "#43"})));
+    r.push("Remember", |_| call("c4", "wm.wm_get", json!({})));
+    r.push("Remember", |b| {
+        let got: serde_json::Value = serde_json::from_str(&last_result(b)).unwrap();
+        assert_eq!(got, json!({"plan": {"step": 2, "left": ["test"]}, "pr": "#43"}));
+        call("c5", "wm.wm_remove", json!({"key": "plan"}))
+    });
+    r.push("Remember", |_| call("c6", "wm.wm_remove", json!({"key": "plan"})));
+    r.push("Remember", |b| {
+        assert!(last_result(b).contains("no slot"), "{}", last_result(b));
+        text("remembered")
+    });
+    let t = r.start_task("Remember", "x").await;
+    r.done(&t.id).await;
+    assert_eq!(serde_json::Value::Object(r.run.app.store.working_memory(&t.id).await.unwrap()), json!({"pr": "#43"}));
+    let other = r.start_task("Other", "x").await;
+    assert!(r.run.app.store.working_memory(&other.id).await.unwrap().is_empty(), "each task its own");
+}
+
 fn tool_names(body: &serde_json::Value) -> Vec<String> {
     body["tools"].as_array().map(|t| t.iter().map(|t| t["function"]["name"].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
 }

@@ -216,6 +216,7 @@ pub fn task_prompt(target: &str, goal: &str) -> String {
 pub fn design_task_may(tool: &str) -> bool {
     matches!(tool, "fs.read" | "fs.grep" | "fs.glob" | "fs.ls" | "memory.memory_read" | "memory.memory_search" | "skills.skill_list" | "skills.skill_load" | "ask.ask" | "tasks.search_history" | "tasks.task_list" | "tasks.cron_list" | "triggers.trigger_list" | "secrets.secrets_list")
         || tool.starts_with("todo.")
+        || tool.starts_with("wm.")
 }
 
 /// A proposal as text, for agents.

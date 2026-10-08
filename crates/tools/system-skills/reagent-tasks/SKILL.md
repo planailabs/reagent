@@ -54,6 +54,10 @@ when a model call fails.
 - Plan work of more than a few steps as a todo list (`todo.todo_add`, then
   `todo.todo_update` as you go): it survives summaries and restarts, and the
   person follows it.
+- Keep what you'll need again (ids, paths, findings, decisions, where you
+  are) in your working memory (`wm.wm_set`); it's yours alone and survives
+  summaries and restarts. Read it all (`wm.wm_get`) now and then, and
+  always right after a summary.
 - Long histories are summarised at three quarters of the context; the
   summary is also kept as a checkpoint in the project's memory.
   `search_history` searches your whole conversation, `grep_result` a long

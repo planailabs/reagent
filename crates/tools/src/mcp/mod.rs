@@ -125,6 +125,7 @@ pub fn router(app: Arc<App>) -> axum::Router {
         .nest_service("/mcp/tasks", service(misc::TaskTools(app.clone())))
         .nest_service("/mcp/ask", service(misc::AskTools(app.clone())))
         .nest_service("/mcp/todo", service(misc::TodoTools(app.clone())))
+        .nest_service("/mcp/wm", service(misc::WorkingMemoryTools(app.clone())))
         .nest_service("/mcp/secrets", service(misc::SecretTools(app.clone())))
         .nest_service("/mcp/triggers", service(triggers::TriggerTools(app.clone())))
         .nest_service("/mcp/hooks", service(crate::hooks::HookTools(app)))

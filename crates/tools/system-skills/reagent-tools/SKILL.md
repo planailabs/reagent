@@ -1,6 +1,6 @@
 ---
 name: reagent-tools
-description: The tools a reagent task has - files, commands and background jobs, terminals, the nix dev shell, git, memory, skills, tasks, asking, todos, secrets, triggers, subnet's history tools, and MCP servers the person adds (lazy).
+description: The tools a reagent task has - files, commands and background jobs, terminals, the nix dev shell, git, memory, skills, tasks, asking, todos, working memory, secrets, triggers, subnet's history tools, and MCP servers the person adds (lazy).
 ---
 
 # Tools
@@ -16,6 +16,7 @@ description: The tools a reagent task has - files, commands and background jobs,
 | `tasks` | `task_spawn`, `prompt_design`, `task_list`, `task_message`, `task_wait`, `task_escalate`, `search_history`, `cron_list`, `cron_add`, `cron_remove` (`reagent-subtasks`) |
 | `ask` | `ask(question, options?)`: wait for the person's answer |
 | `todo` | `todo_list`, `todo_add`, `todo_update`, `todo_clear` |
+| `wm` | `wm_get` (all slots as one JSON object), `wm_set(key, value)` (any JSON), `wm_remove(key)`: the task's own working memory |
 | `secrets` | `secrets_list`, `secrets_get`, `secrets_set`, `secrets_remove` (`reagent-secrets`) |
 | `triggers` | `trigger_list`, `trigger_add`, `trigger_remove`, `trigger_move` (`reagent-cron-and-triggers`) |
 

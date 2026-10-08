@@ -29,8 +29,8 @@ piece decides. A rule for `cargo *` doesn't allow `cargo test && rm -rf ~`.
 added in front), or denies it; they're notified (with buttons). **Deny**
 returns an error to the task that names the rule.
 
-**Starter rules** (a new project): files, memory, skills, questions, todos
-and reading secrets are allowed; git worktree tools and read-only git, job
+**Starter rules** (a new project): files, memory, skills, questions, todos,
+working memory and reading secrets are allowed; git worktree tools and read-only git, job
 and terminal tools too; subtasks in the project itself; common read-only
 commands and `git add/commit`, `cargo`, `npm test`, `npm run`. `git push`
 and `sudo` ask; `rm -rf /*` is denied. Everything else gets the default.

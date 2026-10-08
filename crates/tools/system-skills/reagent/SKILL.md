@@ -19,7 +19,7 @@ are summarised as they go.
 - **Tasks**: one agent each, with a title and a prompt, in a project.
   See `reagent-tasks`. A task can start **subtasks** (`reagent-subtasks`).
 - **Tools**: files, commands, terminals, git worktrees, memory, skills,
-  subtasks, questions, todos, secrets, triggers, plus MCP servers the person
+  subtasks, questions, todos, working memory, secrets, triggers, plus MCP servers the person
   adds (`reagent-tools`).
 - **Policy**: per project, rules that allow, ask about or deny each tool
   call (`reagent-policy`).

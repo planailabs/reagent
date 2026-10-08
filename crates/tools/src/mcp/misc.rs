@@ -28,6 +28,21 @@ pub struct AskTools(pub Arc<App>);
 pub struct TodoTools(pub Arc<App>);
 #[derive(Clone)]
 pub struct SecretTools(pub Arc<App>);
+#[derive(Clone)]
+pub struct WorkingMemoryTools(pub Arc<App>);
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct WmSet {
+    /// The slot's name (overwrites what's there).
+    pub key: String,
+    /// Any JSON: a string, a number, a list, an object.
+    pub value: Value,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct WmKey {
+    pub key: String,
+}
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Design {
@@ -520,6 +535,36 @@ impl TodoTools {
         self.0.store.clear_todos(&t.id).await.map_err(|e| e.to_string())?;
         self.0.todos_changed(&t.id).await;
         Ok("emptied".into())
+    }
+}
+
+#[tool_router(server_handler)]
+impl WorkingMemoryTools {
+    #[tool(description = "Your working memory, all of it: a JSON object of your slots (key: value). Read it now and then, and always after your history was summarised.")]
+    async fn wm_get(&self, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        let m = self.0.store.working_memory(&t.id).await.map_err(|e| e.to_string())?;
+        serde_json::to_string(&m).map_err(|e| e.to_string())
+    }
+
+    #[tool(description = "Put a value in a slot of your working memory (this task's alone, kept across restarts and summaries): facts you'll need again, ids, paths, decisions, where you are.")]
+    async fn wm_set(&self, Parameters(a): Parameters<WmSet>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        let key = a.key.trim();
+        if key.is_empty() {
+            return Err("a slot needs a key".into());
+        }
+        self.0.store.set_working_memory(&t.id, key, &a.value).await.map_err(|e| e.to_string())?;
+        Ok(format!("{key} set"))
+    }
+
+    #[tool(description = "Empty a slot of your working memory.")]
+    async fn wm_remove(&self, Parameters(a): Parameters<WmKey>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        if !self.0.store.remove_working_memory(&t.id, &a.key).await.map_err(|e| e.to_string())? {
+            return Err(format!("there's no slot {:?}", a.key));
+        }
+        Ok(format!("{} removed", a.key))
     }
 }
 

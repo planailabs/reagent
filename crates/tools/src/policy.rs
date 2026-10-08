@@ -161,6 +161,7 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("skills.*", None, "allow"),
         r("ask.*", None, "allow"),
         r("todo.*", None, "allow"),
+        r("wm.*", None, "allow"),
         // Reading is free; setting and removing go by the project's default.
         r("secrets.secrets_{list,get}", None, "allow"),
         r("git.worktree_status", None, "allow"),
