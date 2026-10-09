@@ -156,7 +156,14 @@ pub struct SkillName {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct Title {
+    pub title: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct Spawn {
+    /// A few words (default: it names itself).
+    #[serde(default)]
     pub title: String,
     /// What it should do: everything it needs to know (it doesn't see your conversation).
     pub prompt: String,
@@ -332,6 +339,13 @@ impl TaskTools {
         Ok(format!("design task {} started ({}); its proposal comes to you as a message when it's done", d.id, d.title))
     }
 
+    #[tool(description = "Name this task: a few words saying what it's about (shown in the task list and notifications). A task started without a title does this first; rename it when its work turns out to be something else.")]
+    async fn task_title(&self, Parameters(a): Parameters<Title>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        self.0.set_title(&t.id, &a.title).await?;
+        Ok(format!("this task is called \"{}\" now", a.title.trim()))
+    }
+
     #[tool(description = "Start a subtask: another task working on its own (in this project, or another if the policy allows). Its report comes to you as a message when it ends.")]
     async fn task_spawn(&self, Parameters(a): Parameters<Spawn>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
@@ -350,7 +364,7 @@ impl TaskTools {
                 kind: a.kind,
             })
             .await?;
-        Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.title))
+        Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.name()))
     }
 
     #[tool(description = "Tasks: of this project (or another, or all), going on or (all = true) finished too.")]

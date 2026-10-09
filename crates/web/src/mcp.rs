@@ -26,6 +26,8 @@ pub struct ReagentTools(pub Arc<App>);
 pub struct Start {
     /// A project's id (projects lists them).
     pub project: String,
+    /// A few words (default: the task names itself).
+    #[serde(default)]
     pub title: String,
     /// What it should do: everything it needs to know.
     pub prompt: String,

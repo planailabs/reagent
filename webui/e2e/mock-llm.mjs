@@ -25,6 +25,10 @@ function reply(body) {
     if (tools.length === 1) return call("p2", "todo__todo_update", { id: 1, status: "done" });
     return text("planned and started");
   }
+  if (title.startsWith("(untitled")) {
+    if (!tools.length) return call("n1", "tasks__task_title", { title: "Named by itself" });
+    return text("named");
+  }
   if (title.startsWith("Report twice")) return text(all.includes("once more") ? "the second report" : "the first report");
   if (title.startsWith("Remember")) {
     if (!tools.length) return call("w1", "wm__wm_set", { key: "pr", value: 42 });

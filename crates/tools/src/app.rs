@@ -50,10 +50,15 @@ pub enum MergeAnswer {
     Reject(String),
 }
 
+/// The first message's title line for a task started without one.
+pub const UNTITLED: &str = "(untitled: first name this task with tasks.task_title, a few words saying what it's about)";
+
 /// What starting a task takes.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct StartTask {
     pub project: String,
+    /// Empty: the task names itself (tasks.task_title).
+    #[serde(default)]
     pub title: String,
     pub prompt: String,
     #[serde(default)]
@@ -168,6 +173,17 @@ impl App {
     pub async fn emit_trigger(&self, project: &str, name: &str) {
         let t = self.store.trigger(project, name).await.ok().flatten();
         self.emit(json!({"kind": "trigger", "project": project, "name": name, "trigger": t}));
+    }
+
+    /// Names a task (one started without a title names itself).
+    pub async fn set_title(&self, id: &str, title: &str) -> Result<(), String> {
+        let title = title.trim();
+        if title.is_empty() || title.chars().count() > 120 {
+            return Err("a title is a few words (1 to 120 characters)".into());
+        }
+        self.store.set_title(id, title).await.map_err(|e| e.to_string())?;
+        self.task_changed(id).await;
+        Ok(())
     }
 
     async fn task_changed(&self, id: &str) {
@@ -353,7 +369,7 @@ impl App {
             return Err("what do you want done? (a rough goal is enough)".into());
         }
         let goal = match parent {
-            Some(t) => format!("{}\n\n(Asked by the task \"{}\", which will start what you propose.)", goal.trim(), t.title),
+            Some(t) => format!("{}\n\n(Asked by the task \"{}\", which will start what you propose.)", goal.trim(), t.name()),
             None => goal.trim().to_string(),
         };
         self.start_task(StartTask {
@@ -373,7 +389,7 @@ impl App {
     pub async fn proposal(&self, id: &str) -> Result<Option<crate::design::Proposal>, String> {
         let t = self.task(id).await?;
         if t.origin != "design" {
-            return Err(format!("{} isn't a design task", t.title));
+            return Err(format!("{} isn't a design task", t.name()));
         }
         let p = self.project(&t.project).await?;
         let skills: Vec<String> = self.skills_for(Path::new(&p.path), &p).into_iter().map(|s| s.name).collect();
@@ -389,7 +405,7 @@ impl App {
                 crate::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => self
                     .start_task(StartTask { project: p.slug.clone(), title: title.clone(), prompt: prompt.clone(), skills: skills.clone(), kind: kind.clone(), profile: profile.clone(), budget: budget.clone(), ..Default::default() })
                     .await
-                    .map(|t| format!("task {} {} ({})", t.title, if t.state == "queued" { "queued" } else { "started" }, t.id)),
+                    .map(|t| format!("task {} {} ({})", t.name(), if t.state == "queued" { "queued" } else { "started" }, t.id)),
                 other => crate::design::make(&self.store, &p, other).await,
             });
         }
@@ -499,8 +515,8 @@ impl App {
         // Asked for > the kind's > the project's > the default.
         let (profile, _) = self.config.profile(req.profile.as_deref().or(kind_profile).or(p.profile.as_deref()))?;
         let profile = profile.to_string();
-        if req.title.trim().is_empty() || req.prompt.trim().is_empty() {
-            return Err("a task needs a title and what to do".into());
+        if req.prompt.trim().is_empty() {
+            return Err("a task needs what to do".into());
         }
         if let Some(limit) = p.budget.daily_cost {
             let spent = self.store.cost_since(&p.slug, chrono::Utc::now().timestamp() - 86_400).await.map_err(|e| e.to_string())?;
@@ -538,7 +554,7 @@ impl App {
         if queue {
             self.store.set_state(&t.id, "queued", None).await.map_err(|e| e.to_string())?;
             self.task_changed(&t.id).await;
-            tracing::info!(task = %t.id, title = %t.title, project = %p.slug, "task queued: as many as may run at once already do");
+            tracing::info!(task = %t.id, title = %t.name(), project = %p.slug, "task queued: as many as may run at once already do");
             return self.task(&t.id).await;
         }
         self.spawn(&t).await
@@ -583,7 +599,7 @@ impl App {
     pub async fn start_now(&self, id: &str) -> Result<Task, String> {
         let t = self.task(id).await?;
         if t.state != "queued" {
-            return Err(format!("{} isn't queued (it's {})", t.title, t.state));
+            return Err(format!("{} isn't queued (it's {})", t.name(), t.state));
         }
         self.spawn(&t).await
     }
@@ -601,7 +617,7 @@ impl App {
         }
         let first = format!(
             "Task: {}\nProject: {} ({})\nWorking directory: {}\n\n{}{}",
-            t.title,
+            if t.title.is_empty() { UNTITLED } else { &t.title },
             p.name,
             p.slug,
             p.path,
@@ -625,7 +641,7 @@ impl App {
             self.store.set_state(&t.id, "running", None).await.map_err(|e| e.to_string())?;
         }
         self.task_changed(&t.id).await;
-        tracing::info!(task = %t.id, title = %t.title, project = %p.slug, "task started");
+        tracing::info!(task = %t.id, title = %t.name(), project = %p.slug, "task started");
         self.task(&t.id).await
     }
 
@@ -730,10 +746,10 @@ impl App {
         let t = self.task(id).await?;
         let (name, _) = self.config.profile(Some(profile))?;
         if name == t.profile {
-            return Err(format!("{} is already on {name}", t.title));
+            return Err(format!("{} is already on {name}", t.name()));
         }
         if !matches!(t.state.as_str(), "running" | "waiting" | "paused" | "failed" | "done") {
-            return Err(format!("{} is {}", t.title, t.state));
+            return Err(format!("{} is {}", t.name(), t.state));
         }
         let p = self.project(&t.project).await?;
         let hub = self.hub()?;
@@ -750,7 +766,7 @@ impl App {
         }
         self.errors_in_a_row.lock().unwrap().remove(id);
         let t2 = self.task(id).await?;
-        self.notify("model", Some(&t2), &format!("{} now runs on {name}", t.title), &format!("from {}: {why}", t.profile)).await;
+        self.notify("model", Some(&t2), &format!("{} now runs on {name}", t.name()), &format!("from {}: {why}", t.profile)).await;
         self.task_changed(id).await;
         tracing::info!(task = %id, from = %t.profile, to = %name, why, "task moved onto another profile");
         Ok(t2)
@@ -825,7 +841,7 @@ impl App {
     pub async fn retry(&self, id: &str) -> Result<Task, String> {
         let t = self.task(id).await?;
         if t.state != "failed" {
-            return Err(format!("{} isn't failed (it's {})", t.title, t.state));
+            return Err(format!("{} isn't failed (it's {})", t.name(), t.state));
         }
         let agent = Self::agent_of(&t)?;
         self.hub()?.op(&root(), Op::Resume { id: agent, tree: true }).await?;
@@ -954,7 +970,7 @@ impl App {
             let t = self.task(id).await?;
             // Buttons for the first two options (a notification shows at most two).
             let buttons = options.iter().take(2).map(|o| (o.clone(), json!({"kind": "answer", "question": question, "answer": o}))).collect();
-            self.notify_actions("waiting", Some(&t), &format!("{} asks", t.title), question, buttons).await;
+            self.notify_actions("waiting", Some(&t), &format!("{} asks", t.name()), question, buttons).await;
         }
         let answer = rx.await.map_err(|_| "the question went unanswered (the task was cancelled)".to_string());
         self.done_waiting(id).await;
@@ -999,7 +1015,7 @@ impl App {
         if stored.is_none() {
             let t = self.task(id).await?;
             let merge = vec![("Merge".to_string(), json!({"kind": "merge", "branch": wait["branch"]}))];
-            self.notify_actions("waiting", Some(&t), &format!("{}: ready to merge", t.title), wait["branch"].as_str().unwrap_or(""), merge).await;
+            self.notify_actions("waiting", Some(&t), &format!("{}: ready to merge", t.name()), wait["branch"].as_str().unwrap_or(""), merge).await;
         }
         let a = rx.await.map_err(|_| "the merge went unanswered (the task was cancelled)".to_string());
         self.done_waiting(id).await;
@@ -1058,7 +1074,7 @@ impl App {
         let (id, a) = self.store.take_action_token(&token_hash(token)).await.map_err(|e| e.to_string())?.ok_or("this button was used, or has expired")?;
         let t = self.task(&id).await?;
         let w = t.wait.as_ref().map(|w| w.0.clone()).unwrap_or_default();
-        let gone = || Err(format!("{} no longer waits for that", t.title));
+        let gone = || Err(format!("{} no longer waits for that", t.name()));
         match a["kind"].as_str() {
             Some(k @ ("approve" | "deny")) => {
                 if w["kind"] != "approval" || w["call"]["id"] != a["call_id"] {
@@ -1113,7 +1129,7 @@ impl App {
         self.record_usage(t).await;
         let _ = self.store.set_report(&t.id, content).await;
         if kind != "cancelled" {
-            self.notify(kind, Some(t), &format!("{} — {state}", t.title), &content.chars().take(400).collect::<String>()).await;
+            self.notify(kind, Some(t), &format!("{} — {state}", t.name()), &content.chars().take(400).collect::<String>()).await;
         }
         let _ = self.store.set_state(&t.id, state, None).await;
         self.task_changed(&t.id).await;
@@ -1122,7 +1138,7 @@ impl App {
             && let Ok(p) = self.task(parent).await
             && p.is_active()
         {
-            let _ = self.message(parent, &format!("[subtask {} ({}) {state}]\n{content}", t.title, t.id)).await;
+            let _ = self.message(parent, &format!("[subtask {} ({}) {state}]\n{content}", t.name(), t.id)).await;
         }
         crate::cron::task_ended(self, t).await;
         crate::triggers::task_ended(self, t).await;
@@ -1142,7 +1158,7 @@ impl App {
         let _ = hub.op(&root(), Op::Pause { id: agent, mode: PauseMode::Quick, tree: true }).await;
         let wait = json!({"kind": "budget", "tokens": t.tokens, "cost": t.cost, "minutes": minutes, "budget": b});
         if self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
-            self.notify("budget", Some(&t), &format!("{} is over budget", t.title), &format!("{} tokens, {:.2} spent, {minutes} min: paused", t.tokens, t.cost)).await;
+            self.notify("budget", Some(&t), &format!("{} is over budget", t.name()), &format!("{} tokens, {:.2} spent, {minutes} min: paused", t.tokens, t.cost)).await;
         }
         let _ = self.store.set_state(&t.id, "waiting", Some(&wait)).await;
         self.task_changed(&t.id).await;
@@ -1227,7 +1243,7 @@ impl App {
                     let _ = self.store.set_report(&t.id, &format!("failed: {error}")).await;
                     let _ = self.store.set_state(&t.id, "failed", None).await;
                     self.task_changed(&t.id).await;
-                    self.notify("failed", Some(&t), &format!("{} failed", t.title), &error).await;
+                    self.notify("failed", Some(&t), &format!("{} failed", t.name()), &error).await;
                 }
                 continue;
             }
@@ -1265,7 +1281,7 @@ impl App {
                 if self.notified.lock().unwrap().insert(key) {
                     let tool = call["function"]["name"].as_str().unwrap_or("").replace("__", ".");
                     let buttons = vec![("Allow once".to_string(), json!({"kind": "approve", "call_id": call_id})), ("Deny".to_string(), json!({"kind": "deny", "call_id": call_id}))];
-                    approval_note = Some((format!("{} needs approval", t.title), format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or("")), buttons));
+                    approval_note = Some((format!("{} needs approval", t.name()), format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or("")), buttons));
                 }
             } else if a["paused"] == true {
                 // Paused while it waits for the person (a stop, say): it still waits.
@@ -1290,7 +1306,7 @@ impl App {
                 state = "waiting".into();
                 wait = Some(json!({"kind": "budget", "tokens": all_tokens, "cost": all_cost, "minutes": minutes, "budget": b}));
                 if self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
-                    self.notify("budget", Some(&t), &format!("{} is over budget", t.title), &format!("{all_tokens} tokens, {all_cost:.2} spent, {minutes} min: paused")).await;
+                    self.notify("budget", Some(&t), &format!("{} is over budget", t.name()), &format!("{all_tokens} tokens, {all_cost:.2} spent, {minutes} min: paused")).await;
                 }
             }
             if state != t.state || wait != t.wait.as_ref().map(|w| w.0.clone()) {
@@ -1343,7 +1359,7 @@ impl App {
         let entry = format!("## Checkpoint {stamp}\n\n{}\n", summary.trim());
         let r = match m.read(&file) {
             Ok(_) => m.edit(&file, &crate::edit::Edit { op: Some(crate::edit::Op::Append), text: Some(format!("\n{entry}")), ..Default::default() }, None),
-            Err(_) => m.write(&file, &format!("# {}\n\nTask {} ({}).\n\n{entry}", t.title, t.id, t.origin), &format!("checkpoints of task \"{}\"", t.title)),
+            Err(_) => m.write(&file, &format!("# {}\n\nTask {} ({}).\n\n{entry}", t.name(), t.id, t.origin), &format!("checkpoints of task \"{}\"", t.name())),
         };
         if let Err(e) = r {
             tracing::warn!(task = %t.id, error = %e, "writing a checkpoint");

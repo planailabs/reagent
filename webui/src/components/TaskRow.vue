@@ -7,7 +7,7 @@ defineProps({ t: { type: Object, required: true }, depth: { type: Number, defaul
 <template>
   <a :href="`#/task/${t.id}`" :class="['task-row', t.state]" :style="{ paddingLeft: 8 + depth * 18 + 'px' }">
     <span class="glyph" :title="t.state">{{ glyph(t.state) }}</span>
-    <span class="hi title">{{ t.title }}</span>
+    <span class="hi title">{{ t.title || "untitled task" }}</span>
     <span v-if="project" class="dim">{{ t.project }}</span>
     <span class="dim wait">{{ waitText(t) }}</span>
     <span class="grow"></span>

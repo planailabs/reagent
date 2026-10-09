@@ -181,7 +181,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     </div>
     <div class="row">
       <span class="glyph big" :title="t.state">{{ glyph(t.state) }}</span>
-      <h2 class="title">{{ t.title }}</h2>
+      <h2 class="title" :class="{ dim: !t.title }">{{ t.title || "untitled task" }}</h2>
       <a :href="`#/project/${t.project}`" class="dim">{{ t.project }}</a>
       <span class="dim">{{ t.state }} · {{ t.kind ? `${t.kind} · ` : "" }}{{ t.profile }} · {{ t.tokens }} tokens · {{ money(t.cost) }} · {{ ago(t.created) }} ago · {{ t.origin }}</span>
     </div>

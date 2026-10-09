@@ -415,3 +415,27 @@ async fn a_plugins_skills_and_rules_reach_tasks() {
     r.run.app.plugin_remove("kit").await.unwrap();
     assert!(r.run.app.plugins().is_empty());
 }
+
+#[tokio::test]
+async fn a_task_without_a_title_names_itself() {
+    let r = start().await;
+    let untitled = reagent_tools::app::UNTITLED;
+    r.push(untitled, |b| {
+        assert!(all_text(b).contains("name this task with tasks.task_title"), "{}", all_text(b));
+        call("c1", "tasks.task_title", json!({"title": "  "}))
+    });
+    r.push(untitled, |b| {
+        assert!(last_result(b).contains("a few words"), "{}", last_result(b));
+        call("c2", "tasks.task_title", json!({"title": "Greet the world"}))
+    });
+    r.push(untitled, |b| {
+        assert!(last_result(b).contains("called \"Greet the world\""), "{}", last_result(b));
+        text("hello")
+    });
+    let t = r.start_task("", "say hello").await;
+    assert_eq!(t.name(), "untitled task");
+    let t = r.done(&t.id).await;
+    assert_eq!(t.title, "Greet the world");
+    let n = r.run.app.store.notifications(10).await.unwrap();
+    assert!(n.iter().any(|n| n.title == "Greet the world — done"), "{n:?}");
+}

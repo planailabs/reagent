@@ -13,7 +13,7 @@ description: The tools a reagent task has - files, commands and background jobs,
 | `git` | `worktree_start`, `worktree_status`, `worktree_diff`, `worktree_merge`, `worktree_drop` (`reagent-worktrees`) |
 | `memory` | `memory_read`, `memory_write`, `memory_edit`, `memory_search`, `memory_remove` (`reagent-memory`) |
 | `skills` | `skill_list`, `skill_load` (`reagent-skills`) |
-| `tasks` | `task_spawn`, `prompt_design`, `task_list`, `task_message`, `task_wait`, `task_escalate`, `search_history`, `cron_list`, `cron_add`, `cron_remove` (`reagent-subtasks`) |
+| `tasks` | `task_title` (name this task: one started without a title does it first), `task_spawn`, `prompt_design`, `task_list`, `task_message`, `task_wait`, `task_escalate`, `search_history`, `cron_list`, `cron_add`, `cron_remove` (`reagent-subtasks`) |
 | `ask` | `ask(question, options?)`: wait for the person's answer |
 | `todo` | `todo_list`, `todo_add`, `todo_update`, `todo_clear` |
 | `wm` | `wm_get` (all slots as one JSON object), `wm_set(key, value)` (any JSON), `wm_remove(key)`: the task's own working memory |

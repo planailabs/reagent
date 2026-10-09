@@ -134,6 +134,14 @@ test("a question is answered with an option", async ({ page }) => {
   await expect(pinned).toHaveCount(0);
 });
 
+test("a task started without a title names itself", async ({ page }) => {
+  await page.goto("/#/project/site/new");
+  await page.getByLabel("what to do").fill("say hi");
+  await page.getByRole("button", { name: "start" }).click();
+  await expect(page.getByRole("heading", { name: "Named by itself" })).toBeVisible();
+  await expect(page.locator(".reports")).toContainText("named");
+});
+
 test("reports are kept, each folds and so do they all", async ({ page }) => {
   await startTask(page, "Report twice");
   await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");

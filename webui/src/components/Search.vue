@@ -38,13 +38,13 @@ async function all(task, page = 1) {
     <div v-if="res && !res.tasks.length" class="dim">no conversation matches</div>
     <div v-for="r in res?.tasks ?? []" :key="r.task.id" class="card">
       <span class="glyph">{{ glyph(r.task.state) }}</span>
-      <a :href="`#/task/${r.task.id}`" class="hi">{{ r.task.title }}</a>
+      <a :href="`#/task/${r.task.id}`" class="hi">{{ r.task.title || "untitled task" }}</a>
       <span class="dim">{{ r.task.project }} · {{ r.matches }} matches</span>
       <button @click="all(r.task.id)">all of them</button>
       <pre v-for="h in r.hits" :key="h.n" class="dim">#{{ h.n }} {{ h.role }}: {{ h.text }}</pre>
     </div>
     <div v-if="one" class="card">
-      <h2>{{ one.task.title }}: {{ one.matches }} matches, page {{ one.page }} of {{ one.pages }}</h2>
+      <h2>{{ one.task.title || "untitled task" }}: {{ one.matches }} matches, page {{ one.page }} of {{ one.pages }}</h2>
       <pre v-for="h in one.hits" :key="h.n">#{{ h.n }} {{ h.role }}{{ h.summarised ? " (summarised)" : "" }}: {{ h.text }}</pre>
       <button v-if="one.next_page" @click="all(one.task.id, one.next_page)">more</button>
     </div>

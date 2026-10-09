@@ -116,7 +116,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
 
     <Designer v-if="tab === 'new'" :project="slug" />
     <form v-if="tab === 'new'" class="stack" @submit.prevent="startTask">
-      <input v-model="start.title" placeholder="title" aria-label="title" required />
+      <input v-model="start.title" placeholder="title (empty: the agent names it)" aria-label="title" />
       <textarea v-model="start.prompt" placeholder="what to do" aria-label="what to do" required></textarea>
       <div class="row">
         <label>profile

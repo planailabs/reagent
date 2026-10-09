@@ -143,6 +143,12 @@ pub struct Task {
 }
 
 impl Task {
+    /// Its title, or "untitled task" before it has one (a task started
+    /// without one names itself with tasks.task_title).
+    pub fn name(&self) -> &str {
+        if self.title.is_empty() { "untitled task" } else { &self.title }
+    }
+
     pub fn is_active(&self) -> bool {
         matches!(self.state.as_str(), "running" | "waiting" | "paused" | "queued")
     }
@@ -648,6 +654,11 @@ impl Store {
             .bind(finished)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    pub async fn set_title(&self, id: &str, title: &str) -> R<()> {
+        sqlx::query("update tasks set title = $2, updated = unixepoch() where id = $1").bind(id).bind(title).execute(&self.pool).await?;
         Ok(())
     }
 
