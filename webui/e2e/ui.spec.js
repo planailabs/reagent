@@ -41,6 +41,22 @@ test("a wrong password is refused", async ({ browser }) => {
   await expect(page.getByRole("alert")).toContainText("wrong password");
 });
 
+test("a notification unfolds, and is marked seen on its own", async ({ page }) => {
+  await startTask(page, "Notice one");
+  await expect(page.locator(".report")).toContainText("Done: Notice one");
+  await startTask(page, "Notice two");
+  await expect(page.locator(".report")).toContainText("Done: Notice two");
+  await page.getByRole("link", { name: "inbox" }).click();
+  const one = page.locator("details.note", { hasText: "Notice one" });
+  const two = page.locator("details.note", { hasText: "Notice two" });
+  await expect(one.locator(".md")).toBeHidden();
+  await one.locator("summary").click({ position: { x: 2, y: 5 } });
+  await expect(one.locator(".md")).toBeVisible();
+  await one.getByRole("button", { name: "mark seen" }).click();
+  await expect(one).toHaveCount(0);
+  await expect(two).toBeVisible();
+});
+
 test("a task runs and reports", async ({ page }) => {
   await startTask(page, "Hello there");
   await expect(page.locator(".report")).toContainText("Done: Hello there");

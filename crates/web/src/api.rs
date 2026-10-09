@@ -266,11 +266,18 @@ async fn notifications(State(s): State<S>) -> R {
 
 #[derive(Deserialize)]
 struct Upto {
-    upto: i64,
+    /// Every one up to this id, or
+    upto: Option<i64>,
+    /// this one alone.
+    id: Option<i64>,
 }
 
 async fn seen(State(s): State<S>, Json(u): Json<Upto>) -> R {
-    db(s.w.app.store.mark_seen(u.upto).await)?;
+    match (u.upto, u.id) {
+        (Some(upto), None) => db(s.w.app.store.mark_seen(upto).await)?,
+        (None, Some(id)) => db(s.w.app.store.mark_one_seen(id).await)?,
+        _ => return Err(E(StatusCode::BAD_REQUEST, "upto or id".into())),
+    }
     Ok(Json(json!({"ok": true})))
 }
 

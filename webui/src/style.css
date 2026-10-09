@@ -116,3 +116,8 @@ textarea.code { font-family: ui-monospace, monospace; min-height: 8em; }
 .pinned .wait { margin: 6px 0 0; }
 .jump { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 3; }
 .jump button { width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1; }
+details.note { display: block; }
+details.note > summary { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+details.note > summary::before { content: "▸"; color: var(--dim); }
+details.note[open] > summary::before { content: "▾"; }
+details.note > summary::-webkit-details-marker { display: none; }

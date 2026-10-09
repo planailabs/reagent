@@ -1089,6 +1089,11 @@ impl Store {
         sqlx::query("update notifications set seen = true where id <= $1").bind(upto).execute(&self.pool).await?;
         Ok(())
     }
+
+    pub async fn mark_one_seen(&self, id: i64) -> R<()> {
+        sqlx::query("update notifications set seen = true where id = $1").bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

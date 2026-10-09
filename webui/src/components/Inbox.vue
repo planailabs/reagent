@@ -24,9 +24,10 @@ async function approveTrigger(t, approved, always = false) {
   await load();
 }
 
-async function seen() {
+async function seen(n) {
   const top = inbox.value?.notifications?.[0]?.id;
-  if (top) await post("/api/notifications/seen", { upto: top });
+  const body = n ? { id: n.id } : top ? { upto: top } : null;
+  if (body) await post("/api/notifications/seen", body).catch((e) => (error.value = e.message));
   await load();
 }
 
@@ -53,13 +54,17 @@ watch(() => live.tick, load);
     <h2>going on</h2>
     <div v-if="!active.length" class="dim">no task is running</div>
     <TaskRow v-for="t in active" :key="t.id" :t="t" project />
-    <h2 class="row">notifications <button v-if="inbox?.notifications?.length" @click="seen">mark seen</button></h2>
+    <h2 class="row">notifications <button v-if="inbox?.notifications?.length" @click="seen()">mark all seen</button></h2>
     <div v-if="!inbox?.notifications?.length" class="dim">none new</div>
-    <div v-for="n in inbox?.notifications ?? []" :key="n.id" class="note">
-      <span class="dim">{{ ago(n.at) }} · {{ n.kind }}</span>
-      <a v-if="n.task" :href="`#/task/${n.task}`" class="hi">{{ n.title }}</a>
-      <span v-else class="hi">{{ n.title }}</span>
+    <details v-for="n in inbox?.notifications ?? []" :key="n.id" class="note" :aria-label="`notification ${n.title}`">
+      <summary>
+        <span class="dim">{{ ago(n.at) }} · {{ n.kind }}</span>
+        <a v-if="n.task" :href="`#/task/${n.task}`" class="hi">{{ n.title }}</a>
+        <span v-else class="hi">{{ n.title }}</span>
+        <span class="grow"></span>
+        <button @click.prevent="seen(n)">mark seen</button>
+      </summary>
       <div class="dim md" v-html="markdown(n.body)"></div>
-    </div>
+    </details>
   </section>
 </template>

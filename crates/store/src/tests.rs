@@ -95,6 +95,10 @@ async fn cron_settings_sessions_and_notifications() {
     let n = s.add_notification("done", None, "Fix", "fixed").await.unwrap();
     s.mark_seen(n).await.unwrap();
     assert!(s.notifications(10).await.unwrap()[0].seen);
+    let a = s.add_notification("done", None, "A", "").await.unwrap();
+    s.add_notification("done", None, "B", "").await.unwrap();
+    s.mark_one_seen(a).await.unwrap();
+    assert_eq!(s.notifications(10).await.unwrap().iter().map(|n| (n.title.as_str(), n.seen)).collect::<Vec<_>>(), [("B", false), ("A", true), ("Fix", true)]);
 }
 
 #[tokio::test]
