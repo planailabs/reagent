@@ -8,7 +8,7 @@ description: The tools a reagent task has - files, commands and background jobs,
 | server | tools |
 |---|---|
 | `fs` | `read` (numbered lines, paged), `write`, `edit` (exact replace, or append/insert/delete), `grep` (regex, respects .gitignore), `glob`, `ls` |
-| `shell` | `exec` (foreground; past its timeout, default 600 s, it goes on in the background), `exec_bg` (a background job: its end comes as a message), `jobs`, `job_output`, `job_wait`, `job_input`, `job_kill` |
+| `shell` | `exec` (foreground; past its timeout, default 600 s, it goes on in the background), `exec_bg` (a background job: its end comes as a message), `jobs`, `job_output`, `job_wait`, `job_input`, `job_kill`, `sleep` (`duration`: 10m, 2h; or `until`: 15:30, RFC 3339; at most 7 days; a message wakes it early) |
 | `pty` | `pty_open`, `pty_send` (keys like `<enter>`, `<C-c>`; answers with the screen), `pty_screen`, `pty_close`, `ptys`: terminals the person sees too |
 | `git` | `worktree_start`, `worktree_status`, `worktree_diff`, `worktree_merge`, `worktree_drop` (`reagent-worktrees`) |
 | `memory` | `memory_read`, `memory_write`, `memory_edit`, `memory_search`, `memory_remove` (`reagent-memory`) |

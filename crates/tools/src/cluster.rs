@@ -10,7 +10,8 @@ pub const PROMPT: &str = include_str!("../../../prompts/task.md");
 /// after a restart (they change nothing).
 pub const SERVERS: &[(&str, &[&str])] = &[
     ("fs", &["read", "grep", "glob", "ls"]),
-    ("shell", &["jobs", "job_output"]),
+    // A sleep interrupted by a restart sleeps again (for its whole duration).
+    ("shell", &["jobs", "job_output", "sleep"]),
     ("pty", &["pty_screen", "ptys"]),
     // worktree_merge and ask run again after a restart: a merge already made is
     // "nothing to merge", and a stored question or decision is found again.

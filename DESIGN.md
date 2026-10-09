@@ -122,6 +122,7 @@ Besides these, subnet gives every task `search_history` (its own whole conversat
 | `exec(cmd, cwd?, timeout?, stdin?, devshell?)` | `sh -c` in the foreground: exit code and output (the last 60 000 characters). Past `timeout` (default 600 s), or when the person moves it, it goes on as a background job: the call says so, with the output so far. |
 | `exec_bg(cmd, cwd?, name?)` | a background job, its id at once; its end comes as a message |
 | `jobs()` / `job_output(job, from?, to?, tail?, pattern?)` / `job_wait(job, timeout?)` / `job_input(job, text, close?)` / `job_kill(job, signal?)` | list, read, wait, write to stdin, signal the process group |
+| `sleep(duration? \| until?)` | waits (`90s`, `10m`, `2h`; or until `HH:MM`, the next one in the machine's time zone, or an RFC 3339 time; at most 7 days) to look at something outside again; a message to the task (the person's, a subtask's, a job's end, a trigger's) wakes it early. Allowed in every project (a starter rule; migration 0016 adds it). Run again after a restart: a duration starts over |
 
 Commands get the project's env, `REAGENT_TASK`, `REAGENT_PROJECT`, and `PAGER=cat`, `GIT_PAGER=cat`, `GIT_EDITOR=true` (nothing waits for a person).
 

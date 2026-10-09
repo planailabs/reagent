@@ -183,6 +183,7 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("shell.jobs", None, "allow"),
         r("shell.job_output", None, "allow"),
         r("shell.job_wait", None, "allow"),
+        r("shell.sleep", None, "allow"),
         r("pty.pty_screen", None, "allow"),
         r("shell.exec*", Some("git push*"), "ask"),
         r("shell.exec*", Some("rm -rf /*"), "deny"),

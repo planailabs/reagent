@@ -341,6 +341,25 @@ async fn a_task_keeps_a_working_memory() {
     assert!(r.run.app.store.working_memory(&other.id).await.unwrap().is_empty(), "each task its own");
 }
 
+#[tokio::test]
+async fn a_task_sleeps_and_a_message_wakes_it() {
+    let r = start().await;
+    r.push("Nap", |_| call("c1", "shell.sleep", json!({"duration": "1s"})));
+    r.push("Nap", |b| {
+        assert_eq!(last_result(b), "slept 1s");
+        call("c2", "shell.sleep", json!({"duration": "1h"}))
+    });
+    r.push("Nap", |b| {
+        assert!(last_result(b).starts_with("woken by a message after"), "{}", last_result(b));
+        text("up")
+    });
+    let t = r.start_task("Nap", "x").await;
+    // Into the long sleep (the short one's 1s, then a moment), then a message.
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    r.run.app.message(&t.id, "wake up").await.unwrap();
+    r.done(&t.id).await;
+}
+
 fn tool_names(body: &serde_json::Value) -> Vec<String> {
     body["tools"].as_array().map(|t| t.iter().map(|t| t["function"]["name"].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
 }

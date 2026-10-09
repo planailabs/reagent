@@ -97,6 +97,9 @@ pub struct App {
     fell_back: Mutex<HashMap<String, HashSet<String>>>,
     /// Triggers' runs going on.
     pub triggers: crate::triggers::Runs,
+    /// What wakes a task's shell.sleep: a message to it.
+    // ponytail: one entry per task that ever slept, never removed; small.
+    wakers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
 }
 
 /// Prompt, completion and cached prompt tokens from an agent's usage.
@@ -135,6 +138,7 @@ impl App {
             applying: Default::default(),
             errors_in_a_row: Default::default(),
             fell_back: Default::default(),
+            wakers: Default::default(),
             triggers: Default::default(),
         })
     }
@@ -554,8 +558,16 @@ impl App {
 
     /// A message to a task (it reads it before its next model call; a
     /// finished one goes on with it).
+    /// What a sleeping task waits on besides the time.
+    pub fn waker(&self, id: &str) -> Arc<tokio::sync::Notify> {
+        self.wakers.lock().unwrap().entry(id.into()).or_default().clone()
+    }
+
     pub async fn message(&self, id: &str, text: &str) -> Result<(), String> {
         let t = self.task(id).await?;
+        if let Some(w) = self.wakers.lock().unwrap().get(id) {
+            w.notify_waiters();
+        }
         // Not started yet: it reads it with its prompt.
         if t.state == "queued" {
             self.store.set_prompt(id, &format!("{}\n\n[a message that came while it was queued] {text}", t.prompt.trim_end())).await.map_err(|e| e.to_string())?;

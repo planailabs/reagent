@@ -66,6 +66,43 @@ pub struct JobWait {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct Sleep {
+    /// How long: 90s, 10m, 2h, 1d (or a number of seconds).
+    pub duration: Option<String>,
+    /// Or until when: HH:MM (the next one, in the machine's time zone) or an RFC 3339 time (2026-10-09T15:00:00+02:00).
+    pub until: Option<String>,
+}
+
+/// The longest sleep.
+const SLEEP_MAX: i64 = 7 * 86_400;
+
+/// Seconds to sleep for a duration or until a time, from `now`.
+pub fn sleep_secs(duration: Option<&str>, until: Option<&str>, now: chrono::DateTime<chrono::Local>) -> Result<i64, String> {
+    let secs = match (duration, until) {
+        (Some(d), None) => crate::triggers::parse_every(d)?,
+        (None, Some(u)) => {
+            let u = u.trim();
+            let at = if let Ok(t) = chrono::NaiveTime::parse_from_str(u, "%H:%M") {
+                let today = now.date_naive().and_time(t).and_local_timezone(chrono::Local).earliest().ok_or_else(|| format!("{u} doesn't exist today here"))?;
+                if today > now { today } else { today + chrono::Duration::days(1) }
+            } else {
+                chrono::DateTime::parse_from_rfc3339(u).map_err(|_| format!("{u:?}: HH:MM or an RFC 3339 time"))?.with_timezone(&chrono::Local)
+            };
+            let s = (at - now).num_seconds();
+            if s <= 0 {
+                return Err(format!("{u} has passed"));
+            }
+            s
+        }
+        _ => return Err("duration or until (one of them)".into()),
+    };
+    if !(1..=SLEEP_MAX).contains(&secs) {
+        return Err(format!("{secs}s: between 1s and 7 days"));
+    }
+    Ok(secs)
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct JobInput {
     pub job: String,
     pub text: String,
@@ -270,6 +307,21 @@ impl ShellTools {
         Ok(format!("{} ended: exit {:?}, signal {:?}\nlast lines:\n{}", a.job, m.exit, m.signal, sup::tail(&self.0.paths.data, &a.job, 40)))
     }
 
+    #[tool(description = "Sleep for a while (duration: 10m, 2h) or until a time (until: 15:30, or RFC 3339), at most 7 days: to wait for something outside before looking again. A message to you (from the person, a subtask, a job that ended) wakes you early. To wait for your own job, shell.job_wait is better.")]
+    async fn sleep(&self, Parameters(a): Parameters<Sleep>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        let secs = sleep_secs(a.duration.as_deref(), a.until.as_deref(), chrono::Local::now())?;
+        let waker = self.0.waker(&t.id);
+        let woken = waker.notified();
+        tokio::pin!(woken);
+        woken.as_mut().enable();
+        let start = std::time::Instant::now();
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(secs as u64)) => Ok(format!("slept {secs}s")),
+            _ = woken => Ok(format!("woken by a message after {}s (of {secs}s)", start.elapsed().as_secs())),
+        }
+    }
+
     #[tool(description = "Write to a running job's stdin.")]
     async fn job_input(&self, Parameters(a): Parameters<JobInput>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, _) = caller(&self.0, &ctx).await?;
@@ -348,5 +400,25 @@ impl PtyTools {
         let (t, _) = caller(&self.0, &ctx).await?;
         let v = self.0.sup.ptys(Some(&t.id)).await?;
         Ok(if v.is_empty() { "no terminals".into() } else { v.iter().map(|p| format!("{}  {}  {}", p.id, p.cmd.as_deref().unwrap_or("shell"), if p.alive { "running" } else { "ended" })).collect::<Vec<_>>().join("\n") })
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::sleep_secs;
+    use chrono::TimeZone;
+
+    #[test]
+    fn a_sleep_is_a_duration_or_until_a_time() {
+        let now = chrono::Local.with_ymd_and_hms(2026, 10, 9, 14, 0, 0).unwrap();
+        assert_eq!(sleep_secs(Some("10m"), None, now), Ok(600));
+        assert_eq!(sleep_secs(None, Some("15:30"), now), Ok(5400));
+        assert_eq!(sleep_secs(None, Some("13:00"), now), Ok(23 * 3600), "the next one: tomorrow");
+        let at = (now + chrono::Duration::hours(2)).to_rfc3339();
+        assert_eq!(sleep_secs(None, Some(&at), now), Ok(7200));
+        assert!(sleep_secs(None, Some("2020-01-01T00:00:00Z"), now).unwrap_err().contains("passed"));
+        assert!(sleep_secs(Some("8d"), None, now).is_err(), "at most 7 days");
+        assert!(sleep_secs(None, None, now).is_err() && sleep_secs(Some("1m"), Some("15:00"), now).is_err(), "one of them");
+        assert!(sleep_secs(Some("soon"), None, now).is_err());
     }
 }
