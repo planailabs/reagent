@@ -74,6 +74,9 @@ pub struct StartTask {
     /// A kind from reagent.hcl (its profile, its escalation).
     #[serde(default)]
     pub kind: Option<String>,
+    /// Limits (`tokens`, `cost`, `minutes`) it starts without, the project's too.
+    #[serde(default)]
+    pub unlimited: Vec<String>,
 }
 
 pub struct App {
@@ -525,9 +528,10 @@ impl App {
             }
         }
         let mut budget = req.budget.clone().unwrap_or_default();
-        budget.tokens = budget.tokens.or(p.budget.tokens);
-        budget.cost = budget.cost.or(p.budget.cost);
-        budget.minutes = budget.minutes.or(p.budget.minutes);
+        let free = |k: &str| req.unlimited.iter().any(|u| u == k);
+        budget.tokens = if free("tokens") { None } else { budget.tokens.or(p.budget.tokens) };
+        budget.cost = if free("cost") { None } else { budget.cost.or(p.budget.cost) };
+        budget.minutes = if free("minutes") { None } else { budget.minutes.or(p.budget.minutes) };
         let skills = self.skills_for(Path::new(&p.path), &p);
         for name in &req.skills {
             skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;

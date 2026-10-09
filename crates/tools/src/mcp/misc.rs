@@ -362,6 +362,7 @@ impl TaskTools {
                 parent: Some(t.id.clone()),
                 origin: Some(format!("task:{}", t.id)),
                 kind: a.kind,
+                unlimited: vec![],
             })
             .await?;
         Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.name()))

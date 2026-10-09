@@ -10,6 +10,7 @@ import McpServers from "./McpServers.vue";
 import Secrets from "./Secrets.vue";
 import Triggers from "./Triggers.vue";
 import Designer from "./Designer.vue";
+import SkillPicker from "./SkillPicker.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -135,10 +136,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         <label>cost <input v-model="start.cost" size="6" inputmode="decimal" aria-label="cost budget" /></label>
         <label>minutes <input v-model="start.minutes" size="5" inputmode="numeric" aria-label="time budget" /></label>
       </div>
-      <div v-if="skills.length" class="row">
-        skills to load:
-        <label v-for="s in skills" :key="s.name" :title="s.description"><input v-model="start.skills" type="checkbox" :value="s.name" /> {{ s.name }}</label>
-      </div>
+      <SkillPicker v-if="skills.length" v-model="start.skills" :skills="skills" />
       <button type="submit">start</button>
     </form>
 

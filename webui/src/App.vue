@@ -8,11 +8,12 @@ import Projects from "./components/Projects.vue";
 import Project from "./components/Project.vue";
 import Task from "./components/Task.vue";
 import Search from "./components/Search.vue";
+import QuickPrompt from "./components/QuickPrompt.vue";
 import Settings from "./components/Settings.vue";
 import Mcp from "./components/Mcp.vue";
 import Docs from "./components/Docs.vue";
 
-// Hash routes: #/inbox, #/projects, #/project/<slug>, #/task/<id>, #/search, #/settings.
+// Hash routes: #/inbox, #/quick, #/projects, #/project/<slug>, #/task/<id>, #/search, #/settings.
 const route = ref(location.hash.slice(1) || "/inbox");
 const onHash = () => (route.value = location.hash.slice(1) || "/inbox");
 const parts = computed(() => route.value.split("/").filter(Boolean));
@@ -93,6 +94,7 @@ onUnmounted(() => {
     <header>
       <span class="brand">reagent</span>
       <a href="#/inbox" :class="{ on: page === 'inbox' }">inbox<span v-if="live.waiting" class="badge">{{ live.waiting }}</span></a>
+      <a href="#/quick" :class="{ on: page === 'quick' }">quick prompt</a>
       <a href="#/projects" :class="{ on: page === 'projects' || page === 'project' }">projects</a>
       <a href="#/search" :class="{ on: page === 'search' }">search</a>
       <a href="#/mcp" :class="{ on: page === 'mcp' }">mcp</a>
@@ -103,6 +105,7 @@ onUnmounted(() => {
     </header>
     <main>
       <Inbox v-if="page === 'inbox'" />
+      <QuickPrompt v-else-if="page === 'quick'" />
       <Projects v-else-if="page === 'projects'" />
       <Project v-else-if="page === 'project'" :slug="arg" :tab="parts[2] || 'tasks'" />
       <Task v-else-if="page === 'task'" :id="arg" />

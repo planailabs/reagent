@@ -214,7 +214,7 @@ impl ReagentTools {
     #[tool(description = "Start a task in a project: it works on its own; task_get or task_wait follow it.")]
     async fn task_start(&self, Parameters(a): Parameters<Start>) -> Result<String, String> {
         let budget: Option<Budget> = a.budget.map(serde_json::from_value).transpose().map_err(|e| format!("budget: {e}"))?;
-        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind }).await?;
+        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind, unlimited: vec![] }).await?;
         j(json!({"task": t.id, "state": t.state}))
     }
 

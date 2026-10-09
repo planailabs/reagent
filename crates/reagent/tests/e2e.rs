@@ -439,3 +439,16 @@ async fn a_task_without_a_title_names_itself() {
     let n = r.run.app.store.notifications(10).await.unwrap();
     assert!(n.iter().any(|n| n.title == "Greet the world — done"), "{n:?}");
 }
+
+#[tokio::test]
+async fn unlimited_leaves_the_projects_limits_off() {
+    let r = start().await;
+    let mut p = r.run.app.project("site").await.unwrap();
+    p.budget.0.cost = Some(5.0);
+    p.budget.0.tokens = Some(1000);
+    r.run.app.put_project(p).await.unwrap();
+    r.push("Free", |_| text("ok"));
+    let t = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), title: "Free".into(), prompt: "x".into(), unlimited: vec!["cost".into()], ..Default::default() }).await.unwrap();
+    assert_eq!((t.budget.0.cost, t.budget.0.tokens), (None, Some(1000)), "cost unlimited, tokens the project's");
+    r.done(&t.id).await;
+}

@@ -786,7 +786,7 @@ async fn start(app: &App, t: &Trigger, p: &Project, e: &Event, ctx: &Value) -> R
     }
     let title = render(e.title.as_deref().unwrap_or(&t.title), ctx);
     let task = app
-        .start_task(StartTask { project: p.slug.clone(), title, prompt, profile: o.profile.clone(), budget: o.budget.clone(), skills: o.skills.clone(), parent: None, origin: Some(origin(t)), kind: o.kind.clone() })
+        .start_task(StartTask { project: p.slug.clone(), title, prompt, profile: o.profile.clone(), budget: o.budget.clone(), skills: o.skills.clone(), parent: None, origin: Some(origin(t)), kind: o.kind.clone(), unlimited: vec![] })
         .await?;
     let (id, key) = (task.id.clone(), e.key.clone().unwrap_or_default());
     update(app, &p.slug, &t.name, |s| {

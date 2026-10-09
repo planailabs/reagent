@@ -142,6 +142,28 @@ test("a task started without a title names itself", async ({ page }) => {
   await expect(page.locator(".reports")).toContainText("named");
 });
 
+test("a quick prompt picks the project, limits from presets, typed or unlimited, and skills by search", async ({ page }) => {
+  await page.goto("/#/quick");
+  await page.getByLabel("project").selectOption("site");
+  await page.getByLabel("what to do").fill("say hi quickly");
+  await expect(page.getByLabel("tokens limit").getByRole("button", { name: /project default/ })).toHaveClass(/on/);
+  await page.getByLabel("tokens limit").getByRole("button", { name: "1M" }).click();
+  await page.getByLabel("cost limit").getByRole("button", { name: "unlimited" }).click();
+  await page.getByLabel("other minutes limit").fill("30");
+  await page.getByLabel("search skills").fill("subtask");
+  await page.getByLabel("search skills").press("Enter");
+  await expect(page.getByRole("button", { name: "drop skill reagent-subtasks" })).toBeVisible();
+  await page.getByRole("button", { name: "start" }).click();
+  await expect(page.getByRole("heading", { name: "Named by itself" })).toBeVisible();
+  const id = page.url().split("/task/")[1];
+  const t = await (await page.request.get(`/api/tasks/${id}`)).json();
+  expect(t.budget).toEqual({ tokens: 1000000, minutes: 30 });
+  expect(t.skills).toEqual(["reagent-subtasks"]);
+  // The choices are remembered for the next one.
+  await page.goto("/#/quick");
+  await expect(page.getByLabel("tokens limit").getByRole("button", { name: "1M" })).toHaveClass(/on/);
+});
+
 test("reports are kept, each folds and so do they all", async ({ page }) => {
   await startTask(page, "Report twice");
   await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");
