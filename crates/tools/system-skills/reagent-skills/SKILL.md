@@ -38,3 +38,18 @@ from; the web UI's docs page shows the system ones.
 
 A good skill is specific and ordered (steps that can be followed), says how to
 check the result, and names its files by relative path.
+
+## Rules
+
+Rules are standing instructions, not procedures: markdown files in
+`.agents/rules/` (or `.agent/rules/`), `*.md` or Cursor's `*.mdc`, subfolders
+too, in the worktree and the project folder (the worktree's wins on a name).
+Optional frontmatter says when one applies:
+
+- no frontmatter, or `alwaysApply: true`: always in the task's context;
+- `globs` (`src/**/*.rs, *.toml`, or a list): shown once the task's file tools
+  touch a matching file (paths relative to the project);
+- only a `description`: listed with its path, for the task to read when it fits.
+
+Use a rule for "how we do things here" (style, conventions, don'ts) and a
+skill for a job's steps.

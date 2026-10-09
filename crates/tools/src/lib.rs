@@ -6,6 +6,7 @@ pub mod edit;
 pub mod git;
 pub mod memory;
 pub mod policy;
+pub mod rules;
 pub mod skills;
 pub mod app;
 pub mod cluster;

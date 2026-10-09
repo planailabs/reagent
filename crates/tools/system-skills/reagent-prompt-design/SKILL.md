@@ -47,7 +47,7 @@ The person edits the items, ticks the ones they want, and creates them.
 ## What a clear task prompt has
 
 A task starts from nothing but its prompt (and the project's AGENTS.md,
-memory index and skills, which it's shown).
+rules, memory index and skills, which it's shown).
 
 1. **The goal** in one or two sentences, and **why** (what it's for).
 2. **Where**: the files, folders, branch, services or URLs involved.

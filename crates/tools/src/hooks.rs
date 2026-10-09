@@ -59,8 +59,8 @@ fn hash(s: &str) -> u64 {
     h.finish()
 }
 
-/// What a task should have in view: the memory indexes, `AGENTS.md`, its
-/// skills (by kind, so only what changed is shown again).
+/// What a task should have in view: the memory indexes, `AGENTS.md`, the
+/// rules that apply (`.agents/rules`), its skills (by kind, so only what changed is shown again).
 pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String, String)> {
     let mut parts = vec![];
     let Ok(p) = app.project(&task.project).await else { return parts };
@@ -72,6 +72,21 @@ pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String
             parts.push(("agents".into(), format!("The project's AGENTS.md ({}):\n\n{}", dir.join("AGENTS.md").display(), text.chars().take(20_000).collect::<String>())));
             break;
         }
+    }
+    // Rules (.agents/rules): each that applies on its own, those to read when they fit listed.
+    let rules = crate::rules::discover(Path::new(&task.cwd), Path::new(&p.path));
+    let touched = app.touched.lock().unwrap().get(&task.id).cloned().unwrap_or_default();
+    let mut described = vec![];
+    for r in &rules {
+        if r.always || crate::rules::matches(r, &touched, Path::new(&task.cwd), Path::new(&p.path)) {
+            let when = if r.always { String::new() } else { format!(", for {}", r.globs.join(", ")) };
+            parts.push((format!("rule:{}", r.name), format!("Rule {} ({}{when}):\n\n{}", r.name, r.path.display(), r.body.chars().take(20_000).collect::<String>())));
+        } else if let Some(d) = &r.description {
+            described.push(format!("- {} ({}) — {d}", r.name, r.path.display()));
+        }
+    }
+    if !described.is_empty() {
+        parts.push(("rules".into(), format!("The project's rules to read (fs.read) when they fit:\n{}", described.join("\n"))));
     }
     // The secrets its commands get (names only).
     if let Ok(s) = app.store.secrets_for(&p.slug).await
@@ -117,6 +132,16 @@ impl HookTools {
         if t.origin == "design" && !crate::design::design_task_may(&tool) {
             return Ok(json!({"decision": "deny", "reason": format!("a design task only reads and asks: {tool} isn't for it")}).to_string());
         }
+        // The files it works on, for rules with globs.
+        if tool.starts_with("fs.")
+            && let Some(path) = args["path"].as_str()
+        {
+            let mut touched = self.0.touched.lock().unwrap();
+            let seen = touched.entry(t.id.clone()).or_default();
+            if !seen.iter().any(|s| s == path) {
+                seen.push(path.to_string());
+            }
+        }
         // A subtask without a project is in this one.
         let target = target_of(&tool, args).or((tool == "tasks.task_spawn").then_some(p.slug.as_str()));
         let d = policy::decide(&rules, default, &Call { tool: &tool, command: command_of(&tool, args), target });
@@ -147,7 +172,7 @@ impl HookTools {
         Ok(if masked == result { json!({"decision": "allow"}) } else { json!({"decision": "rewrite", "text": masked}) }.to_string())
     }
 
-    #[tool(description = "pre_model: the memory indexes, AGENTS.md and the skills list, when they're new to the task.")]
+    #[tool(description = "pre_model: the memory indexes, AGENTS.md, the rules that apply and the skills list, when they're new to the task.")]
     async fn context(&self, Parameters(q): Parameters<Question>) -> Result<String, String> {
         let Ok(t) = self.0.task_of_agent(&q.agent.id).await else {
             return Ok(json!({"decision": "allow"}).to_string());

@@ -82,6 +82,8 @@ pub struct App {
     pub fg_waiting: Mutex<HashSet<String>>,
     /// What each task was last shown of its context (hashes by kind).
     pub shown: Mutex<HashMap<String, HashMap<String, u64>>>,
+    /// The files each task's file tools touched (for rules with globs).
+    pub touched: Mutex<HashMap<String, Vec<String>>>,
     /// Tasks already told about (approval asked, budget hit): not again.
     notified: Mutex<HashSet<(String, String)>>,
     pub notifier: crate::notify::Notifier,
@@ -131,6 +133,7 @@ impl App {
             merges: Default::default(),
             fg_waiting: Default::default(),
             shown: Default::default(),
+            touched: Default::default(),
             notified: Default::default(),
             notifier,
             mcp_base: OnceLock::new(),

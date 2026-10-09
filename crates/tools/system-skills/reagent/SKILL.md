@@ -26,7 +26,8 @@ are summarised as they go.
 - **Memory**: markdown notes, global and per project, that every task is
   shown an index of (`reagent-memory`).
 - **Skills**: instructions for recurring jobs, in `.agents/skills/` folders,
-  globally, and these system skills (`reagent-skills`).
+  globally, and these system skills; **rules** in `.agents/rules/`: standing
+  instructions, always or for the files touched (`reagent-skills`).
 - **Cron and triggers**: tasks started on a schedule, or when a script sees
   something happen (CI failing, say) (`reagent-cron-and-triggers`).
 - **Secrets**: tokens and keys the person (or a task) keeps; commands get

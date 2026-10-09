@@ -363,3 +363,28 @@ async fn a_task_sleeps_and_a_message_wakes_it() {
 fn tool_names(body: &serde_json::Value) -> Vec<String> {
     body["tools"].as_array().map(|t| t.iter().map(|t| t["function"]["name"].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
 }
+
+#[tokio::test]
+async fn rules_come_into_view_always_by_the_files_touched_or_listed() {
+    let r = start().await;
+    let rules = r.project.path().join(".agents/rules");
+    std::fs::create_dir_all(rules.join("lang")).unwrap();
+    std::fs::write(rules.join("tone.md"), "Write plainly.").unwrap();
+    std::fs::write(rules.join("lang/txt.mdc"), "---\nglobs: \"*.txt\"\n---\nText files end with a newline.").unwrap();
+    std::fs::write(rules.join("release.md"), "---\ndescription: How we release\n---\nTag it.").unwrap();
+    r.push("Ruled", |b| {
+        let all = all_text(b);
+        assert!(all.contains("Write plainly.") && !all.contains("end with a newline"), "{all}");
+        assert!(all.contains("rules to read") && all.contains("release (") && !all.contains("Tag it."), "{all}");
+        call("c1", "fs.read", json!({"path": "a.txt"}))
+    });
+    r.push("Ruled", |b| {
+        let all = all_text(b);
+        assert!(all.contains("Rule lang/txt") && all.contains("Text files end with a newline."), "touched a.txt: {all}");
+        assert_eq!(all.matches("Write plainly.").count(), 1, "shown once");
+        text("read")
+    });
+    r.allow_all().await;
+    let t = r.start_task("Ruled", "read a.txt").await;
+    r.done(&t.id).await;
+}
