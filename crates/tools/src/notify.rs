@@ -39,9 +39,23 @@ pub async fn vapid_public(store: &reagent_store::Store) -> Result<String, String
     Ok(b64url().encode(pk.to_encoded_point(false).as_bytes()))
 }
 
-/// Sends with the apprise CLI; what it said when it failed.
+/// Sends with the apprise CLI; what it said when it failed. A first
+/// connection now and then fails (seen with Telegram): one more try.
 pub async fn apprise(urls: &[String], title: &str, body: &str) -> Result<(), String> {
+    match apprise_once(urls, title, body).await {
+        Err(e) if !e.starts_with("apprise can't run") => {
+            tracing::warn!(error = %e, "apprise failed, trying once more");
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            apprise_once(urls, title, body).await
+        }
+        r => r,
+    }
+}
+
+async fn apprise_once(urls: &[String], title: &str, body: &str) -> Result<(), String> {
+    // -v: its warnings say why a send failed (they name the service, not the URL).
     let o = tokio::process::Command::new("apprise")
+        .arg("-v")
         .arg("-i")
         .arg("markdown")
         .arg("-t")
