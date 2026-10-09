@@ -1177,6 +1177,8 @@ impl App {
                     let _ = self.message(&t.id, &n).await;
                 }
             }
+            // Sent once the wait is stored: its buttons check for it.
+            let mut approval_note = None;
             if !a["awaiting_approval"].is_null() {
                 let call = a["awaiting_approval"].get("call").cloned().unwrap_or(a["awaiting_approval"].clone());
                 let call_id = call["id"].as_str().unwrap_or_default().to_string();
@@ -1186,7 +1188,7 @@ impl App {
                 if self.notified.lock().unwrap().insert(key) {
                     let tool = call["function"]["name"].as_str().unwrap_or("").replace("__", ".");
                     let buttons = vec![("Allow once".to_string(), json!({"kind": "approve", "call_id": call_id})), ("Deny".to_string(), json!({"kind": "deny", "call_id": call_id}))];
-                    self.notify_actions("waiting", Some(&t), &format!("{} needs approval", t.title), &format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or("")), buttons).await;
+                    approval_note = Some((format!("{} needs approval", t.title), format!("{tool} {}", call["function"]["arguments"].as_str().unwrap_or("")), buttons));
                 }
             } else if a["paused"] == true {
                 // Paused while it waits for the person (a stop, say): it still waits.
@@ -1217,6 +1219,9 @@ impl App {
             if state != t.state || wait != t.wait.as_ref().map(|w| w.0.clone()) {
                 let _ = self.store.set_state(&t.id, &state, wait.as_ref()).await;
                 self.task_changed(&t.id).await;
+            }
+            if let Some((title, body, buttons)) = approval_note {
+                self.notify_actions("waiting", Some(&t), &title, &body, buttons).await;
             }
         }
         Ok(())
