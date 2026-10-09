@@ -95,6 +95,17 @@ async fn cron_settings_sessions_and_notifications() {
     let n = s.add_notification("done", None, "Fix", "fixed").await.unwrap();
     s.mark_seen(n).await.unwrap();
     assert!(s.notifications(10).await.unwrap()[0].seen);
+    // apprise channels: the URL kept encrypted, names unique.
+    let tg = s.add_notify_channel("telegram", "tgram://bot:token/123", None).await.unwrap();
+    s.add_notify_channel("ntfy", "ntfys://topic", Some(&["failed".to_string()])).await.unwrap();
+    assert!(s.add_notify_channel("telegram", "tgram://x/1", None).await.unwrap_err().contains("already"));
+    assert!(s.add_notify_channel("bad", "no-scheme", None).await.is_err());
+    let raw: Vec<u8> = sqlx::query_scalar("select url from notify_channels where id = $1").bind(tg).fetch_one(&s.pool).await.unwrap();
+    assert!(!String::from_utf8_lossy(&raw).contains("token"), "encrypted");
+    assert!(s.set_notify_channel_enabled(tg, false).await.unwrap());
+    let c = s.notify_channels().await.unwrap();
+    assert_eq!(c.iter().map(|c| (c.name.as_str(), c.url.as_str(), c.enabled, c.events.clone())).collect::<Vec<_>>(), [("ntfy", "ntfys://topic", true, Some(vec!["failed".to_string()])), ("telegram", "tgram://bot:token/123", false, None)]);
+    assert!(s.remove_notify_channel(tg).await.unwrap() && !s.remove_notify_channel(tg).await.unwrap());
     let a = s.add_notification("done", None, "A", "").await.unwrap();
     s.add_notification("done", None, "B", "").await.unwrap();
     s.mark_one_seen(a).await.unwrap();

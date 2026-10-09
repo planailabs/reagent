@@ -60,6 +60,9 @@ pub fn routes() -> Router<S> {
         .route("/api/inbox", get(inbox))
         .route("/api/notifications", get(notifications))
         .route("/api/notifications/seen", post(seen))
+        .route("/api/notify/channels", get(channels).post(add_channel))
+        .route("/api/notify/channels/{id}", put(set_channel).delete(remove_channel))
+        .route("/api/notify/channels/{id}/test", post(test_channel))
         .route("/api/push/key", get(push_key))
         .route("/api/push/subscribe", post(push_subscribe))
         .route("/api/push/unsubscribe", post(push_unsubscribe))
@@ -279,6 +282,61 @@ async fn seen(State(s): State<S>, Json(u): Json<Upto>) -> R {
         _ => return Err(E(StatusCode::BAD_REQUEST, "upto or id".into())),
     }
     Ok(Json(json!({"ok": true})))
+}
+
+/// An apprise URL shown without its token: the scheme and its end.
+fn masked(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let tail: String = rest.chars().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{scheme}://…{tail}")
+}
+
+/// The person's apprise channels (URLs masked), and reagent.hcl's (how many).
+async fn channels(State(s): State<S>) -> R {
+    let c = s.w.app.store.notify_channels().await?;
+    Ok(Json(json!({
+        "channels": c.iter().map(|c| json!({"id": c.id, "name": c.name, "url": masked(&c.url), "events": c.events, "enabled": c.enabled})).collect::<Vec<_>>(),
+        "config_urls": s.w.app.config.notify.apprise_urls().len(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct AddChannel {
+    name: String,
+    url: String,
+    /// None or empty: every kind.
+    events: Option<Vec<String>>,
+}
+
+async fn add_channel(State(s): State<S>, Json(b): Json<AddChannel>) -> R {
+    let events: Option<Vec<String>> = b.events.map(|e| e.into_iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect()).filter(|e: &Vec<String>| !e.is_empty());
+    let id = s.w.app.store.add_notify_channel(&b.name, &b.url, events.as_deref()).await.map_err(|e| E(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!({"id": id})))
+}
+
+#[derive(Deserialize)]
+struct SetChannel {
+    enabled: bool,
+}
+
+async fn set_channel(State(s): State<S>, Path(id): Path<i64>, Json(b): Json<SetChannel>) -> R {
+    if !db(s.w.app.store.set_notify_channel_enabled(id, b.enabled).await)? {
+        return Err(E(StatusCode::NOT_FOUND, format!("no channel {id}")));
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn remove_channel(State(s): State<S>, Path(id): Path<i64>) -> R {
+    Ok(Json(json!({"removed": db(s.w.app.store.remove_notify_channel(id).await)?})))
+}
+
+/// Sends a test through one channel and says what apprise said.
+async fn test_channel(State(s): State<S>, Path(id): Path<i64>) -> R {
+    let c = s.w.app.store.notify_channels().await?.into_iter().find(|c| c.id == id).ok_or_else(|| E(StatusCode::NOT_FOUND, format!("no channel {id}")))?;
+    match reagent_tools::notify::apprise(std::slice::from_ref(&c.url), "reagent", &format!("A test from reagent through the channel **{}**.", c.name)).await {
+        Ok(()) => Ok(Json(json!({"ok": true}))),
+        Err(e) => Ok(Json(json!({"ok": false, "error": e}))),
+    }
 }
 
 async fn push_key(State(s): State<S>) -> R {

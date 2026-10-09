@@ -25,7 +25,8 @@ description: How people and other agents use reagent - the web UI (inbox, projec
 When a task is done, fails, waits for you, goes over budget, changes model,
 or a trigger needs you: in the inbox, as browser push notifications (with
 buttons: allow once, deny, an answer, merge) and through apprise (Slack,
-email, ntfy, … as `reagent.hcl` says).
+email, ntfy, Telegram, …: the channels on the settings page, each with the
+kinds it gets; `reagent.hcl`'s notify block can add URLs too).
 
 ## CLI
 

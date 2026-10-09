@@ -1,6 +1,7 @@
 //! Telling the person: Web Push to the browsers that subscribed (VAPID keys
-//! made once, kept in the settings) and the apprise CLI with the URLs from
-//! reagent.hcl. apprise is Python, CLI only: it's run, not linked.
+//! made once, kept in the settings) and the apprise CLI with the person's
+//! channels (in reagent.db, each with the kinds it gets) and reagent.hcl's
+//! URLs. apprise is Python, CLI only: it's run, not linked.
 
 use base64::Engine;
 use serde_json::json;
@@ -38,36 +39,60 @@ pub async fn vapid_public(store: &reagent_store::Store) -> Result<String, String
     Ok(b64url().encode(pk.to_encoded_point(false).as_bytes()))
 }
 
+/// Sends with the apprise CLI; what it said when it failed.
+pub async fn apprise(urls: &[String], title: &str, body: &str) -> Result<(), String> {
+    let o = tokio::process::Command::new("apprise")
+        .arg("-i")
+        .arg("markdown")
+        .arg("-t")
+        .arg(title)
+        .arg("-b")
+        .arg(body)
+        .args(urls)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("apprise can't run (is it installed?): {e}"))?;
+    if o.status.success() {
+        return Ok(());
+    }
+    // Its warnings name the service, never the URL; stdout too (a failed send is a warning there).
+    let said = format!("{}\n{}", String::from_utf8_lossy(&o.stderr).trim(), String::from_utf8_lossy(&o.stdout).trim());
+    Err(if said.trim().is_empty() { "apprise failed".into() } else { said.trim().into() })
+}
+
 impl Notifier {
     pub fn new(cfg: Notify) -> Self {
         Notifier { cfg, http: reqwest::Client::new() }
     }
 
     /// `actions`: the buttons, `{title, token}` (Web Push shows them; apprise gets the link).
+    /// reagent.hcl's `events` choose for its URLs and Web Push; a channel's own for it.
     pub async fn send(&self, app: &App, kind: &str, task: Option<&str>, title: &str, body: &str, actions: &[serde_json::Value]) {
-        if !self.cfg.wants(kind) {
-            return;
+        let mut urls = if self.cfg.wants(kind) { self.cfg.apprise_urls() } else { vec![] };
+        match app.store.notify_channels().await {
+            Ok(c) => urls.extend(c.into_iter().filter(|c| c.enabled && c.events.as_ref().is_none_or(|e| e.iter().any(|k| k == kind))).map(|c| c.url)),
+            Err(e) => tracing::warn!(error = %e, "notification channels can't be read"),
         }
         let link = match (&self.cfg.url, task) {
             (Some(u), Some(t)) => Some(format!("{}/#/task/{t}", u.trim_end_matches('/'))),
             (Some(u), None) => Some(u.clone()),
             _ => None,
         };
-        let urls = self.cfg.apprise_urls();
         if !urls.is_empty() {
             let text = match &link {
                 Some(l) => format!("{body}\n\n{l}"),
                 None => body.to_string(),
             };
-            let mut cmd = tokio::process::Command::new("apprise");
-            cmd.arg("-i").arg("markdown").arg("-t").arg(title).arg("-b").arg(text).args(&urls).stdin(std::process::Stdio::null());
+            let title = title.to_string();
             tokio::spawn(async move {
-                match cmd.output().await {
-                    Ok(o) if o.status.success() => {}
-                    Ok(o) => tracing::warn!(error = %String::from_utf8_lossy(&o.stderr).trim(), "apprise failed"),
-                    Err(e) => tracing::warn!(error = %e, "apprise can't run (is it installed?)"),
+                if let Err(e) = apprise(&urls, &title, &text).await {
+                    tracing::warn!(error = %e, "apprise failed");
                 }
             });
+        }
+        if !self.cfg.wants(kind) {
+            return;
         }
         let subs = app.store.push_subscriptions().await.unwrap_or_default();
         if subs.is_empty() {

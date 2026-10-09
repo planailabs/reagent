@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { del, get, post, put } from "../lib/api.js";
 import Memory from "./Memory.vue";
 import Secrets from "./Secrets.vue";
+import NotifyChannels from "./NotifyChannels.vue";
 
 const config = ref(null);
 const push = ref("");
@@ -103,6 +104,8 @@ onMounted(() => {
       <button v-if="push === 'on'" @click="disablePush">turn off</button>
       <span class="dim">apprise: {{ config.notify.apprise ? "set up" : "not set up (reagent.hcl)" }}</span>
     </div>
+    <h2>notification channels <span class="dim">(apprise: Telegram, ntfy, mail, …)</span></h2>
+    <NotifyChannels />
     <h2>tasks at once</h2>
     <form class="row" @submit.prevent="saveLimits">
       <label>at most <input v-model="maxTasks" size="4" inputmode="numeric" placeholder="any" aria-label="tasks at once" /> tasks run at once</label>

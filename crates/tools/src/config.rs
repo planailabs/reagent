@@ -218,7 +218,7 @@ search_history = true
 # design_profile = "default"                   # the model the prompt designer asks
 
 notify {
-  apprise = []                                 # apprise URLs: tgram://…, ntfys://…, mailto://…
+  apprise = []                                 # more apprise URLs (tgram://…, ntfys://…), besides the channels on the settings page
   # apprise_env = "REAGENT_APPRISE"
   # url = "https://reagent.example.org"        # for links in notifications
 }

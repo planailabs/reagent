@@ -369,6 +369,24 @@ test("a design without a readable proposal is asked for it again", async ({ page
   await expect(p.getByLabel("item 1", { exact: true })).toContainText("task: Check it");
 });
 
+test("notification channels are added without showing their token, switched off and removed", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("channel name").fill("telegram");
+  await page.getByLabel("channel URL").fill("tgram://123:SECRETTOKEN/261988314");
+  await page.getByLabel("failed", { exact: true }).check();
+  await page.getByRole("button", { name: "add the channel" }).click();
+  const row = page.getByLabel("channel telegram");
+  await expect(row).toContainText("tgram://…988314");
+  await expect(row).toContainText("failed");
+  await expect(page.locator("body")).not.toContainText("SECRETTOKEN");
+  await row.getByLabel("telegram on").uncheck();
+  await page.reload();
+  await expect(page.getByLabel("telegram on")).not.toBeChecked();
+  page.once("dialog", (d) => d.accept());
+  await page.getByLabel("channel telegram").getByRole("button", { name: "remove" }).click();
+  await expect(page.getByLabel("channel telegram")).toHaveCount(0);
+});
+
 test("reagent's docs are readable", async ({ page }) => {
   await page.goto("/#/docs");
   await expect(page.locator("article")).toContainText("reagent runs coding agents");

@@ -409,6 +409,17 @@ pub struct Store {
     key: [u8; 32],
 }
 
+/// An apprise channel (its URL decrypted).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct NotifyChannel {
+    pub id: i64,
+    pub name: String,
+    pub url: String,
+    /// The kinds it gets; none: all.
+    pub events: Option<Vec<String>>,
+    pub enabled: bool,
+}
+
 /// A secret as the person sees it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Secret {
@@ -940,18 +951,30 @@ impl Store {
         chacha20poly1305::XChaCha20Poly1305::new((&self.key).into())
     }
 
-    /// Sets a secret (every project's, or one project's).
-    pub async fn set_secret(&self, project: Option<&str>, name: &str, value: &str) -> Result<(), String> {
+    /// A value encrypted: its nonce and the ciphertext.
+    fn seal(&self, value: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
         use chacha20poly1305::aead::{Aead, AeadCore, OsRng};
-        check_secret_name(name)?;
         let nonce = chacha20poly1305::XChaCha20Poly1305::generate_nonce(&mut OsRng);
         let enc = self.cipher().encrypt(&nonce, value.as_bytes()).map_err(|e| e.to_string())?;
+        Ok((nonce[..].to_vec(), enc))
+    }
+
+    fn unseal(&self, what: &str, nonce: &[u8], value: &[u8]) -> Result<String, String> {
+        use chacha20poly1305::aead::Aead;
+        let plain = self.cipher().decrypt(nonce.into(), value).map_err(|_| format!("{what}: can't be decrypted (another secret.key?)"))?;
+        Ok(String::from_utf8_lossy(&plain).into_owned())
+    }
+
+    /// Sets a secret (every project's, or one project's).
+    pub async fn set_secret(&self, project: Option<&str>, name: &str, value: &str) -> Result<(), String> {
+        check_secret_name(name)?;
+        let (nonce, enc) = self.seal(value)?;
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx::query("delete from secrets where coalesce(project, '') = coalesce($1, '') and name = $2").bind(project).bind(name).execute(&mut *tx).await.map_err(|e| e.to_string())?;
         sqlx::query("insert into secrets (project, name, nonce, value) values ($1, $2, $3, $4)")
             .bind(project)
             .bind(name)
-            .bind(nonce[..].to_vec())
+            .bind(nonce)
             .bind(enc)
             .execute(&mut *tx)
             .await
@@ -965,7 +988,6 @@ impl Store {
 
     /// The secrets of one scope: every project's (`None`) or one project's own.
     pub async fn secrets(&self, project: Option<&str>) -> Result<Vec<Secret>, String> {
-        use chacha20poly1305::aead::Aead;
         let rows: Vec<(Option<String>, String, Vec<u8>, Vec<u8>, i64)> = sqlx::query_as("select project, name, nonce, value, updated from secrets where coalesce(project, '') = coalesce($1, '') order by name")
             .bind(project)
             .fetch_all(&self.pool)
@@ -973,8 +995,8 @@ impl Store {
             .map_err(|e| e.to_string())?;
         rows.into_iter()
             .map(|(project, name, nonce, value, updated)| {
-                let plain = self.cipher().decrypt(nonce.as_slice().into(), value.as_slice()).map_err(|_| format!("{name}: can't be decrypted (another secret.key?)"))?;
-                Ok(Secret { name, value: String::from_utf8_lossy(&plain).into_owned(), project, updated })
+                let value = self.unseal(&name, &nonce, &value)?;
+                Ok(Secret { name, value, project, updated })
             })
             .collect()
     }
@@ -1067,6 +1089,40 @@ impl Store {
     /// Removes a slot; false when there was none.
     pub async fn remove_working_memory(&self, task: &str, key: &str) -> R<bool> {
         Ok(sqlx::query("delete from working_memory where task = $1 and key = $2").bind(task).bind(key).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    // --- apprise channels -------------------------------------------------
+
+    pub async fn notify_channels(&self) -> Result<Vec<NotifyChannel>, String> {
+        let rows: Vec<(i64, String, Vec<u8>, Vec<u8>, Option<Json<Vec<String>>>, bool)> =
+            sqlx::query_as("select id, name, nonce, url, events, enabled from notify_channels order by name").fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(|(id, name, nonce, url, events, enabled)| Ok(NotifyChannel { id, url: self.unseal(&name, &nonce, &url)?, name, events: events.map(|e| e.0), enabled }))
+            .collect()
+    }
+
+    /// Adds a channel; its id.
+    pub async fn add_notify_channel(&self, name: &str, url: &str, events: Option<&[String]>) -> Result<i64, String> {
+        if name.trim().is_empty() || !url.contains("://") {
+            return Err("a channel needs a name and an apprise URL (tgram://…, ntfys://…, mailto://…)".into());
+        }
+        let (nonce, enc) = self.seal(url.trim())?;
+        sqlx::query_scalar("insert into notify_channels (name, nonce, url, events) values ($1, $2, $3, $4) returning id")
+            .bind(name.trim())
+            .bind(nonce)
+            .bind(enc)
+            .bind(events.map(Json))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| if e.to_string().contains("UNIQUE") { format!("there's a channel {} already", name.trim()) } else { e.to_string() })
+    }
+
+    pub async fn set_notify_channel_enabled(&self, id: i64, enabled: bool) -> R<bool> {
+        Ok(sqlx::query("update notify_channels set enabled = $2 where id = $1").bind(id).bind(enabled).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    pub async fn remove_notify_channel(&self, id: i64) -> R<bool> {
+        Ok(sqlx::query("delete from notify_channels where id = $1").bind(id).execute(&self.pool).await?.rows_affected() > 0)
     }
 
     // --- notifications --------------------------------------------------
