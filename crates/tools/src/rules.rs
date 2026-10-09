@@ -69,17 +69,26 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Rule>) {
 }
 
 /// The rules a task sees: its working directory's (a worktree), then the
-/// project folder's, the nearer winning on a name.
-pub fn discover(cwd: &Path, project: &Path) -> Vec<Rule> {
-    let mut out: Vec<Rule> = vec![];
+/// project folder's, then the global rules folders' (`~/.agents/rules`,
+/// `<data>/rules`, plugins'), the nearer winning on a name.
+pub fn discover(cwd: &Path, project: &Path, global: &[PathBuf]) -> Vec<Rule> {
+    let mut places = vec![];
     for base in if cwd == project { vec![project] } else { vec![cwd, project] } {
-        for d in DIRS {
-            let mut found = vec![];
-            walk(&base.join(d), &base.join(d), &mut found);
-            for r in found {
-                if !out.iter().any(|o| o.name == r.name) {
-                    out.push(r);
-                }
+        places.extend(DIRS.iter().map(|d| base.join(d)));
+    }
+    places.extend(global.iter().cloned());
+    in_places(&places)
+}
+
+/// The rules in these rules folders, the first winning on a name.
+pub fn in_places(places: &[PathBuf]) -> Vec<Rule> {
+    let mut out: Vec<Rule> = vec![];
+    for place in places {
+        let mut found = vec![];
+        walk(place, place, &mut found);
+        for r in found {
+            if !out.iter().any(|o| o.name == r.name) {
+                out.push(r);
             }
         }
     }
@@ -123,9 +132,12 @@ mod tests {
         write(&proj, ".agent/rules/web.md", "---\nglobs: [\"webui/**\"]\nalwaysApply: true\n---\nVue 3.");
         write(&wt, ".agents/rules/style.md", "Use spaces.");
         write(&proj, ".agents/rules/notes.txt", "not a rule");
-        let rules = discover(&wt, &proj);
+        write(t.path(), "global/style.md", "Use anything.");
+        write(t.path(), "global/global-only.md", "From home.");
+        let rules = discover(&wt, &proj, &[t.path().join("global")]);
         let by = |n: &str| rules.iter().find(|r| r.name == n).unwrap();
-        assert_eq!(rules.len(), 4, "{rules:?}");
+        assert_eq!(rules.len(), 5, "{rules:?}");
+        assert_eq!(by("global-only").body, "From home.", "global ones come after, the project's win");
         assert_eq!((by("style").body.as_str(), by("style").always), ("Use spaces.", true), "the worktree's wins");
         let errors = by("rust/errors");
         assert_eq!((errors.globs.clone(), errors.always, errors.body.as_str()), (vec!["src/**/*.rs".to_string(), "*.toml".into()], false, "No unwrap."));

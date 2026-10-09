@@ -388,3 +388,30 @@ async fn rules_come_into_view_always_by_the_files_touched_or_listed() {
     let t = r.start_task("Ruled", "read a.txt").await;
     r.done(&t.id).await;
 }
+
+#[tokio::test]
+async fn a_plugins_skills_and_rules_reach_tasks() {
+    let r = start().await;
+    let src = r.data.path().join("plugin-src");
+    std::fs::create_dir_all(src.join("skill/greet")).unwrap();
+    std::fs::create_dir_all(src.join(".agents/rules")).unwrap();
+    std::fs::write(src.join("skill/greet/SKILL.md"), "---\nname: greet\ndescription: say hi nicely\n---\nHi.").unwrap();
+    std::fs::write(src.join(".agents/rules/tone.md"), "Keep it short.").unwrap();
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&src).args(args).status().unwrap().success());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "-A"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"]);
+    let p = r.run.app.plugin_add(&format!("file://{}", src.display()), Some("kit"), None).await.unwrap();
+    assert_eq!((p.skills.clone(), p.rules.clone()), (vec!["greet".to_string()], vec!["tone".to_string()]));
+    r.push("Plugged", |b| {
+        let all = all_text(b);
+        assert!(all.contains("greet — say hi nicely") && all.contains("Keep it short."), "{all}");
+        text("ok")
+    });
+    let t = r.start_task("Plugged", "x").await;
+    r.done(&t.id).await;
+    let up = r.run.app.plugin_update(None).await.unwrap();
+    assert_eq!((up[0]["ok"].as_bool(), up[0]["changed"].as_bool()), (Some(true), Some(false)), "{up:?}");
+    r.run.app.plugin_remove("kit").await.unwrap();
+    assert!(r.run.app.plugins().is_empty());
+}

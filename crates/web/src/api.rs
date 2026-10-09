@@ -60,6 +60,10 @@ pub fn routes() -> Router<S> {
         .route("/api/inbox", get(inbox))
         .route("/api/notifications", get(notifications))
         .route("/api/notifications/seen", post(seen))
+        .route("/api/plugins", get(plugins).post(add_plugin))
+        .route("/api/plugins/update", post(update_plugins))
+        .route("/api/plugins/{id}", delete(remove_plugin))
+        .route("/api/plugins/{id}/update", post(update_plugin))
         .route("/api/notify/channels", get(channels).post(add_channel))
         .route("/api/notify/channels/{id}", put(set_channel).delete(remove_channel))
         .route("/api/notify/channels/{id}/test", post(test_channel))
@@ -70,6 +74,7 @@ pub fn routes() -> Router<S> {
         .route("/api/projects/{slug}", put(put_project).delete(remove_project).get(project))
         .route("/api/projects/{slug}/rules", get(rules).put(set_rules))
         .route("/api/projects/{slug}/skills", get(skills))
+        .route("/api/projects/{slug}/agent-rules", get(project_rules))
         .route("/api/projects/{slug}/cron", get(crons))
         .route("/api/projects/{slug}/triggers", get(triggers))
         .route("/api/triggers/{project}/{name}", put(put_trigger).delete(remove_trigger))
@@ -330,6 +335,35 @@ async fn remove_channel(State(s): State<S>, Path(id): Path<i64>) -> R {
     Ok(Json(json!({"removed": db(s.w.app.store.remove_notify_channel(id).await)?})))
 }
 
+async fn plugins(State(s): State<S>) -> R {
+    Ok(Json(json!(s.w.app.plugins())))
+}
+
+#[derive(Deserialize)]
+struct AddPlugin {
+    url: String,
+    id: Option<String>,
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+}
+
+async fn add_plugin(State(s): State<S>, Json(b): Json<AddPlugin>) -> R {
+    Ok(Json(json!(s.w.app.plugin_add(&b.url, b.id.as_deref(), b.reference.as_deref()).await?)))
+}
+
+async fn update_plugins(State(s): State<S>) -> R {
+    Ok(Json(json!(s.w.app.plugin_update(None).await?)))
+}
+
+async fn update_plugin(State(s): State<S>, Path(id): Path<String>) -> R {
+    Ok(Json(json!(s.w.app.plugin_update(Some(&id)).await?[0])))
+}
+
+async fn remove_plugin(State(s): State<S>, Path(id): Path<String>) -> R {
+    s.w.app.plugin_remove(&id).await?;
+    Ok(Json(json!({"removed": true})))
+}
+
 /// Sends a test through one channel and says what apprise said.
 async fn test_channel(State(s): State<S>, Path(id): Path<i64>) -> R {
     let c = s.w.app.store.notify_channels().await?.into_iter().find(|c| c.id == id).ok_or_else(|| E(StatusCode::NOT_FOUND, format!("no channel {id}")))?;
@@ -406,6 +440,22 @@ async fn set_rules(State(s): State<S>, Path(slug): Path<String>, Json(rules): Js
     }
     db(s.w.app.store.set_rules(&slug, &rules).await)?;
     Ok(Json(json!(db(s.w.app.store.rules(&slug).await)?)))
+}
+
+/// The rules the project's tasks get (`.agents/rules`, global, plugins') and when.
+async fn project_rules(State(s): State<S>, Path(slug): Path<String>) -> R {
+    let p = s.w.app.project(&slug).await?;
+    let out: Vec<Value> = s
+        .w
+        .app
+        .rules_for(std::path::Path::new(&p.path), &p)
+        .iter()
+        .map(|r| {
+            let when = if r.always { "always".to_string() } else if !r.globs.is_empty() { format!("for {}", r.globs.join(", ")) } else { "listed".into() };
+            json!({"name": r.name, "path": r.path, "when": when, "description": r.description, "body": r.body})
+        })
+        .collect();
+    Ok(Json(json!(out)))
 }
 
 async fn skills(State(s): State<S>, Path(slug): Path<String>) -> R {

@@ -32,7 +32,8 @@ kinds it gets; `reagent.hcl`'s notify block can add URLs too).
 
 `reagent up` runs it. Besides: `passwd`, `status`, `mcp add|list|remove`,
 `secret set|list|get|remove`, `trigger add|list|remove|enable|disable|run|move|approve`,
-`task design`, `task proposal`, `token add|list|revoke`, `supervisor --stop`.
+`task design`, `task proposal`, `plugin add|list|update|remove`, `token add|list|revoke`,
+`supervisor --stop`.
 
 ## MCP API (for other agents)
 
@@ -42,4 +43,5 @@ kinds it gets; `reagent.hcl`'s notify block can add URLs too).
 `task_pause`, `task_resume`, `task_cancel`, `task_retry`, `task_raise_budget`,
 `task_switch_profile`, `task_approve`, `task_answer`, `task_merge`,
 `task_wait`, `search`, `prompt_design`, `design_proposal`, `design_create`, `docs_list`, `docs_read`,
-`trigger_list`, `trigger_add`, `trigger_remove`, `trigger_run`, `trigger_move`.
+`trigger_list`, `trigger_add`, `trigger_remove`, `trigger_run`, `trigger_move`,
+`plugin_list`, `plugin_add`, `plugin_update`, `plugin_remove`.

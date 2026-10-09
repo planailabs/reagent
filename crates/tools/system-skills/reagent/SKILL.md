@@ -25,7 +25,7 @@ are summarised as they go.
   call (`reagent-policy`).
 - **Memory**: markdown notes, global and per project, that every task is
   shown an index of (`reagent-memory`).
-- **Skills**: instructions for recurring jobs, in `.agents/skills/` folders,
+- **Skills**: instructions for recurring jobs, in `.agents/skills/` folders, plugins (git repos),
   globally, and these system skills; **rules** in `.agents/rules/`: standing
   instructions, always or for the files touched (`reagent-skills`).
 - **Cron and triggers**: tasks started on a schedule, or when a script sees

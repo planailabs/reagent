@@ -4,6 +4,7 @@ import { del, get, post, put } from "../lib/api.js";
 import Memory from "./Memory.vue";
 import Secrets from "./Secrets.vue";
 import NotifyChannels from "./NotifyChannels.vue";
+import Plugins from "./Plugins.vue";
 
 const config = ref(null);
 const push = ref("");
@@ -106,6 +107,8 @@ onMounted(() => {
     </div>
     <h2>notification channels <span class="dim">(apprise: Telegram, ntfy, mail, …)</span></h2>
     <NotifyChannels />
+    <h2>plugins <span class="dim">(git repositories whose skills and rules every task gets)</span></h2>
+    <Plugins />
     <h2>tasks at once</h2>
     <form class="row" @submit.prevent="saveLimits">
       <label>at most <input v-model="maxTasks" size="4" inputmode="numeric" placeholder="any" aria-label="tasks at once" /> tasks run at once</label>

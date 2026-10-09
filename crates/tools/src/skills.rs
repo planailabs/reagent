@@ -133,6 +133,17 @@ pub fn discover(cwd: &Path, project: &Path, global: &[PathBuf], system_dir: Opti
             }
         }
     }
+    for s in in_places(global) {
+        if !out.iter().any(|o| o.name == s.name) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// The skills in global places, the first winning on a name.
+pub fn in_places(global: &[PathBuf]) -> Vec<Skill> {
+    let mut out: Vec<Skill> = vec![];
     for g in global {
         // A global place is the skills folder itself (~/.agents/skills) or holds one.
         let mut here = found_in(g, "global");

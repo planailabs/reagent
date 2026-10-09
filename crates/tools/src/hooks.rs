@@ -74,7 +74,7 @@ pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String
         }
     }
     // Rules (.agents/rules): each that applies on its own, those to read when they fit listed.
-    let rules = crate::rules::discover(Path::new(&task.cwd), Path::new(&p.path));
+    let rules = app.rules_for(Path::new(&task.cwd), &p);
     let touched = app.touched.lock().unwrap().get(&task.id).cloned().unwrap_or_default();
     let mut described = vec![];
     for r in &rules {

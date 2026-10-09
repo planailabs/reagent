@@ -54,6 +54,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TaskCmd,
     },
+    /// Plugins: git repositories (in <data>/plugins/<id>/) whose skills and rules every task gets.
+    Plugin {
+        #[command(subcommand)]
+        cmd: PluginCmd,
+    },
     /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
     Token {
         #[command(subcommand)]
@@ -242,6 +247,24 @@ enum TaskCmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum PluginCmd {
+    /// Clone a plugin from a git URL.
+    Add {
+        url: String,
+        /// Its folder's name (default: the URL's last part).
+        #[arg(long)]
+        id: Option<String>,
+        /// A branch or tag to follow (default: the remote's default branch).
+        #[arg(long = "ref")]
+        reference: Option<String>,
+    },
+    List,
+    /// Fetch what each (or the named) plugin follows and move onto it.
+    Update { ids: Vec<String> },
+    Remove { id: String },
 }
 
 #[derive(Subcommand)]
@@ -532,6 +555,40 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                             eprintln!("{}. {}", i + 1, done.unwrap_or_else(|e| format!("not made: {e}")));
                         }
                     }
+                }
+            }
+            Ok(())
+        }
+        Cmd::Plugin { cmd } => {
+            use reagent_tools::plugins;
+            match cmd {
+                PluginCmd::Add { url, id, reference } => {
+                    let p = plugins::add(&data, &url, id.as_deref(), reference.as_deref()).map_err(anyhow::Error::msg)?;
+                    println!("added {} at {} ({}): skills {}; rules {}", p.id, p.commit, p.subject, p.skills.join(", "), p.rules.join(", "));
+                }
+                PluginCmd::List => {
+                    for p in plugins::list(&data) {
+                        println!("{}\t{}{}\t{} {}\tskills: {}\trules: {}", p.id, p.url, p.reference.map(|r| format!("@{r}")).unwrap_or_default(), p.commit, p.subject, p.skills.join(","), p.rules.join(","));
+                    }
+                }
+                PluginCmd::Update { ids } => {
+                    let ids = if ids.is_empty() { plugins::dirs(&data).into_iter().map(|(id, _)| id).collect() } else { ids };
+                    let mut failed = false;
+                    for id in ids {
+                        match plugins::update(&data, &id) {
+                            Ok((before, p)) if before == p.commit => println!("{id}: up to date ({before})"),
+                            Ok((before, p)) => println!("{id}: {before} → {} ({})", p.commit, p.subject),
+                            Err(e) => {
+                                failed = true;
+                                eprintln!("{id}: {e}");
+                            }
+                        }
+                    }
+                    anyhow::ensure!(!failed, "not every plugin was updated");
+                }
+                PluginCmd::Remove { id } => {
+                    plugins::remove(&data, &id).map_err(anyhow::Error::msg)?;
+                    println!("removed {id}");
                 }
             }
             Ok(())

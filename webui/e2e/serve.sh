@@ -31,6 +31,13 @@ kind "research" {
   profile = "big"
 }
 HCL
+# A plugin to add (a git repo with a skill and a rule).
+mkdir -p "$tmp/plugin-src/skills/hello" "$tmp/plugin-src/.agents/rules"
+printf -- '---\nname: hello\ndescription: greet nicely\n---\nSay hello.\n' > "$tmp/plugin-src/skills/hello/SKILL.md"
+echo "Be brief." > "$tmp/plugin-src/.agents/rules/tone.md"
+git -C "$tmp/plugin-src" init -q -b main
+git -C "$tmp/plugin-src" add -A
+git -C "$tmp/plugin-src" -c user.email=t@t -c user.name=t commit -q -m "first"
 cd "$tmp/project"
 git init -q -b main
 git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init

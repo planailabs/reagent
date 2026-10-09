@@ -1,0 +1,70 @@
+<script setup>
+// Plugins: git repositories whose skills and rules every task gets.
+import { onMounted, ref } from "vue";
+import { del, get, post } from "../lib/api.js";
+import { ago } from "../lib/format.js";
+
+const list = ref(null);
+const form = ref({ url: "", id: "", ref: "" });
+const busy = ref("");
+const said = ref({});
+const error = ref("");
+
+async function load() {
+  list.value = await get("/api/plugins").catch((e) => ((error.value = e.message), null));
+}
+
+async function run(what, f) {
+  error.value = "";
+  busy.value = what;
+  try {
+    await f();
+  } catch (e) {
+    error.value = e.message;
+  }
+  busy.value = "";
+  await load();
+}
+
+const outcome = (r) => (!r.ok ? `failed: ${r.error}` : r.changed ? `updated ${r.before} → ${r.after}` : "up to date");
+const add = () =>
+  run("adding", async () => {
+    await post("/api/plugins", { url: form.value.url, id: form.value.id || null, ref: form.value.ref || null });
+    form.value = { url: "", id: "", ref: "" };
+  });
+const update = (p) => run(p.id, async () => (said.value[p.id] = outcome(await post(`/api/plugins/${p.id}/update`))));
+const updateAll = () => run("all", async () => (await post("/api/plugins/update")).forEach((r) => (said.value[r.id] = outcome(r))));
+const remove = (p) => confirm(`Remove the plugin ${p.id}?`) && run(p.id, () => del(`/api/plugins/${p.id}`));
+
+onMounted(load);
+</script>
+
+<template>
+  <div v-if="list">
+    <table v-if="list.length">
+      <tr><th>plugin</th><th>from</th><th>at</th><th>skills</th><th>rules</th><th></th></tr>
+      <tr v-for="p in list" :key="p.id" :aria-label="`plugin ${p.id}`">
+        <td class="hi">{{ p.id }}</td>
+        <td class="dim">{{ p.url }}<span v-if="p.ref"> @ {{ p.ref }}</span></td>
+        <td :title="p.subject">{{ p.commit }} <span class="dim">{{ ago(p.date) }} ago</span></td>
+        <td>{{ p.skills.join(", ") || "—" }}</td>
+        <td>{{ p.rules.join(", ") || "—" }}</td>
+        <td class="row">
+          <button :disabled="!!busy" @click="update(p)">update</button>
+          <button :disabled="!!busy" @click="remove(p)">remove</button>
+          <span v-if="busy === p.id" class="dim">…</span>
+          <span v-else-if="said[p.id]" :class="said[p.id].startsWith('failed') ? 'err' : 'dim'">{{ said[p.id] }}</span>
+        </td>
+      </tr>
+    </table>
+    <p v-else class="dim">no plugins yet</p>
+    <form class="row" @submit.prevent="add">
+      <input v-model="form.url" class="grow" placeholder="a git URL: https://github.com/…, git@…" aria-label="plugin URL" required />
+      <input v-model="form.id" placeholder="id (from the URL)" aria-label="plugin id" />
+      <input v-model="form.ref" placeholder="branch or tag" aria-label="plugin ref" />
+      <button type="submit" :disabled="!!busy">{{ busy === "adding" ? "cloning…" : "add the plugin" }}</button>
+      <button v-if="list.length" type="button" :disabled="!!busy" @click="updateAll">{{ busy === "all" ? "updating…" : "update all" }}</button>
+    </form>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
+  </div>
+</template>

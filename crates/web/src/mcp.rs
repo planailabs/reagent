@@ -159,6 +159,28 @@ pub struct TriggerRef {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct PluginAdd {
+    /// A git URL (https, ssh, file).
+    pub url: String,
+    /// Its folder's name (default: the URL's last part).
+    pub id: Option<String>,
+    /// A branch or tag to follow (default: the remote's default branch).
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct PluginId {
+    pub id: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct PluginUpdate {
+    /// One plugin (default: every one).
+    pub id: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TriggerMove {
     pub project: String,
     pub name: String,
@@ -370,6 +392,27 @@ impl ReagentTools {
         let t = reagent_tools::triggers::move_to(&self.0.store, &p, &a.name, &a.to).await?;
         self.0.emit_trigger(&p.slug, &t.name).await;
         Ok(format!("{} is {} now", t.name, if t.source == "repo" { "in the repo" } else { "kept in reagent" }))
+    }
+
+    #[tool(description = "The plugins: git repositories in reagent's data folder whose skills and rules every task gets (id, URL, ref, commit, skills, rules).")]
+    async fn plugin_list(&self) -> Result<String, String> {
+        j(self.0.plugins())
+    }
+
+    #[tool(description = "Add a plugin: clone a git repository whose skills (skills/, skill/, .agents/skills/) and rules (rules/, .agents/rules/) every task then gets.")]
+    async fn plugin_add(&self, Parameters(a): Parameters<PluginAdd>) -> Result<String, String> {
+        j(self.0.plugin_add(&a.url, a.id.as_deref(), a.reference.as_deref()).await?)
+    }
+
+    #[tool(description = "Update a plugin (or every one): fetch what it follows and move onto it. Each one's commits before and after, or why not.")]
+    async fn plugin_update(&self, Parameters(a): Parameters<PluginUpdate>) -> Result<String, String> {
+        j(self.0.plugin_update(a.id.as_deref()).await?)
+    }
+
+    #[tool(description = "Remove a plugin (its folder).")]
+    async fn plugin_remove(&self, Parameters(a): Parameters<PluginId>) -> Result<String, String> {
+        self.0.plugin_remove(&a.id).await?;
+        Ok(format!("removed {}", a.id))
     }
 
     #[tool(description = "Search tasks' whole conversations for a regex: one task's (paged), or every task's (of a project), a few hits each.")]

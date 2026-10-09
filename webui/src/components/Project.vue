@@ -17,6 +17,7 @@ const p = ref(null);
 const tasks = ref([]);
 const showAll = ref(false);
 const skills = ref([]);
+const rules = ref([]);
 const config = ref(null);
 const error = ref("");
 const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "" });
@@ -27,6 +28,7 @@ async function load() {
     p.value = await get(`/api/projects/${props.slug}`);
     tasks.value = await get(`/api/tasks?project=${props.slug}&active=${!showAll.value}&limit=300`);
     skills.value = await get(`/api/projects/${props.slug}/skills`);
+    rules.value = await get(`/api/projects/${props.slug}/agent-rules`);
     config.value ??= await get("/api/config");
     if (!settings.value) {
       settings.value = { ...p.value, budget: { ...p.value.budget }, env: JSON.stringify(p.value.env, null, 2) };
@@ -154,6 +156,12 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         <div>{{ s.description }}</div>
         <div v-if="s.files.length" class="dim">files: {{ s.files.join(", ") }}</div>
       </div>
+      <h3>rules</h3>
+      <div v-if="!rules.length" class="dim">no rules: they live in <code>.agents/rules/*.md</code> (here, in ~/.agents/rules, or a plugin)</div>
+      <details v-for="r in rules" :key="r.name" class="card" :aria-label="`rule ${r.name}`">
+        <summary><span class="hi">{{ r.name }}</span> <span class="dim">{{ r.when }} · {{ r.path }}</span><span v-if="r.description"> — {{ r.description }}</span></summary>
+        <pre>{{ r.body }}</pre>
+      </details>
     </template>
 
     <form v-else-if="tab === 'settings' && settings" class="stack" @submit.prevent="save">

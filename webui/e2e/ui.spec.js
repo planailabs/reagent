@@ -1,6 +1,8 @@
+import { execSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 
 const project = new URL("../../target/tmp/e2e/project", import.meta.url).pathname;
+const pluginSrc = new URL("../../target/tmp/e2e/plugin-src", import.meta.url).pathname;
 
 async function login(page) {
   await page.goto("/");
@@ -399,6 +401,28 @@ test("notification channels are added without showing their token, switched off 
   page.once("dialog", (d) => d.accept());
   await page.getByLabel("channel telegram").getByRole("button", { name: "remove" }).click();
   await expect(page.getByLabel("channel telegram")).toHaveCount(0);
+});
+
+test("a plugin is added from git, its skills reach projects, it updates and goes", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("plugin URL").fill(`file://${pluginSrc}`);
+  await page.getByRole("button", { name: "add the plugin" }).click();
+  const row = page.getByLabel("plugin plugin-src");
+  await expect(row).toContainText("hello");
+  await expect(row).toContainText("tone");
+  await page.goto("/#/project/site/skills");
+  await expect(page.locator("body")).toContainText("plugin:plugin-src");
+  await expect(page.getByLabel("rule tone")).toContainText("always");
+  // A new commit upstream: update moves onto it.
+  execSync(`git -C ${pluginSrc} -c user.email=t@t -c user.name=t commit -q --allow-empty -m second`);
+  await page.goto("/#/settings");
+  await page.getByLabel("plugin plugin-src").getByRole("button", { name: "update" }).click();
+  await expect(page.getByLabel("plugin plugin-src")).toContainText("updated");
+  await page.getByRole("button", { name: "update all" }).click();
+  await expect(page.getByLabel("plugin plugin-src")).toContainText("up to date");
+  page.once("dialog", (d) => d.accept());
+  await page.getByLabel("plugin plugin-src").getByRole("button", { name: "remove" }).click();
+  await expect(page.getByLabel("plugin plugin-src")).toHaveCount(0);
 });
 
 test("reagent's docs are readable", async ({ page }) => {

@@ -51,5 +51,19 @@ Optional frontmatter says when one applies:
   touch a matching file (paths relative to the project);
 - only a `description`: listed with its path, for the task to read when it fits.
 
+Rules also come from the global folders `~/.agents/rules/` and
+`<data>/rules/`, and from plugins; a project's win on a name.
+
 Use a rule for "how we do things here" (style, conventions, don'ts) and a
 skill for a job's steps.
+
+## Plugins
+
+A plugin is a git repository with skills (`skills/`, `skill/`, `.agents/skills/`)
+and rules (`rules/`, `.agents/rules/`) that every task gets, after the global
+ones (a skill's source shows `plugin:<id>`). It's cloned into
+`<data>/plugins/<id>/` and updated by fetching what it follows (a branch or tag,
+else the default branch); changes made in its folder are dropped then. The
+person adds, updates and removes plugins on the settings page or with `reagent
+plugin add <url> [--id] [--ref] | list | update [ids…] | remove <id>`; outside
+agents with the MCP API's `plugin_*` tools.

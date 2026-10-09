@@ -27,6 +27,8 @@ pub struct Paths {
     pub socket: PathBuf,
     /// Global skills folders (`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `<data>/skills`).
     pub skills: Vec<PathBuf>,
+    /// Global rules folders (`~/.agents/rules`, `<data>/rules`).
+    pub rules: Vec<PathBuf>,
     /// Where the system skills are written at every start.
     pub system_skills: PathBuf,
 }
@@ -36,7 +38,8 @@ impl Paths {
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from);
         let skills = crate::skills::global_places(home.as_deref(), codex.as_deref(), data);
-        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, system_skills: data.join("system-skills") }
+        let rules = home.iter().map(|h| h.join(".agents/rules")).chain([data.join("rules")]).collect();
+        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, rules, system_skills: data.join("system-skills") }
     }
 }
 
@@ -84,6 +87,8 @@ pub struct App {
     pub shown: Mutex<HashMap<String, HashMap<String, u64>>>,
     /// The files each task's file tools touched (for rules with globs).
     pub touched: Mutex<HashMap<String, Vec<String>>>,
+    /// One plugin change at a time (git in their folders).
+    plugin_lock: tokio::sync::Mutex<()>,
     /// Tasks already told about (approval asked, budget hit): not again.
     notified: Mutex<HashSet<(String, String)>>,
     pub notifier: crate::notify::Notifier,
@@ -134,6 +139,7 @@ impl App {
             fg_waiting: Default::default(),
             shown: Default::default(),
             touched: Default::default(),
+            plugin_lock: Default::default(),
             notified: Default::default(),
             notifier,
             mcp_base: OnceLock::new(),
@@ -402,8 +408,76 @@ impl App {
         crate::memory::of_project(&self.paths.data, p)
     }
 
+    /// The skills a task sees: the system's, the worktree's and project's,
+    /// the global places', then the plugins' (source `plugin:<id>`).
     pub fn skills_for(&self, cwd: &Path, p: &Project) -> Vec<Skill> {
-        skills::discover(cwd, Path::new(&p.path), &self.paths.skills, Some(&self.paths.system_skills))
+        let plugins = crate::plugins::dirs(&self.paths.data);
+        let mut global = self.paths.skills.clone();
+        global.extend(plugins.iter().flat_map(|(_, d)| crate::plugins::skill_places(d)));
+        let mut out = skills::discover(cwd, Path::new(&p.path), &global, Some(&self.paths.system_skills));
+        for s in &mut out {
+            if let Some((id, _)) = plugins.iter().find(|(_, d)| s.dir.starts_with(d)) {
+                s.source = format!("plugin:{id}");
+            }
+        }
+        out
+    }
+
+    pub fn plugins(&self) -> Vec<crate::plugins::Plugin> {
+        crate::plugins::list(&self.paths.data)
+    }
+
+    /// Clones a plugin from a git URL (its id: the URL's last part, unless given).
+    pub async fn plugin_add(&self, url: &str, id: Option<&str>, reference: Option<&str>) -> Result<crate::plugins::Plugin, String> {
+        let _g = self.plugin_lock.lock().await;
+        let (data, url, id, reference) = (self.paths.data.clone(), url.to_string(), id.map(str::to_string), reference.map(str::to_string));
+        let p = tokio::task::spawn_blocking(move || crate::plugins::add(&data, &url, id.as_deref(), reference.as_deref())).await.map_err(|e| e.to_string())??;
+        tracing::info!(plugin = %p.id, commit = %p.commit, "plugin added");
+        self.emit(json!({"kind": "plugins"}));
+        Ok(p)
+    }
+
+    /// Updates one plugin, or every one (`None`): each one's id, commits before and after, or why not.
+    pub async fn plugin_update(&self, id: Option<&str>) -> Result<Vec<Value>, String> {
+        let _g = self.plugin_lock.lock().await;
+        let ids: Vec<String> = match id {
+            Some(id) => vec![crate::plugins::get(&self.paths.data, id)?.id],
+            None => crate::plugins::dirs(&self.paths.data).into_iter().map(|(id, _)| id).collect(),
+        };
+        let mut out = vec![];
+        for id in ids {
+            let data = self.paths.data.clone();
+            let i = id.clone();
+            let r = tokio::task::spawn_blocking(move || crate::plugins::update(&data, &i)).await.map_err(|e| e.to_string())?;
+            out.push(match r {
+                Ok((before, p)) => {
+                    tracing::info!(plugin = %id, before = %before, after = %p.commit, "plugin updated");
+                    json!({"id": id, "ok": true, "before": before, "after": p.commit, "changed": before != p.commit})
+                }
+                Err(e) => {
+                    tracing::warn!(plugin = %id, error = %e, "plugin update");
+                    json!({"id": id, "ok": false, "error": e})
+                }
+            });
+        }
+        self.emit(json!({"kind": "plugins"}));
+        Ok(out)
+    }
+
+    pub async fn plugin_remove(&self, id: &str) -> Result<(), String> {
+        let _g = self.plugin_lock.lock().await;
+        crate::plugins::remove(&self.paths.data, id)?;
+        tracing::info!(plugin = %id, "plugin removed");
+        self.emit(json!({"kind": "plugins"}));
+        Ok(())
+    }
+
+    /// The rules a task sees: the worktree's and project's, the global
+    /// folders' (`~/.agents/rules`, `<data>/rules`), then the plugins'.
+    pub fn rules_for(&self, cwd: &Path, p: &Project) -> Vec<crate::rules::Rule> {
+        let mut global = self.paths.rules.clone();
+        global.extend(crate::plugins::dirs(&self.paths.data).iter().flat_map(|(_, d)| crate::plugins::rule_places(d)));
+        crate::rules::discover(cwd, Path::new(&p.path), &global)
     }
 
     pub fn worktree_dir(&self, p: &Project, branch: &str) -> PathBuf {

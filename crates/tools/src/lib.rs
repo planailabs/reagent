@@ -5,6 +5,7 @@ pub mod config;
 pub mod edit;
 pub mod git;
 pub mod memory;
+pub mod plugins;
 pub mod policy;
 pub mod rules;
 pub mod skills;
