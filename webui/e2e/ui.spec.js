@@ -43,9 +43,9 @@ test("a wrong password is refused", async ({ browser }) => {
 
 test("a notification unfolds, and is marked seen on its own", async ({ page }) => {
   await startTask(page, "Notice one");
-  await expect(page.locator(".report")).toContainText("Done: Notice one");
+  await expect(page.locator(".reports")).toContainText("Done: Notice one");
   await startTask(page, "Notice two");
-  await expect(page.locator(".report")).toContainText("Done: Notice two");
+  await expect(page.locator(".reports")).toContainText("Done: Notice two");
   await page.getByRole("link", { name: "inbox" }).click();
   const one = page.locator("details.note", { hasText: "Notice one" });
   const two = page.locator("details.note", { hasText: "Notice two" });
@@ -59,7 +59,7 @@ test("a notification unfolds, and is marked seen on its own", async ({ page }) =
 
 test("a task runs and reports", async ({ page }) => {
   await startTask(page, "Hello there");
-  await expect(page.locator(".report")).toContainText("Done: Hello there");
+  await expect(page.locator(".reports")).toContainText("Done: Hello there");
   await page.setViewportSize({ width: 800, height: 200 });
   await page.getByRole("button", { name: "to the bottom" }).click();
   await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
@@ -74,18 +74,18 @@ test("a task runs and reports", async ({ page }) => {
 
 test("messages and the report render markdown", async ({ page }) => {
   await startTask(page, "Say **loud**");
-  await expect(page.locator(".report strong")).toHaveText("loud");
+  await expect(page.locator(".reports strong")).toHaveText("loud");
   await expect(page.locator(".msg.assistant strong")).toHaveText("loud");
 });
 
 test("a finished task is cloned and restarted", async ({ page }) => {
   await startTask(page, "Twice over");
-  await expect(page.locator(".report")).toContainText("Done: Twice over");
+  await expect(page.locator(".reports")).toContainText("Done: Twice over");
   const first = page.url();
   await page.getByRole("button", { name: "clone and restart" }).click();
   await expect(page).not.toHaveURL(first);
   await expect(page.getByRole("heading", { name: "Twice over" })).toBeVisible();
-  await expect(page.locator(".report")).toContainText("Done: Twice over");
+  await expect(page.locator(".reports")).toContainText("Done: Twice over");
 });
 
 test("a call the policy asks about is approved from the inbox", async ({ page }) => {
@@ -96,12 +96,12 @@ test("a call the policy asks about is approved from the inbox", async ({ page })
   await expect(box).toContainText("shell.exec");
   await expect(box).toContainText("touch from-ui.txt");
   await box.getByRole("button", { name: "allow once" }).click();
-  await expect(page.locator(".report")).toContainText("touched");
+  await expect(page.locator(".reports")).toContainText("touched");
 });
 
 test("a task's todo list shows", async ({ page }) => {
   await startTask(page, "Todo list");
-  await expect(page.locator(".report")).toContainText("planned and started");
+  await expect(page.locator(".reports")).toContainText("planned and started");
   const list = page.getByLabel("todo list");
   await expect(list).toContainText("1 of 2 done");
   await expect(list.locator(".todo.done")).toContainText("look around");
@@ -110,7 +110,7 @@ test("a task's todo list shows", async ({ page }) => {
 
 test("a task's working memory shows on its tab", async ({ page }) => {
   await startTask(page, "Remember things");
-  await expect(page.locator(".report")).toContainText("remembered");
+  await expect(page.locator(".reports")).toContainText("remembered");
   await page.getByRole("link", { name: "working memory" }).click();
   const wm = page.getByLabel("working memory");
   await expect(wm.locator("tr", { hasText: "pr" })).toContainText("42");
@@ -128,13 +128,27 @@ test("a question is answered with an option", async ({ page }) => {
   const box = page.getByLabel("question");
   await expect(box).toContainText("which color?");
   await box.getByRole("button", { name: "blue" }).click();
-  await expect(page.locator(".report")).toContainText("you chose blue");
+  await expect(page.locator(".reports")).toContainText("you chose blue");
   await expect(pinned).toHaveCount(0);
-  // The report folds too.
-  await page.getByRole("button", { name: "fold the report" }).click();
-  await expect(page.locator(".report")).not.toContainText("you chose blue");
-  await page.getByRole("button", { name: "unfold the report" }).click();
-  await expect(page.locator(".report")).toContainText("you chose blue");
+});
+
+test("reports are kept, each folds and so do they all", async ({ page }) => {
+  await startTask(page, "Report twice");
+  await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");
+  await page.getByLabel("message").fill("once more");
+  await page.getByRole("button", { name: "send" }).click();
+  await expect(page.getByLabel("report 2", { exact: true })).toContainText("the second report");
+  // The earlier one folds away once there's a newer one; each unfolds on its own.
+  await expect(page.getByLabel("report 1", { exact: true })).not.toContainText("the first report");
+  await page.getByRole("button", { name: "unfold report 1" }).click();
+  await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");
+  await page.getByRole("button", { name: "fold report 2" }).click();
+  await expect(page.getByLabel("report 2", { exact: true })).not.toContainText("the second report");
+  // The whole section folds.
+  await page.getByRole("button", { name: "fold the reports" }).click();
+  await expect(page.getByLabel("report 1", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "unfold the reports" }).click();
+  await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");
 });
 
 test("a background job's output shows, and its end wakes the task", async ({ page }) => {
@@ -153,12 +167,12 @@ test("a background job's output shows, and its end wakes the task", async ({ pag
   await page.locator(".job").first().click();
   await page.getByRole("dialog").getByRole("button", { name: "close" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.locator(".report")).toContainText("ticker finished", { timeout: 20_000 });
+  await expect(page.locator(".reports")).toContainText("ticker finished", { timeout: 20_000 });
 });
 
 test("a terminal takes keys", async ({ page }) => {
   await startTask(page, "Terminal host");
-  await expect(page.locator(".report")).toContainText("Done");
+  await expect(page.locator(".reports")).toContainText("Done");
   await page.getByRole("button", { name: "open a terminal" }).click();
   const term = page.locator(".xterm-box");
   await term.click();
@@ -193,7 +207,7 @@ test("policy, memory and cron are edited, and conversations searched", async ({ 
   await expect(page.locator("table")).toContainText("Nightly check");
 
   await startTask(page, "Searchable one", "find me");
-  await expect(page.locator(".report")).toContainText("Done");
+  await expect(page.locator(".reports")).toContainText("Done");
   await page.getByRole("link", { name: "search" }).click();
   await page.getByLabel("search").fill("Searchable");
   await page.getByRole("button", { name: "search" }).click();
@@ -298,7 +312,7 @@ test("a trigger is added, starts a task, moves to the repo and goes", async ({ p
 
 test("a task moves onto another model", async ({ page }) => {
   await startTask(page, "Switch me");
-  await expect(page.locator(".report")).toContainText("Done: Switch me");
+  await expect(page.locator(".reports")).toContainText("Done: Switch me");
   await expect(page.locator(".row", { hasText: "Switch me" }).first()).toContainText("default");
   await page.getByLabel("switch model").selectOption("big");
   await page.getByRole("button", { name: "switch" }).click();
@@ -317,7 +331,7 @@ test("over the limit a task is queued, and started now by hand", async ({ page }
   await expect(page.getByLabel("question")).toBeVisible();
   await startTask(page, "Queued one");
   await page.getByRole("button", { name: "start now" }).click();
-  await expect(page.locator(".report")).toContainText("Done: Queued one");
+  await expect(page.locator(".reports")).toContainText("Done: Queued one");
   await page.goto("/#/settings");
   await page.getByLabel("tasks at once").fill("");
   await page.getByRole("button", { name: "save" }).first().click();
@@ -342,8 +356,8 @@ test("the guide reads, asks, and proposes items the person picks and creates", a
   await p.getByLabel("take item 2").uncheck();
   // The skill's body has a code fence of its own; the report shows without the JSON.
   await expect(p.getByLabel("item 2", { exact: true })).toContainText("npm run polish");
-  await expect(page.getByLabel("report", { exact: true })).toContainText("The plan.");
-  await expect(page.getByLabel("report", { exact: true })).not.toContainText("items");
+  await expect(page.getByLabel("reports", { exact: true })).toContainText("The plan.");
+  await expect(page.getByLabel("reports", { exact: true })).not.toContainText("items");
   // The third becomes a cron entry: not without a schedule.
   const third = p.getByLabel("item 3", { exact: true });
   await third.getByRole("button", { name: "edit" }).click();

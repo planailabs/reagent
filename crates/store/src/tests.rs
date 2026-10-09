@@ -228,3 +228,15 @@ async fn triggers_keys_and_runs() {
     assert!(s.triggers(None).await.unwrap().is_empty());
     assert_eq!(sqlx::query_scalar::<_, i64>("select count(*) from trigger_runs").fetch_one(&s.pool).await.unwrap(), 0);
 }
+
+#[tokio::test]
+async fn reports_are_appended_and_the_last_is_the_tasks() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let t = s.add_task(&NewTask { project: "site".into(), title: "T".into(), prompt: "p".into(), origin: "ui".into(), cwd: "/".into(), profile: "default".into(), ..Default::default() }).await.unwrap();
+    assert!(s.reports(&t.id).await.unwrap().is_empty());
+    s.set_report(&t.id, "first").await.unwrap();
+    s.set_report(&t.id, "second").await.unwrap();
+    assert_eq!(s.reports(&t.id).await.unwrap().iter().map(|r| r.content.as_str()).collect::<Vec<_>>(), ["first", "second"]);
+    assert_eq!(s.task(&t.id).await.unwrap().unwrap().report.as_deref(), Some("second"));
+}

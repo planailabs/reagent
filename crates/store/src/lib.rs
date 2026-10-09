@@ -389,6 +389,13 @@ pub struct Todo {
     pub updated: i64,
 }
 
+/// One of a task's reports.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Report {
+    pub content: String,
+    pub at: i64,
+}
+
 pub const TODO_STATES: [&str; 4] = ["pending", "in_progress", "done", "cancelled"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -645,8 +652,16 @@ impl Store {
     }
 
     pub async fn set_report(&self, id: &str, report: &str) -> R<()> {
-        sqlx::query("update tasks set report = $2, updated = unixepoch() where id = $1").bind(id).bind(report).execute(&self.pool).await?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("update tasks set report = $2, updated = unixepoch() where id = $1").bind(id).bind(report).execute(&mut *tx).await?;
+        sqlx::query("insert into reports (task, content) values ($1, $2)").bind(id).bind(report).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// Every report the task made, oldest first (`set_report` appends).
+    pub async fn reports(&self, task: &str) -> R<Vec<Report>> {
+        sqlx::query_as("select content, at from reports where task = $1 order by id").bind(task).fetch_all(&self.pool).await
     }
 
     pub async fn set_cwd(&self, id: &str, cwd: &str, worktree: Option<&Worktree>) -> R<()> {

@@ -27,10 +27,19 @@ const raiseForm = ref({ tokens: "", cost: "", minutes: "" });
 const error = ref("");
 const tab = ref("transcript");
 const waitOpen = ref(true);
-const reportOpen = ref(true);
+const reportsOpen = ref(true);
+/** Reports folded one by one (by index); unfolded: the last, and those opened. */
+const folded = ref({});
+const isFolded = (i) => folded.value[i] ?? i < reports.value.length - 1;
 /** A design task's report without its proposal's block (the proposal shows it). */
 const designReport = ref(null);
-const shownReport = computed(() => designReport.value ?? t.value?.report);
+/** Every report, oldest first; a failure's is in the failed box, a design's last without its block. */
+const reports = computed(() => {
+  const all = (t.value?.reports ?? []).map((r) => ({ ...r }));
+  if (t.value?.state === "failed") all.pop();
+  else if (designReport.value != null && all.length) all[all.length - 1].content = designReport.value;
+  return all.filter((r) => r.content);
+});
 /** Something waits for the person: a call to approve, a question, a merge, the budget. */
 const waiting = computed(() => !!call.value || ["question", "merge", "budget"].includes(t.value?.wait?.kind));
 const ptys = ref([]);
@@ -200,13 +209,21 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <pre>{{ t.report }}</pre>
       <button @click="act('retry')">retry from the failure</button>
     </div>
-    <div v-if="shownReport && t.state !== 'failed'" class="report" aria-label="report">
+    <section v-if="reports.length" class="reports" aria-label="reports">
       <div class="row">
-        <span class="dim grow">report</span>
-        <button :aria-label="reportOpen ? 'fold the report' : 'unfold the report'" @click="reportOpen = !reportOpen">{{ reportOpen ? "▴" : "▾" }}</button>
+        <span class="dim grow">{{ reports.length === 1 ? "report" : `${reports.length} reports` }}</span>
+        <button :aria-label="reportsOpen ? 'fold the reports' : 'unfold the reports'" @click="reportsOpen = !reportsOpen">{{ reportsOpen ? "▴" : "▾" }}</button>
       </div>
-      <div v-if="reportOpen" class="md" v-html="markdown(shownReport)"></div>
-    </div>
+      <template v-if="reportsOpen">
+        <div v-for="(r, i) in reports" :key="i" class="report" :aria-label="`report ${i + 1}`">
+          <div class="row">
+            <span class="dim grow">#{{ i + 1 }} · {{ ago(r.at) }} ago</span>
+            <button :aria-label="isFolded(i) ? `unfold report ${i + 1}` : `fold report ${i + 1}`" @click="folded[i] = !isFolded(i)">{{ isFolded(i) ? "▾" : "▴" }}</button>
+          </div>
+          <div v-if="!isFolded(i)" class="md" v-html="markdown(r.content)"></div>
+        </div>
+      </template>
+    </section>
     <Proposal v-if="t.origin === 'design' && t.state === 'done'" :task="t" @read="(p) => (designReport = p ? p.report : null)" />
 
     <form class="row" @submit.prevent="send">
