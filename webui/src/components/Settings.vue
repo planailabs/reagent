@@ -5,6 +5,7 @@ import Memory from "./Memory.vue";
 import Secrets from "./Secrets.vue";
 import NotifyChannels from "./NotifyChannels.vue";
 import Plugins from "./Plugins.vue";
+import Templates from "./Templates.vue";
 
 const config = ref(null);
 const push = ref("");
@@ -109,6 +110,8 @@ onMounted(() => {
     <NotifyChannels />
     <h2>plugins <span class="dim">(git repositories whose skills and rules every task gets)</span></h2>
     <Plugins />
+    <h2>prompt templates <span class="dim">(every project's)</span></h2>
+    <Templates />
     <h2>tasks at once</h2>
     <form class="row" @submit.prevent="saveLimits">
       <label>at most <input v-model="maxTasks" size="4" inputmode="numeric" placeholder="any" aria-label="tasks at once" /> tasks run at once</label>

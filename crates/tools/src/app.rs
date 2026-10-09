@@ -77,6 +77,12 @@ pub struct StartTask {
     /// Limits (`tokens`, `cost`, `minutes`) it starts without, the project's too.
     #[serde(default)]
     pub unlimited: Vec<String>,
+    /// A prompt template it starts from (what isn't asked for comes from it).
+    #[serde(default)]
+    pub template: Option<String>,
+    /// The template's field values.
+    #[serde(default)]
+    pub values: serde_json::Map<String, Value>,
 }
 
 pub struct App {
@@ -510,7 +516,25 @@ impl App {
     // --- tasks ----------------------------------------------------------
 
     /// Starts a task: its record, then its agent.
-    pub async fn start_task(&self, req: StartTask) -> Result<Task, String> {
+    /// The prompt templates a project's tasks may start from (none: the global ones).
+    pub async fn templates(&self, project: Option<&str>) -> Result<Vec<crate::templates::Template>, String> {
+        let p = match project {
+            Some(slug) => Some(self.project(slug).await?),
+            None => None,
+        };
+        Ok(crate::templates::discover(&self.store, &self.paths.data, p.as_ref()).await)
+    }
+
+    pub async fn start_task(&self, mut req: StartTask) -> Result<Task, String> {
+        if let Some(name) = req.template.take() {
+            let p = if req.project.is_empty() { None } else { Some(self.project(&req.project).await?) };
+            let t = crate::templates::find(&self.store, &self.paths.data, p.as_ref(), &name).await?;
+            let values = std::mem::take(&mut req.values);
+            crate::templates::apply(&t, &values, &mut req)?;
+            if req.project.is_empty() {
+                return Err(format!("the template {name} isn't for a project: which one?"));
+            }
+        }
         let p = self.project(&req.project).await?;
         let origin = req.origin.clone().unwrap_or_else(|| "ui".into());
         let kind = self.config.kind_for(req.kind.as_deref(), &origin, p.kind.as_deref())?;

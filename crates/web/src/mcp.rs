@@ -24,13 +24,20 @@ pub struct ReagentTools(pub Arc<App>);
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Start {
-    /// A project's id (projects lists them).
+    /// A project's id (projects lists them; may be left out with a template pinned to one).
+    #[serde(default)]
     pub project: String,
-    /// A few words (default: the task names itself).
+    /// A few words (default: the template's, else the task names itself).
     #[serde(default)]
     pub title: String,
-    /// What it should do: everything it needs to know.
+    /// What it should do: everything it needs to know (with a template: its rendered prompt unless given).
+    #[serde(default)]
     pub prompt: String,
+    /// A prompt template to start from (template_list shows them).
+    pub template: Option<String>,
+    /// The template's field values.
+    #[serde(default)]
+    pub values: serde_json::Map<String, Value>,
     pub profile: Option<String>,
     /// Skills loaded into its first message.
     #[serde(default)]
@@ -161,6 +168,12 @@ pub struct TriggerRef {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct TemplateList {
+    /// A project's id (none: the global templates).
+    pub project: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct PluginAdd {
     /// A git URL (https, ssh, file).
     pub url: String,
@@ -211,10 +224,15 @@ impl ReagentTools {
         j(out)
     }
 
-    #[tool(description = "Start a task in a project: it works on its own; task_get or task_wait follow it.")]
+    #[tool(description = "Prompt templates: a project's (its repo's, kept in reagent, global, plugins'), or the global ones. Each one's name, what it's for, its fields (a form: task_start's values) or its prompt (a starting point), and what it sets.")]
+    async fn template_list(&self, Parameters(a): Parameters<TemplateList>) -> Result<String, String> {
+        j(reagent_tools::templates::summaries(&self.0.templates(a.project.as_deref()).await?))
+    }
+
+    #[tool(description = "Start a task in a project (from a prompt, or a template and its values): it works on its own; task_get or task_wait follow it.")]
     async fn task_start(&self, Parameters(a): Parameters<Start>) -> Result<String, String> {
         let budget: Option<Budget> = a.budget.map(serde_json::from_value).transpose().map_err(|e| format!("budget: {e}"))?;
-        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind, unlimited: vec![] }).await?;
+        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind, template: a.template, values: a.values, unlimited: vec![] }).await?;
         j(json!({"task": t.id, "state": t.state}))
     }
 

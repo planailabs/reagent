@@ -3,6 +3,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { get, post } from "../lib/api.js";
 import SkillPicker from "./SkillPicker.vue";
+import TemplateForm from "./TemplateForm.vue";
 
 const LIMITS = [
   { key: "tokens", label: "tokens", presets: [["200k", 200_000], ["1M", 1_000_000], ["5M", 5_000_000], ["20M", 20_000_000]], parse: (v) => parseInt(v, 10) },
@@ -18,6 +19,13 @@ const form = ref({ project: "", title: "", prompt: "", skills: [] });
 const limits = ref({ tokens: "default", cost: "default", minutes: "default" });
 const typed = ref({ tokens: "", cost: "", minutes: "" });
 const error = ref("");
+const templates = ref([]);
+const chosen = ref("");
+const values = ref({});
+const tf = ref(null);
+/** A template picked for another project: applied once that project's lists are in. */
+let pending = null;
+const form_like = computed(() => !!tf.value?.current?.fields.length);
 const project = computed(() => projects.value.find((p) => p.slug === form.value.project));
 
 function choose(key, v) {
@@ -30,6 +38,23 @@ function type(l) {
 }
 const projectDefault = (key) => project.value?.budget?.[key] ?? "none";
 
+/** A template fills the form: a form-like one leaves the prompt to its fields, a plain one gives a prompt to edit. */
+function applyTemplate(t) {
+  if (!t) return;
+  if (t.project && t.project !== form.value.project) {
+    pending = t;
+    form.value.project = t.project;
+    return;
+  }
+  form.value.title = t.fields.length ? "" : (t.title ?? "");
+  form.value.prompt = t.fields.length ? "" : t.prompt;
+  form.value.skills = t.skills.filter((s) => skills.value.some((k) => k.name === s));
+  for (const l of LIMITS) {
+    const v = t.budget?.[l.key];
+    if (v != null) choose(l.key, v);
+  }
+}
+
 async function startTask() {
   error.value = "";
   const budget = {};
@@ -39,7 +64,9 @@ async function startTask() {
     else if (typeof v === "number") budget[k] = v;
   }
   try {
-    const t = await post("/api/tasks", { project: form.value.project, title: form.value.title, prompt: form.value.prompt, skills: form.value.skills, budget, unlimited });
+    const body = { project: form.value.project, title: form.value.title, prompt: form.value.prompt, skills: form.value.skills, budget, unlimited };
+    if (form_like.value) Object.assign(body, { template: tf.value.current.name, values: values.value, prompt: "" });
+    const t = await post("/api/tasks", body);
     try {
       localStorage.setItem(KEPT, JSON.stringify({ project: form.value.project, limits: limits.value }));
     } catch {}
@@ -63,6 +90,14 @@ watch(
   async (slug) => {
     form.value.skills = [];
     skills.value = slug ? await get(`/api/projects/${slug}/skills`).catch(() => []) : [];
+    templates.value = slug ? await get(`/api/templates?project=${encodeURIComponent(slug)}`).catch(() => []) : [];
+    if (pending) {
+      const t = pending;
+      pending = null;
+      applyTemplate(t);
+    } else {
+      chosen.value = "";
+    }
   },
 );
 </script>
@@ -78,9 +113,10 @@ watch(
             <option v-for="p in projects" :key="p.slug" :value="p.slug">{{ p.name }}</option>
           </select>
         </label>
-        <input v-model="form.title" class="grow" placeholder="title (empty: the agent names it)" aria-label="title" />
+        <input v-model="form.title" class="grow" :placeholder="form_like && tf.current.title ? `title (empty: ${tf.render(tf.current.title)})` : 'title (empty: the agent names it)'" aria-label="title" />
       </div>
-      <textarea v-model="form.prompt" rows="6" placeholder="what to do" aria-label="what to do" required></textarea>
+      <TemplateForm v-if="templates.length" ref="tf" v-model:chosen="chosen" v-model:values="values" :templates="templates" :project="form.project" @pick="applyTemplate" />
+      <textarea v-if="!form_like" v-model="form.prompt" rows="6" placeholder="what to do" aria-label="what to do" required></textarea>
       <div v-for="l in LIMITS" :key="l.key" class="row choices" role="group" :aria-label="`${l.label} limit`">
         <span class="dim limit">{{ l.label }}</span>
         <button type="button" :class="{ on: limits[l.key] === 'default' }" @click="choose(l.key, 'default')">project default ({{ projectDefault(l.key) }})</button>

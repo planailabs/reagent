@@ -38,6 +38,25 @@ echo "Be brief." > "$tmp/plugin-src/.agents/rules/tone.md"
 git -C "$tmp/plugin-src" init -q -b main
 git -C "$tmp/plugin-src" add -A
 git -C "$tmp/plugin-src" -c user.email=t@t -c user.name=t commit -q -m "first"
+# Prompt templates in the project's repo: a form and a plain one.
+mkdir -p "$tmp/project/.agents/templates"
+cat > "$tmp/project/.agents/templates/ci.md" <<'MD'
+---
+description: Fix a failing CI job
+title: "Fix CI: {{job}}"
+budget: { minutes: 45 }
+fields:
+  - name: job
+    label: Job name
+    required: true
+  - name: branch
+    type: select
+    options: [main, staging]
+    default: main
+---
+The CI job {{job}} fails on {{branch}}. Fix it.
+MD
+printf -- '---\ndescription: Review the open PRs\ntitle: Review PRs\n---\nReview every open PR and say what blocks each.\n' > "$tmp/project/.agents/templates/review.md"
 cd "$tmp/project"
 git init -q -b main
 git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init

@@ -60,7 +60,7 @@ pub async fn run(app: &App, c: &Cron) -> Result<Task, String> {
         parent: None,
         origin: Some(format!("cron:{}", c.id)),
         kind: o.kind.clone(),
-        unlimited: vec![],
+        ..Default::default()
     })
     .await
 }

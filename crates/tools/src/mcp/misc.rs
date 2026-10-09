@@ -156,17 +156,29 @@ pub struct SkillName {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct TemplateList {
+    /// Another project (default: this one).
+    pub project: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct Title {
     pub title: String,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Spawn {
-    /// A few words (default: it names itself).
+    /// A few words (default: it names itself, or the template's).
     #[serde(default)]
     pub title: String,
-    /// What it should do: everything it needs to know (it doesn't see your conversation).
+    /// What it should do: everything it needs to know (it doesn't see your conversation). With a template: its rendered prompt unless given.
+    #[serde(default)]
     pub prompt: String,
+    /// A prompt template to start from (template_list shows them): the prompt, title, skills, limits it gives.
+    pub template: Option<String>,
+    /// The template's field values.
+    #[serde(default)]
+    pub values: serde_json::Map<String, Value>,
     /// Another project (by id; default: this one).
     pub project: Option<String>,
     pub profile: Option<String>,
@@ -346,6 +358,13 @@ impl TaskTools {
         Ok(format!("this task is called \"{}\" now", a.title.trim()))
     }
 
+    #[tool(description = "Prompt templates this project's tasks start from (or another project's): each one's name, what it's for, its fields (a form to fill: task_spawn's values) or none (its prompt is a starting point), and what it sets (title, skills, limits, profile, kind).")]
+    async fn template_list(&self, Parameters(a): Parameters<TemplateList>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (_, p) = caller(&self.0, &ctx).await?;
+        let list = self.0.templates(Some(a.project.as_deref().unwrap_or(&p.slug))).await?;
+        Ok(serde_json::to_string_pretty(&crate::templates::summaries(&list)).unwrap_or_default())
+    }
+
     #[tool(description = "Start a subtask: another task working on its own (in this project, or another if the policy allows). Its report comes to you as a message when it ends.")]
     async fn task_spawn(&self, Parameters(a): Parameters<Spawn>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
@@ -362,6 +381,8 @@ impl TaskTools {
                 parent: Some(t.id.clone()),
                 origin: Some(format!("task:{}", t.id)),
                 kind: a.kind,
+                template: a.template,
+                values: a.values,
                 unlimited: vec![],
             })
             .await?;

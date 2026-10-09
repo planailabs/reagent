@@ -395,6 +395,17 @@ pub struct Todo {
     pub updated: i64,
 }
 
+/// A prompt template kept in reagent (its whole markdown file).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct KeptTemplate {
+    pub id: i64,
+    /// None: every project's.
+    pub project: Option<String>,
+    pub name: String,
+    pub text: String,
+    pub updated: i64,
+}
+
 /// One of a task's reports.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Report {
@@ -668,6 +679,32 @@ impl Store {
         sqlx::query("insert into reports (task, content) values ($1, $2)").bind(id).bind(report).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    pub async fn templates(&self) -> R<Vec<KeptTemplate>> {
+        sqlx::query_as("select id, project, name, text, updated from templates order by name").fetch_all(&self.pool).await
+    }
+
+    /// Adds or changes (by id) a kept template; its id.
+    pub async fn put_template(&self, id: Option<i64>, project: Option<&str>, name: &str, text: &str) -> Result<i64, String> {
+        let name = name.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || "_-./".contains(c)) || name.starts_with(['.', '/']) {
+            return Err("a template's name is letters, digits, _ - . /".into());
+        }
+        let r = match id {
+            Some(id) => sqlx::query_scalar("update templates set project = $2, name = $3, text = $4, updated = unixepoch() where id = $1 returning id").bind(id).bind(project).bind(name).bind(text).fetch_optional(&self.pool).await,
+            None => sqlx::query_scalar("insert into templates (project, name, text) values ($1, $2, $3) returning id").bind(project).bind(name).bind(text).fetch_optional(&self.pool).await,
+        };
+        match r {
+            Ok(Some(id)) => Ok(id),
+            Ok(None) => Err(format!("no template {}", id.unwrap_or_default())),
+            Err(e) if e.to_string().contains("UNIQUE") => Err(format!("there's a template {name} {}already", project.map(|p| format!("for {p} ")).unwrap_or_default())),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub async fn remove_template(&self, id: i64) -> R<bool> {
+        Ok(sqlx::query("delete from templates where id = $1").bind(id).execute(&self.pool).await?.rows_affected() > 0)
     }
 
     /// Every report the task made, oldest first (`set_report` appends).

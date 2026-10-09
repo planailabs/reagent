@@ -11,6 +11,8 @@ import Secrets from "./Secrets.vue";
 import Triggers from "./Triggers.vue";
 import Designer from "./Designer.vue";
 import SkillPicker from "./SkillPicker.vue";
+import TemplateForm from "./TemplateForm.vue";
+import Templates from "./Templates.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -23,6 +25,18 @@ const config = ref(null);
 const error = ref("");
 const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "" });
 const settings = ref(null);
+const templates = ref([]);
+const chosen = ref("");
+const values = ref({});
+const tf = ref(null);
+const formLike = computed(() => !!tf.value?.current?.fields.length);
+
+/** A template fills the form: a form-like one leaves the prompt to its fields, a plain one gives a prompt to edit. */
+function applyTemplate(t) {
+  if (!t) return;
+  const b = t.budget ?? {};
+  start.value = { ...start.value, title: t.fields.length ? "" : (t.title ?? ""), prompt: t.fields.length ? "" : t.prompt, profile: t.profile ?? "", kind: t.kind ?? "", skills: t.skills.filter((s) => skills.value.some((k) => k.name === s)), tokens: b.tokens ?? "", cost: b.cost ?? "", minutes: b.minutes ?? "" };
+}
 
 async function load() {
   try {
@@ -30,6 +44,7 @@ async function load() {
     tasks.value = await get(`/api/tasks?project=${props.slug}&active=${!showAll.value}&limit=300`);
     skills.value = await get(`/api/projects/${props.slug}/skills`);
     rules.value = await get(`/api/projects/${props.slug}/agent-rules`);
+    templates.value = (await get(`/api/templates?project=${encodeURIComponent(props.slug)}`)).filter((t) => !t.project || t.project === props.slug);
     config.value ??= await get("/api/config");
     if (!settings.value) {
       settings.value = { ...p.value, budget: { ...p.value.budget }, env: JSON.stringify(p.value.env, null, 2) };
@@ -52,6 +67,7 @@ async function startTask() {
       kind: start.value.kind || undefined,
       skills: start.value.skills,
       budget: budget(start.value),
+      ...(formLike.value ? { template: tf.value.current.name, values: values.value, prompt: "" } : {}),
     });
     location.hash = `#/task/${t.id}`;
   } catch (e) {
@@ -105,7 +121,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
   <section v-if="p">
     <h2>{{ p.name }} <span class="dim">{{ p.path }}</span></h2>
     <nav class="row tabs">
-      <a v-for="t in ['tasks', 'new', 'cron', 'triggers', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
+      <a v-for="t in ['tasks', 'new', 'templates', 'cron', 'triggers', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
     </nav>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
@@ -117,8 +133,9 @@ watch(() => [props.slug, showAll.value, live.tick], load);
 
     <Designer v-if="tab === 'new'" :project="slug" />
     <form v-if="tab === 'new'" class="stack" @submit.prevent="startTask">
-      <input v-model="start.title" placeholder="title (empty: the agent names it)" aria-label="title" />
-      <textarea v-model="start.prompt" placeholder="what to do" aria-label="what to do" required></textarea>
+      <TemplateForm v-if="templates.length" ref="tf" v-model:chosen="chosen" v-model:values="values" :templates="templates" :project="slug" @pick="applyTemplate" />
+      <input v-model="start.title" :placeholder="formLike && tf.current.title ? `title (empty: ${tf.render(tf.current.title)})` : 'title (empty: the agent names it)'" aria-label="title" />
+      <textarea v-if="!formLike" v-model="start.prompt" placeholder="what to do" aria-label="what to do" required></textarea>
       <div class="row">
         <label>profile
           <select v-model="start.profile" aria-label="profile">
@@ -140,6 +157,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <button type="submit">start</button>
     </form>
 
+    <Templates v-if="tab === 'templates'" :project="slug" @changed="load" />
     <Cron v-if="tab === 'cron'" :slug="slug" :config="config" />
     <Triggers v-else-if="tab === 'triggers'" :slug="slug" :config="config" />
     <Rules v-else-if="tab === 'policy'" :slug="slug" />

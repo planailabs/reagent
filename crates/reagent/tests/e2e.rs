@@ -452,3 +452,39 @@ async fn unlimited_leaves_the_projects_limits_off() {
     assert_eq!((t.budget.0.cost, t.budget.0.tokens), (None, Some(1000)), "cost unlimited, tokens the project's");
     r.done(&t.id).await;
 }
+
+#[tokio::test]
+async fn tasks_start_from_templates_in_the_repo_kept_or_pinned() {
+    let r = start().await;
+    let dir = r.project.path().join(".agents/templates");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("greet.md"), "---\ntitle: \"Greet {{who}}\"\nfields: [{name: who, required: true}]\n---\nSay hello to {{who}}.").unwrap();
+    // Kept in reagent, every project's but pinned to site.
+    r.run.app.store.put_template(None, None, "pinned", "---\nproject: site\ntitle: Pinned\nbudget: { minutes: 30 }\n---\nDo the pinned thing.").await.unwrap();
+    r.run.app.store.put_template(None, None, "broken", "---\nfields: [{name: a, type: radio}]\n---\nx").await.unwrap();
+    r.push("Lead", |_| call("c1", "tasks.template_list", json!({})));
+    r.push("Lead", |b| {
+        let l = last_result(b);
+        assert!(l.contains("\"greet\"") && l.contains("\"pinned\"") && l.contains("no type radio"), "{l}");
+        call("c2", "tasks.task_spawn", json!({"template": "greet", "values": {"who": "Ada"}}))
+    });
+    r.push("Lead", |b| {
+        assert!(last_result(b).contains("Greet Ada"), "{}", last_result(b));
+        text("spawned")
+    });
+    r.push("Greet Ada", |b| {
+        assert!(all_text(b).contains("Say hello to Ada."));
+        text("hello Ada")
+    });
+    let lead = r.start_task("Lead", "x").await;
+    r.done(&lead.id).await;
+    // No project: the pin says which.
+    r.push("Pinned", |_| text("ok"));
+    let t = r.run.app.start_task(reagent_tools::app::StartTask { template: Some("pinned".into()), ..Default::default() }).await.unwrap();
+    assert_eq!((t.project.as_str(), t.prompt.as_str(), t.budget.0.minutes), ("site", "Do the pinned thing.", Some(30)));
+    r.done(&t.id).await;
+    let e = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), template: Some("greet".into()), ..Default::default() }).await.unwrap_err();
+    assert!(e.contains("is needed"), "{e}");
+    let e = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), template: Some("broken".into()), ..Default::default() }).await.unwrap_err();
+    assert!(e.contains("broken"), "{e}");
+}

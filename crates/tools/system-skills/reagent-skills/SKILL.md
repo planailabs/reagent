@@ -67,3 +67,35 @@ else the default branch); changes made in its folder are dropped then. The
 person adds, updates and removes plugins on the settings page or with `reagent
 plugin add <url> [--id] [--ref] | list | update [ids…] | remove <id>`; outside
 agents with the MCP API's `plugin_*` tools.
+
+## Prompt templates
+
+Prompts to start tasks from: `.agents/templates/<name>.md` in the project (or
+kept in reagent: a project's templates tab, the settings; or global:
+`~/.agents/templates/`, `<data>/templates/`, plugins' `templates/`).
+Frontmatter: `description`, `title`, `skills`, `budget`, `profile`, `kind`,
+`project` (pins a global one), and `fields` (`name`, `label`, `type`: text,
+multiline, select with `options`, checkbox; `default`, `required`). The body
+is the prompt with `{{field}}` placeholders.
+
+With fields a template is a form: the person fills it on the quick prompt or a
+project's new task tab, an agent passes `values` to `tasks.task_spawn`
+(`tasks.template_list` shows them). Without fields its body is a prompt to edit.
+What isn't given comes from the template.
+
+```markdown
+---
+description: Fix a failing CI job
+title: "Fix CI: {{job}}"
+budget: { cost: 2, minutes: 60 }
+fields:
+  - name: job
+    label: Job name
+    required: true
+  - name: branch
+    type: select
+    options: [main, staging]
+    default: main
+---
+The CI job {{job}} fails on {{branch}}. Find out why and fix it.
+```

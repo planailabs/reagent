@@ -54,6 +54,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TaskCmd,
     },
+    /// Prompt templates: the global ones, or a project's (its repo's, kept in reagent, global, plugins').
+    Template {
+        #[command(subcommand)]
+        cmd: TemplateCmd,
+    },
     /// Plugins: git repositories (in <data>/plugins/<id>/) whose skills and rules every task gets.
     Plugin {
         #[command(subcommand)]
@@ -227,6 +232,30 @@ enum TriggerCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
+    /// Start a task (queued: the running reagent starts it): from a prompt, or a template
+    /// (`reagent template list`) with --set field=value.
+    Start {
+        /// The project (may be left out with a template pinned to one).
+        #[arg(long, default_value = "")]
+        project: String,
+        #[arg(long)]
+        template: Option<String>,
+        /// A template field's value (field=value; again for more).
+        #[arg(long = "set")]
+        set: Vec<String>,
+        /// Default: the template's, else the task names itself.
+        #[arg(long, default_value = "")]
+        title: String,
+        /// What to do (default: the template's prompt).
+        #[arg(long, default_value = "")]
+        prompt: String,
+        #[arg(long = "skill")]
+        skills: Vec<String>,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+    },
     /// Start the designer for a rough goal: a design task that reads the project, asks you
     /// (in the web UI, or by notification), and proposes tasks, cron entries, triggers, skills.
     /// The running reagent starts it.
@@ -246,6 +275,20 @@ enum TaskCmd {
         /// Print it as JSON.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TemplateCmd {
+    List {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// One template's file.
+    Show {
+        name: String,
+        #[arg(long)]
+        project: Option<String>,
     },
 }
 
@@ -519,6 +562,30 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 }
             };
             match cmd {
+                TaskCmd::Start { project, template, set, title, prompt, skills, profile, kind } => {
+                    let mut req = reagent_tools::app::StartTask { project, title, prompt, skills, profile, kind, ..Default::default() };
+                    if let Some(name) = template {
+                        let p = if req.project.is_empty() { None } else { Some(store.project(&req.project).await?.ok_or_else(|| anyhow::anyhow!("no project {:?}", req.project))?) };
+                        let t = reagent_tools::templates::find(&store, &data, p.as_ref(), &name).await.map_err(anyhow::Error::msg)?;
+                        let mut values = serde_json::Map::new();
+                        for kv in set {
+                            let (k, v) = kv.split_once('=').ok_or_else(|| anyhow::anyhow!("--set field=value, not {kv:?}"))?;
+                            values.insert(k.trim().into(), serde_json::Value::String(v.into()));
+                        }
+                        reagent_tools::templates::apply(&t, &values, &mut req).map_err(anyhow::Error::msg)?;
+                    }
+                    anyhow::ensure!(!req.project.is_empty(), "--project: which project?");
+                    anyhow::ensure!(!req.prompt.trim().is_empty(), "--prompt or --template: what to do?");
+                    let p = store.project(&req.project).await?.ok_or_else(|| anyhow::anyhow!("no project {:?}", req.project))?;
+                    let mut budget = req.budget.unwrap_or_default();
+                    budget.tokens = budget.tokens.or(p.budget.tokens);
+                    budget.cost = budget.cost.or(p.budget.cost);
+                    budget.minutes = budget.minutes.or(p.budget.minutes);
+                    let kind_profile = req.kind.as_deref().and_then(|k| config.kind.get(k)).and_then(|k| k.profile.clone());
+                    let t = queue(&p, req.title.trim().to_string(), req.prompt, "cli", req.skills, req.profile.or(kind_profile), req.kind, Some(budget)).await?;
+                    println!("{}", t.id);
+                    eprintln!("queued: the running reagent starts it");
+                }
                 TaskCmd::Design { goal, project, target } => {
                     anyhow::ensure!(matches!(target.as_str(), "task" | "cron" | "trigger"), "--target: task, cron or trigger");
                     anyhow::ensure!(!goal.trim().is_empty(), "what do you want done?");
@@ -555,6 +622,33 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                             eprintln!("{}. {}", i + 1, done.unwrap_or_else(|e| format!("not made: {e}")));
                         }
                     }
+                }
+            }
+            Ok(())
+        }
+        Cmd::Template { cmd } => {
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let project = match &cmd {
+                TemplateCmd::List { project } | TemplateCmd::Show { project, .. } => match project {
+                    Some(slug) => Some(store.project(slug).await?.ok_or_else(|| anyhow::anyhow!("no project {slug:?}"))?),
+                    None => None,
+                },
+            };
+            match cmd {
+                TemplateCmd::List { .. } => {
+                    for t in reagent_tools::templates::discover(&store, &data, project.as_ref()).await {
+                        let form = if t.fields.is_empty() { "prompt".to_string() } else { format!("form: {}", t.fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ")) };
+                        let pin = t.project.as_deref().map(|p| format!(" [for {p}]")).unwrap_or_default();
+                        match &t.error {
+                            Some(e) => println!("{}\t{}{pin}\tbroken: {e}", t.name, t.source),
+                            None => println!("{}\t{}{pin}\t{form}\t{}", t.name, t.source, t.description),
+                        }
+                    }
+                }
+                TemplateCmd::Show { name, .. } => {
+                    let all = reagent_tools::templates::discover(&store, &data, project.as_ref()).await;
+                    let t = all.iter().find(|t| t.name == name).ok_or_else(|| anyhow::anyhow!("no template {name:?}"))?;
+                    print!("{}", t.text);
                 }
             }
             Ok(())

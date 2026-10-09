@@ -164,6 +164,39 @@ test("a quick prompt picks the project, limits from presets, typed or unlimited,
   await expect(page.getByLabel("tokens limit").getByRole("button", { name: "1M" })).toHaveClass(/on/);
 });
 
+test("templates: a form fills the prompt, a plain one gives it to edit, and new ones are kept", async ({ page }) => {
+  await page.goto("/#/quick");
+  await page.getByLabel("project").selectOption("site");
+  await page.getByLabel("template", { exact: true }).selectOption({ label: "ci — Fix a failing CI job (project, form)" });
+  await expect(page.getByLabel("what to do")).toHaveCount(0);
+  await page.getByLabel("Job name").fill("build");
+  await expect(page.getByLabel("rendered prompt")).toHaveText("The CI job build fails on main. Fix it.");
+  await expect(page.getByLabel("other minutes limit")).toHaveAttribute("placeholder", "45");
+  await page.getByRole("button", { name: "start" }).click();
+  await expect(page.getByRole("heading", { name: "Fix CI: build" })).toBeVisible();
+  const id = page.url().split("/task/")[1];
+  const t = await (await page.request.get(`/api/tasks/${id}`)).json();
+  expect([t.prompt, t.budget.minutes]).toEqual(["The CI job build fails on main. Fix it.", 45]);
+  // A plain one: its prompt to edit.
+  await page.goto("/#/project/site/new");
+  await page.getByLabel("template", { exact: true }).selectOption({ label: "review — Review the open PRs (project)" });
+  await expect(page.getByLabel("what to do")).toHaveValue("Review every open PR and say what blocks each.");
+  await expect(page.getByLabel("title", { exact: true })).toHaveValue("Review PRs");
+  // Kept in reagent: a broken one is refused, a good one listed.
+  await page.goto("/#/project/site/templates");
+  await page.getByRole("button", { name: "new template for this project" }).click();
+  await page.getByLabel("template name").fill("deploy");
+  await page.getByLabel("template text").fill("---\nfields: [{name: host, type: radio}]\n---\nDeploy {{host}}.");
+  await page.getByRole("button", { name: "save the template" }).click();
+  await expect(page.getByRole("alert")).toContainText("no type radio");
+  await page.getByLabel("template text").fill("---\ndescription: Deploy a host\nfields: [{name: host}]\n---\nDeploy {{host}}.");
+  await page.getByRole("button", { name: "save the template" }).click();
+  await expect(page.getByLabel("template deploy")).toContainText("kept in reagent for site");
+  page.once("dialog", (d) => d.accept());
+  await page.getByLabel("template deploy").getByRole("button", { name: "remove" }).click();
+  await expect(page.getByLabel("template deploy")).toHaveCount(0);
+});
+
 test("reports are kept, each folds and so do they all", async ({ page }) => {
   await startTask(page, "Report twice");
   await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");

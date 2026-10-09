@@ -18,7 +18,7 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("git", &["worktree_status", "worktree_diff", "worktree_merge"]),
     ("memory", &["memory_read", "memory_search"]),
     ("skills", &["skill_list", "skill_load"]),
-    ("tasks", &["task_list", "cron_list", "prompt_design", "task_title"]),
+    ("tasks", &["task_list", "cron_list", "prompt_design", "task_title", "template_list"]),
     ("ask", &["ask"]),
     ("todo", &["todo_list"]),
     ("wm", &["wm_get"]),

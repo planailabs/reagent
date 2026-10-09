@@ -17,4 +17,5 @@ pub mod devshell;
 pub mod hooks;
 pub mod mcp;
 pub mod notify;
+pub mod templates;
 pub mod triggers;

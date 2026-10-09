@@ -60,6 +60,8 @@ pub fn routes() -> Router<S> {
         .route("/api/inbox", get(inbox))
         .route("/api/notifications", get(notifications))
         .route("/api/notifications/seen", post(seen))
+        .route("/api/templates", get(templates).put(put_template))
+        .route("/api/templates/{id}", delete(remove_template))
         .route("/api/plugins", get(plugins).post(add_plugin))
         .route("/api/plugins/update", post(update_plugins))
         .route("/api/plugins/{id}", delete(remove_plugin))
@@ -333,6 +335,45 @@ async fn set_channel(State(s): State<S>, Path(id): Path<i64>, Json(b): Json<SetC
 
 async fn remove_channel(State(s): State<S>, Path(id): Path<i64>) -> R {
     Ok(Json(json!({"removed": db(s.w.app.store.remove_notify_channel(id).await)?})))
+}
+
+#[derive(Deserialize)]
+struct TemplatesQ {
+    project: Option<String>,
+}
+
+/// A project's templates (none: the global ones), each parsed, broken ones with their error.
+async fn templates(State(s): State<S>, Query(q): Query<TemplatesQ>) -> R {
+    Ok(Json(json!(s.w.app.templates(q.project.as_deref()).await?)))
+}
+
+#[derive(Deserialize)]
+struct PutTemplate {
+    id: Option<i64>,
+    project: Option<String>,
+    name: String,
+    text: String,
+}
+
+/// Adds or changes a template kept in reagent; a broken one is refused.
+async fn put_template(State(s): State<S>, Json(b): Json<PutTemplate>) -> R {
+    let project = b.project.filter(|p| !p.is_empty());
+    if let Some(p) = &project {
+        s.w.app.project(p).await?;
+    }
+    let t = reagent_tools::templates::parse(b.name.trim(), &b.text, "db");
+    if let Some(e) = t.error {
+        return Err(E(StatusCode::BAD_REQUEST, e));
+    }
+    let id = s.w.app.store.put_template(b.id, project.as_deref(), &b.name, &b.text).await?;
+    Ok(Json(json!({"id": id})))
+}
+
+async fn remove_template(State(s): State<S>, Path(id): Path<i64>) -> R {
+    if !db(s.w.app.store.remove_template(id).await)? {
+        return Err(E(StatusCode::NOT_FOUND, format!("no template {id}")));
+    }
+    Ok(Json(json!({"removed": true})))
 }
 
 async fn plugins(State(s): State<S>) -> R {
