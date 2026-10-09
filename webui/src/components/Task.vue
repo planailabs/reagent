@@ -28,6 +28,9 @@ const error = ref("");
 const tab = ref("transcript");
 const waitOpen = ref(true);
 const reportOpen = ref(true);
+/** A design task's report without its proposal's block (the proposal shows it). */
+const designReport = ref(null);
+const shownReport = computed(() => designReport.value ?? t.value?.report);
 /** Something waits for the person: a call to approve, a question, a merge, the budget. */
 const waiting = computed(() => !!call.value || ["question", "merge", "budget"].includes(t.value?.wait?.kind));
 const ptys = ref([]);
@@ -197,14 +200,14 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <pre>{{ t.report }}</pre>
       <button @click="act('retry')">retry from the failure</button>
     </div>
-    <div v-if="t.report && t.state !== 'failed'" class="report" aria-label="report">
+    <div v-if="shownReport && t.state !== 'failed'" class="report" aria-label="report">
       <div class="row">
         <span class="dim grow">report</span>
         <button :aria-label="reportOpen ? 'fold the report' : 'unfold the report'" @click="reportOpen = !reportOpen">{{ reportOpen ? "▴" : "▾" }}</button>
       </div>
-      <div v-if="reportOpen" class="md" v-html="markdown(t.report)"></div>
+      <div v-if="reportOpen" class="md" v-html="markdown(shownReport)"></div>
     </div>
-    <Proposal v-if="t.origin === 'design' && t.state === 'done'" :task="t" />
+    <Proposal v-if="t.origin === 'design' && t.state === 'done'" :task="t" @read="(p) => (designReport = p ? p.report : null)" />
 
     <form class="row" @submit.prevent="send">
       <input v-model="msg" class="grow" :placeholder="['done', 'failed'].includes(t.state) ? 'a message goes on with the task' : 'a message (read before its next step)'" aria-label="message" />

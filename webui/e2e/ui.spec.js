@@ -324,9 +324,33 @@ test("the guide reads, asks, and proposes items the person picks and creates", a
   await p.getByLabel("item 1", { exact: true }).getByRole("button", { name: "edit" }).click();
   await p.getByLabel("item 1", { exact: true }).getByLabel("item title").fill("Polish the home page");
   await p.getByLabel("take item 2").uncheck();
+  // The skill's body has a code fence of its own; the report shows without the JSON.
+  await expect(p.getByLabel("item 2", { exact: true })).toContainText("npm run polish");
+  await expect(page.getByLabel("report", { exact: true })).toContainText("The plan.");
+  await expect(page.getByLabel("report", { exact: true })).not.toContainText("items");
+  // The third becomes a cron entry: not without a schedule.
+  const third = p.getByLabel("item 3", { exact: true });
+  await third.getByRole("button", { name: "edit" }).click();
+  await third.getByLabel("item kind").selectOption("cron");
+  await p.getByRole("button", { name: "create the ticked ones" }).click();
+  await expect(p).toContainText("Check the page: a cron entry needs a schedule");
+  await third.getByLabel("schedule").fill("0 4 * * 1");
   await p.getByRole("button", { name: "create the ticked ones" }).click();
   await expect(p).toContainText("✓ task Polish the home page started");
+  await expect(p).toContainText("✓ cron entry");
+  await expect(p.locator(".err")).toHaveCount(0);
   await expect(p).not.toContainText("page-polish written");
+});
+
+test("a design without a readable proposal is asked for it again", async ({ page }) => {
+  await page.goto("/#/project/site/new");
+  await page.getByText("design it with the guide").click();
+  await page.getByLabel("goal").fill("garbled");
+  await page.getByRole("button", { name: "design", exact: true }).click();
+  const p = page.getByLabel("proposal");
+  await expect(p).toContainText("no proposal that can be read");
+  await p.getByRole("button", { name: "ask it to write the proposal again" }).click();
+  await expect(p.getByLabel("item 1", { exact: true })).toContainText("task: Check it");
 });
 
 test("reagent's docs are readable", async ({ page }) => {

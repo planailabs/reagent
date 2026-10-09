@@ -22,6 +22,9 @@ pub struct Proposal {
     pub note: String,
     #[serde(default)]
     pub items: Vec<Item>,
+    /// The report without the proposal's block (what to show next to it).
+    #[serde(default, skip_deserializing)]
+    pub report: String,
 }
 
 /// One thing to make.
@@ -109,11 +112,59 @@ impl Item {
 /// that aren't one are left out, and so is what they name that doesn't
 /// exist: a kind, a profile, a skill).
 pub fn parse_report(report: &str, config: &Config, skills: &[String]) -> Option<Proposal> {
-    let block = report.rsplit("```json").next().filter(|_| report.contains("```json"))?;
-    let text = block.split("```").next()?;
-    let v: Value = serde_json::from_str(text.trim()).ok()?;
-    let items = v["items"].as_array()?.iter().filter_map(|i| serde_json::from_value::<Item>(i.clone()).ok()).map(|i| tidy(i, config, skills)).collect();
-    Some(Proposal { note: v["note"].as_str().unwrap_or_default().to_string(), items })
+    const FENCE: &str = "```json";
+    // A string in it (a skill's body) may hold fences of its own: the JSON
+    // is read to its own end, not to the next ```, and a ```json inside a
+    // string is skipped for the block around it.
+    for (at, _) in report.rmatch_indices(FENCE) {
+        let mut values = serde_json::Deserializer::from_str(&report[at + FENCE.len()..]).into_iter::<Value>();
+        let Some(Ok(v)) = values.next() else { continue };
+        let end = at + FENCE.len() + values.byte_offset();
+        let Some((note, items)) = shape(v) else { continue };
+        let after = report[end..].trim_start();
+        let rest = format!("{}\n\n{}", report[..at].trim_end(), after.strip_prefix("```").unwrap_or(after).trim_start());
+        let items = items.into_iter().filter_map(|i| serde_json::from_value::<Item>(typed(i)).ok()).map(|i| tidy(i, config, skills)).collect();
+        return Some(Proposal { note, items, report: rest.trim().into() });
+    }
+    None
+}
+
+/// The note and the items of a proposal as written: `{note, items}`, or
+/// (what models also write) a bare list of items, or a single item with
+/// its note in it.
+fn shape(v: Value) -> Option<(String, Vec<Value>)> {
+    match v {
+        Value::Array(items) => Some((String::new(), items)),
+        Value::Object(mut o) => {
+            let note = o.remove("note").and_then(|n| n.as_str().map(Into::into)).unwrap_or_default();
+            match o.remove("items") {
+                Some(Value::Array(items)) => Some((note, items)),
+                Some(_) => None,
+                None if ["prompt", "body", "script"].iter().any(|k| o.contains_key(*k)) => Some((note, vec![Value::Object(o)])),
+                None => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// An item without its `type`, typed by what it has.
+fn typed(mut i: Value) -> Value {
+    if let Some(o) = i.as_object_mut()
+        && !o.contains_key("type")
+    {
+        let t = if o.contains_key("expr") {
+            "cron"
+        } else if o.contains_key("mode") || o.contains_key("script") {
+            "trigger"
+        } else if o.contains_key("body") {
+            "skill"
+        } else {
+            "task"
+        };
+        o.insert("type".into(), t.into());
+    }
+    i
 }
 
 fn tidy(item: Item, config: &Config, known: &[String]) -> Item {
@@ -206,7 +257,7 @@ pub fn task_prompt(target: &str, goal: &str) -> String {
            {{\"type\": \"trigger\", \"name\": \"…\", \"mode\": \"poll\", \"every\": \"5m\", \"script\": \"prints one JSON line per event\", \"title\": \"…\", \"prompt\": \"…\", \"repo\": true, \"why\": \"…\"}},\n\
            {{\"type\": \"skill\", \"name\": \"lowercase-name\", \"description\": \"…\", \"body\": \"the SKILL.md instructions\", \"why\": \"…\"}}\n\
          ]}}\n\
-         Any number of each, only those that fit; `why` in a line each. Skills, kinds and profiles only by names that exist. The person edits the items, ticks the ones they want, and they're made.\n\n\
+         Always that object, with `items` a list, even for one item. Any number of each, only those that fit; `why` in a line each. Skills, kinds and profiles only by names that exist. The person edits the items, ticks the ones they want, and they're made.\n\n\
          The skill `reagent-prompt-design` (loaded below) says what makes a prompt clear and when each kind of item fits.",
         goal.trim()
     )
@@ -227,6 +278,29 @@ pub fn proposal_text(p: &Proposal) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_proposal_is_read_whatever_its_strings_hold_and_however_its_shaped() {
+        let cfg = Config::parse(crate::config::EXAMPLE).unwrap();
+        // A skill's body with fences of its own (```sh, even ```json): read whole.
+        let report = "I looked.\n\n```json\n{\"note\": \"n\", \"items\": [\
+            {\"type\": \"skill\", \"name\": \"check\", \"description\": \"d\", \"body\": \"Run:\\n```sh\\ncurl x\\n```\\nor\\n```json\\n{}\\n```\"},\
+            {\"type\": \"task\", \"title\": \"T\", \"prompt\": \"p\"}]}\n```\n\nThat's all.";
+        let p = parse_report(report, &cfg, &[]).unwrap();
+        assert_eq!(p.items.len(), 2);
+        assert!(matches!(&p.items[0], Item::Skill { body, .. } if body.contains("```sh\ncurl x\n```")), "{:?}", p.items[0]);
+        assert_eq!(p.report, "I looked.\n\nThat's all.", "the report without the block");
+        // One bare item with its note in it, no type: a task.
+        let p = parse_report("```json\n{\"title\": \"Update\", \"prompt\": \"do\", \"skills\": [], \"note\": \"daily\"}\n```", &cfg, &[]).unwrap();
+        assert_eq!((p.note.as_str(), p.items.len()), ("daily", 1));
+        assert!(matches!(&p.items[0], Item::Task { title, .. } if title == "Update"));
+        // A bare list; types from what they have.
+        let p = parse_report("```json\n[{\"expr\": \"0 4 * * *\", \"title\": \"c\", \"prompt\": \"p\"}, {\"name\": \"ci\", \"mode\": \"poll\", \"every\": \"5m\", \"script\": \"x\", \"title\": \"t\", \"prompt\": \"p\"}]\n```", &cfg, &[]).unwrap();
+        assert!(matches!((&p.items[0], &p.items[1]), (Item::Cron { .. }, Item::Trigger { .. })), "{:?}", p.items);
+        // Other JSON (an example) after the proposal doesn't hide it.
+        let p = parse_report("```json\n{\"note\": \"\", \"items\": []}\n```\nlike `{\"a\": 1}`:\n```json\n{\"a\": 1}\n```", &cfg, &[]).unwrap();
+        assert!(p.items.is_empty());
+    }
 
     #[test]
     fn a_reports_proposal_is_read_and_tidied() {

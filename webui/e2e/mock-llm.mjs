@@ -30,11 +30,16 @@ function reply(body) {
     if (tools.length === 1) return call("w2", "wm__wm_set", { key: "plan", value: { step: 2 } });
     return text("remembered");
   }
+  if (title.startsWith("Design: garbled")) {
+    if (!all.includes("Write it again")) return text("I think a weekly check would do.");
+    return text("Again.\n```json\n" + JSON.stringify({ note: "", items: [{ type: "task", title: "Check it", prompt: "Check." }] }) + "\n```");
+  }
   if (title.startsWith("Design:")) {
     if (!tools.length) return call("d1", "ask__ask", { question: "Which page?", options: ["home", "about"] });
     const items = [
       { type: "task", title: "Polish the page", prompt: "Make the page **nicer**.", why: "once now" },
-      { type: "skill", name: "page-polish", description: "How to polish a page", body: "1. Look.\n2. Polish.", why: "it comes up again" },
+      { type: "skill", name: "page-polish", description: "How to polish a page", body: "1. Look.\n2. Run:\n```sh\nnpm run polish\n```", why: "it comes up again" },
+      { type: "task", title: "Check the page", prompt: "Check it.", why: "again and again" },
     ];
     return text("The plan.\n```json\n" + JSON.stringify({ note: `the ${last} page`, items }) + "\n```");
   }
