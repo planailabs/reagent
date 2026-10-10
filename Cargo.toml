@@ -13,10 +13,10 @@ reagent-tools = { path = "crates/tools" }
 reagent-web = { path = "crates/web" }
 # subagent-net: the hub, the node and the agents reagent runs on.
 # Without the tool router (fastembed/onnxruntime: no static musl build) and the hub's own web UI.
-subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99", default-features = false }
-subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
-subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
-subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "504423ed6c69b20a275c2be871928f5d192b6d99" }
+subnet = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "febfd34694e7ccf58e8d7f0667334c21af6e5079", default-features = false }
+subnet-core = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "febfd34694e7ccf58e8d7f0667334c21af6e5079" }
+subnet-cluster = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "febfd34694e7ccf58e8d7f0667334c21af6e5079" }
+subnet-llm = { git = "ssh://git@git.plan.ai/plan-ai/subagent-net.git", rev = "febfd34694e7ccf58e8d7f0667334c21af6e5079" }
 anyhow = "1"
 argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
@@ -35,7 +35,7 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 hcl-rs = "0.19"
 hmac = "0.12"
-rust-embed = { version = "8", features = ["mime-guess"] }
+rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 nix = { version = "0.30", features = ["signal", "process"] }
 ignore = "0.4"
 portable-pty = "0.9"
