@@ -7,6 +7,7 @@ pub mod git;
 pub mod misc;
 pub mod shell;
 pub mod services;
+pub mod source;
 pub mod triggers;
 
 use std::path::{Component, Path, PathBuf};
@@ -136,6 +137,7 @@ pub fn router(app: Arc<App>) -> axum::Router {
         .nest_service("/mcp/secrets", service(misc::SecretTools(app.clone())))
         .nest_service("/mcp/triggers", service(triggers::TriggerTools(app.clone())))
         .nest_service("/mcp/services", service(services::ServiceTools(app.clone())))
+        .nest_service("/mcp/source", service(source::SourceTools(app.clone())))
         .nest_service("/mcp/hooks", service(crate::hooks::HookTools(app)))
         .layer(axum::middleware::from_fn(auth))
 }

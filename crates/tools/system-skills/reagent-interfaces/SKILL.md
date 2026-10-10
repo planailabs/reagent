@@ -51,5 +51,5 @@ kinds it gets; `reagent.hcl`'s notify block can add URLs too).
 `plugin_list`, `plugin_add`, `plugin_update`, `plugin_remove`, `template_list`,
 `worktree_list`, `worktree_add`, `worktree_merge`, `worktree_remove`,
 `service_list`, `service_add`, `service_remove`, `service_start`, `service_stop`,
-`service_restart`, `service_logs`, `service_move`
+`service_restart`, `service_logs`, `service_move`, `reagent_source_ls`, `reagent_source_read`
 (`task_start` takes a `template` and its `values`, and a persistent `worktree`).

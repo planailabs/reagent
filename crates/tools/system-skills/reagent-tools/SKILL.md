@@ -1,6 +1,6 @@
 ---
 name: reagent-tools
-description: The tools a reagent task has - files, commands and background jobs, terminals, the nix dev shell, git, memory, skills, tasks, asking, todos, working memory, secrets, triggers, services, subnet's history tools, and MCP servers the person adds (lazy).
+description: The tools a reagent task has - files, commands and background jobs, terminals, the nix dev shell, git, memory, skills, tasks, asking, todos, working memory, secrets, triggers, services, reagent's own source, subnet's history tools, and MCP servers the person adds (lazy).
 ---
 
 # Tools
@@ -19,6 +19,7 @@ description: The tools a reagent task has - files, commands and background jobs,
 | `wm` | `wm_get` (all slots as one JSON object), `wm_set(key, value)` (any JSON), `wm_remove(key)`: the task's own working memory |
 | `secrets` | `secrets_list`, `secrets_get`, `secrets_set`, `secrets_remove` (`reagent-secrets`) |
 | `triggers` | `trigger_list`, `trigger_add`, `trigger_remove`, `trigger_move` (`reagent-cron-and-triggers`) |
+| `source` | `reagent_source_ls`, `reagent_source_read`: reagent's own source, as this build has it (how reagent works; DESIGN.md first) |
 | `services` | `service_list`, `service_add`, `service_remove`, `service_start`, `service_stop`, `service_restart`, `service_logs`, `service_move` (`reagent-services`) |
 
 subnet adds `search_history` (your whole conversation, also what was

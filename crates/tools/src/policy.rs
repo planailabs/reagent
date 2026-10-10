@@ -184,6 +184,7 @@ pub fn starter_rules(slug: &str) -> Vec<Rule> {
         r("triggers.trigger_list", None, "allow"),
         r("services.service_list", None, "allow"),
         r("services.service_logs", None, "allow"),
+        r("source.*", None, "allow"),
         r("shell.jobs", None, "allow"),
         r("shell.job_output", None, "allow"),
         r("shell.job_wait", None, "allow"),

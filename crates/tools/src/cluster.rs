@@ -25,6 +25,7 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("secrets", &["secrets_list", "secrets_get"]),
     ("triggers", &["trigger_list"]),
     ("services", &["service_list", "service_logs"]),
+    ("source", &["reagent_source_ls", "reagent_source_read"]),
 ];
 
 /// The env var the node reads the MCP servers' token from.

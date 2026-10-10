@@ -221,6 +221,26 @@ pub struct ServiceLogs {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct SourceLs {
+    /// A folder of the repository (default: the top), like crates/tools/src.
+    #[serde(default)]
+    pub path: String,
+    /// Every file under it, not only its entries.
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct SourceRead {
+    /// A file of the repository, like crates/tools/src/app.rs or DESIGN.md.
+    pub path: String,
+    /// The first line (default 1).
+    pub from: Option<usize>,
+    /// The last line (default: 400 lines on).
+    pub to: Option<usize>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TriggerRef {
     pub project: String,
     pub name: String,
@@ -526,6 +546,16 @@ impl ReagentTools {
         let v = reagent_tools::services::move_to(&self.0.store, &p, &a.name, &a.to).await?;
         self.0.emit_service(&p.slug, &v.name).await;
         Ok(format!("{} is {} now", v.name, if v.source == "repo" { "in the repo" } else { "kept in reagent" }))
+    }
+
+    #[tool(description = "List reagent's own source (as this running build has it): a folder's entries, or every file under it.")]
+    async fn reagent_source_ls(&self, Parameters(a): Parameters<SourceLs>) -> Result<String, String> {
+        reagent_tools::source::ls(&a.path, a.recursive)
+    }
+
+    #[tool(description = "Read a file of reagent's own source (as this running build has it), numbered lines, 400 at a time.")]
+    async fn reagent_source_read(&self, Parameters(a): Parameters<SourceRead>) -> Result<String, String> {
+        reagent_tools::source::read(&a.path, a.from, a.to)
     }
 
     #[tool(description = "The plugins: git repositories in reagent's data folder whose skills and rules every task gets (id, URL, ref, commit, skills, rules).")]

@@ -69,7 +69,7 @@ pub struct Kind {
 /// asking, its own lists and notes, and following jobs.
 const READ_TOOLS: &[&str] = &[
     "fs.read", "fs.grep", "fs.glob", "fs.ls", "memory.memory_read", "memory.memory_search", "skills.*", "ask.ask", "todo.*", "wm.*",
-    "tasks.search_history", "tasks.task_list", "tasks.task_wait", "tasks.task_title", "tasks.template_list", "tasks.cron_list", "triggers.trigger_list", "services.service_list", "services.service_logs",
+    "tasks.search_history", "tasks.task_list", "tasks.task_wait", "tasks.task_title", "tasks.template_list", "tasks.cron_list", "triggers.trigger_list", "services.service_list", "services.service_logs", "source.*",
     "secrets.secrets_list", "git.worktree_status", "git.worktree_diff", "shell.jobs", "shell.job_output", "shell.job_wait", "shell.sleep", "pty.ptys", "pty.pty_screen",
 ];
 
