@@ -94,6 +94,8 @@ pub fn routes() -> Router<S> {
         .route("/api/tasks/{id}", get(task))
         .route("/api/tasks/{id}/transcript", get(transcript))
         .route("/api/tasks/{id}/message", post(message))
+        .route("/api/tasks/{id}/queued", delete(cancel_queued))
+        .route("/api/tasks/{id}/queued/{mid}", put(edit_queued).delete(cancel_one_queued))
         .route("/api/tasks/{id}/pause", post(pause))
         .route("/api/tasks/{id}/resume", post(resume))
         .route("/api/tasks/{id}/cancel", post(cancel))
@@ -707,7 +709,7 @@ async fn task(State(s): State<S>, Path(id): Path<String>) -> R {
     v["todos"] = json!(db(s.w.app.store.todos(&id).await)?);
     v["working_memory"] = json!(db(s.w.app.store.working_memory(&id).await)?);
     v["reports"] = json!(db(s.w.app.store.reports(&id).await)?);
-    v["queued_messages"] = json!(db(s.w.app.store.outbox(&id).await)?.into_iter().map(|(_, text, at)| json!({"text": text, "at": at})).collect::<Vec<_>>());
+    v["queued_messages"] = json!(db(s.w.app.store.outbox(&id).await)?);
     Ok(Json(v))
 }
 
@@ -732,6 +734,20 @@ struct Text {
 async fn message(State(s): State<S>, Path(id): Path<String>, Json(m): Json<Text>) -> R {
     s.w.app.message(&id, &format!("[from the person] {}", m.text)).await?;
     Ok(Json(json!({"ok": true})))
+}
+
+async fn edit_queued(State(s): State<S>, Path((id, mid)): Path<(String, i64)>, Json(m): Json<Text>) -> R {
+    s.w.app.edit_queued(&id, mid, &format!("[from the person] {}", m.text.strip_prefix("[from the person] ").unwrap_or(&m.text))).await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn cancel_one_queued(State(s): State<S>, Path((id, mid)): Path<(String, i64)>) -> R {
+    s.w.app.cancel_queued(&id, Some(mid)).await?;
+    Ok(Json(json!({"cancelled": 1})))
+}
+
+async fn cancel_queued(State(s): State<S>, Path(id): Path<String>) -> R {
+    Ok(Json(json!({"cancelled": s.w.app.cancel_queued(&id, None).await?})))
 }
 
 #[derive(Deserialize)]

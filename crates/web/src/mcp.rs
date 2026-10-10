@@ -251,7 +251,7 @@ impl ReagentTools {
         v["todos"] = json!(self.0.store.todos(&a.task).await.map_err(|e| e.to_string())?);
         v["working_memory"] = json!(self.0.store.working_memory(&a.task).await.map_err(|e| e.to_string())?);
         v["reports"] = json!(self.0.store.reports(&a.task).await.map_err(|e| e.to_string())?);
-        v["queued_messages"] = json!(self.0.store.outbox(&a.task).await.map_err(|e| e.to_string())?.into_iter().map(|(_, text, _)| text).collect::<Vec<_>>());
+        v["queued_messages"] = json!(self.0.store.outbox(&a.task).await.map_err(|e| e.to_string())?.into_iter().map(|q| q.text).collect::<Vec<_>>());
         j(v)
     }
 

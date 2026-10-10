@@ -726,9 +726,24 @@ impl App {
         tokio::spawn(async move {
             let mut backoff = 1u64;
             loop {
+                // A paused task's messages wait (editable) until it's resumed.
+                if me.task(&id).await.is_ok_and(|t| t.state == "paused") {
+                    me.delivering.lock().unwrap().remove(&id);
+                    return;
+                }
                 let next = me.store.outbox(&id).await.map(|v| v.into_iter().next());
                 let (row, text) = match next {
-                    Ok(Some((row, text, _))) => (row, text),
+                    Ok(Some(q)) => {
+                        // Claimed before it's sent: an edit or a cancel made since the look wins.
+                        if !q.sending && !me.store.claim_outbox(q.id).await.unwrap_or(false) {
+                            continue;
+                        }
+                        me.task_changed(&id).await;
+                        match me.store.outbox(&id).await.ok().and_then(|v| v.into_iter().find(|x| x.id == q.id)) {
+                            Some(x) => (x.id, x.text),
+                            None => continue,
+                        }
+                    }
                     Ok(None) => {
                         me.delivering.lock().unwrap().remove(&id);
                         // One queued between the look and the removal: go on, unless another worker took it.
@@ -753,8 +768,8 @@ impl App {
                         let gone = me.task(&id).await.map(|t| t.state == "cancelled").unwrap_or(true);
                         if gone {
                             tracing::info!(task = %id, "dropping queued messages: the task is gone or cancelled");
-                            for (r, _, _) in me.store.outbox(&id).await.unwrap_or_default() {
-                                let _ = me.store.remove_outbox(r).await;
+                            for q in me.store.outbox(&id).await.unwrap_or_default() {
+                                let _ = me.store.remove_outbox(q.id).await;
                             }
                             me.task_changed(&id).await;
                             continue;
@@ -766,6 +781,28 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Changes a queued message not yet being delivered.
+    pub async fn edit_queued(&self, task: &str, id: i64, text: &str) -> Result<(), String> {
+        if text.trim().is_empty() {
+            return Err("an empty message: cancel it instead".into());
+        }
+        if !self.store.edit_outbox(task, id, text).await.map_err(|e| e.to_string())? {
+            return Err("that message is being delivered already (or gone)".into());
+        }
+        self.task_changed(task).await;
+        Ok(())
+    }
+
+    /// Cancels one queued message, or every one (None), not yet being delivered: how many.
+    pub async fn cancel_queued(&self, task: &str, id: Option<i64>) -> Result<u64, String> {
+        let n = self.store.cancel_outbox(task, id).await.map_err(|e| e.to_string())?;
+        if id.is_some() && n == 0 {
+            return Err("that message is being delivered already (or gone)".into());
+        }
+        self.task_changed(task).await;
+        Ok(n)
     }
 
     /// Hands a message to the task's agent (it waits until the agent takes it).
@@ -797,6 +834,8 @@ impl App {
         self.store.set_state(id, "running", None).await.map_err(|e| e.to_string())?;
         self.notified.lock().unwrap().retain(|(t, _)| t != id);
         self.task_changed(id).await;
+        // What was queued while it was paused goes now.
+        let _ = self.queued_tx.send(id.to_string());
         Ok(())
     }
 
@@ -1476,6 +1515,7 @@ impl App {
         let me = self.clone();
         let mut queued = self.queued_rx.lock().unwrap().take().expect("follow runs once");
         tokio::spawn(async move {
+            let _ = me.store.unclaim_outbox().await;
             for id in me.store.outbox_tasks().await.unwrap_or_default() {
                 me.deliver(&id);
             }
@@ -1504,6 +1544,10 @@ impl App {
                 // node was still coming up, say) are moved on as soon as it can.
                 if n % 10 == 0 {
                     me.upgrade_outdated().await;
+                    // Messages held for a task that has gone on since (resumed by any path).
+                    for id in me.store.outbox_tasks().await.unwrap_or_default() {
+                        me.deliver(&id);
+                    }
                 }
                 n += 1;
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;

@@ -197,10 +197,43 @@ test("templates: a form fills the prompt, a plain one gives it to edit, and new 
   await expect(page.getByLabel("template deploy")).toHaveCount(0);
 });
 
+test("queued messages are shown, edited, cancelled one by one and all at once", async ({ page }) => {
+  await startTask(page, "Touch and hold");
+  await expect(page.getByLabel("waits for you")).toBeVisible();
+  // Paused: messages wait in the queue until it's resumed.
+  await page.getByRole("button", { name: "pause", exact: true }).click();
+  for (const m of ["one", "two", "three", "four"]) {
+    await page.getByLabel("message", { exact: true }).fill(m);
+    await page.getByRole("button", { name: "send" }).click();
+    await expect(page.getByLabel("message", { exact: true })).toHaveValue("");
+  }
+  const q = page.getByLabel("queued messages");
+  await expect(q).toContainText("four");
+  const row = (text) => q.locator(".row", { hasText: text });
+  await row("three").getByRole("button", { name: "edit" }).click();
+  await q.getByLabel("edit the message").fill("three, changed");
+  await q.getByRole("button", { name: "save" }).click();
+  await expect(q).toContainText("three, changed");
+  await row("two").getByRole("button", { name: "cancel" }).click();
+  await expect(q).not.toContainText("two");
+  await q.getByRole("button", { name: "cancel all" }).click();
+  await expect(q).toHaveCount(0);
+  // One more, kept: resuming delivers it, and the task answers it.
+  await page.getByLabel("message", { exact: true }).fill("five");
+  await page.getByRole("button", { name: "send" }).click();
+  await expect(q).toContainText("five");
+  await page.getByRole("button", { name: "resume" }).click();
+  await expect(q).toHaveCount(0);
+  // It would hold a place for the tests after.
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "cancel", exact: true }).click();
+  await expect(page.locator(".state", { hasText: "cancelled" }).or(page.getByText("cancelled").first())).toBeVisible();
+});
+
 test("reports are kept, each folds and so do they all", async ({ page }) => {
   await startTask(page, "Report twice");
   await expect(page.getByLabel("report 1", { exact: true })).toContainText("the first report");
-  await page.getByLabel("message").fill("once more");
+  await page.getByLabel("message", { exact: true }).fill("once more");
   await page.getByRole("button", { name: "send" }).click();
   await expect(page.getByLabel("report 2", { exact: true })).toContainText("the second report");
   // The earlier one folds away once there's a newer one; each unfolds on its own.

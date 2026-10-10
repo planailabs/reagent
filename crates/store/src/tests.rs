@@ -240,3 +240,22 @@ async fn reports_are_appended_and_the_last_is_the_tasks() {
     assert_eq!(s.reports(&t.id).await.unwrap().iter().map(|r| r.content.as_str()).collect::<Vec<_>>(), ["first", "second"]);
     assert_eq!(s.task(&t.id).await.unwrap().unwrap().report.as_deref(), Some("second"));
 }
+
+#[tokio::test]
+async fn queued_messages_are_edited_and_cancelled_until_claimed() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let t = s.add_task(&NewTask { project: "site".into(), title: "T".into(), prompt: "p".into(), origin: "ui".into(), cwd: "/".into(), profile: "default".into(), ..Default::default() }).await.unwrap();
+    let (a, b, c) = (s.push_outbox(&t.id, "a").await.unwrap(), s.push_outbox(&t.id, "b").await.unwrap(), s.push_outbox(&t.id, "c").await.unwrap());
+    assert!(s.claim_outbox(a).await.unwrap() && !s.claim_outbox(a).await.unwrap(), "claimed once");
+    assert!(!s.edit_outbox(&t.id, a, "x").await.unwrap(), "being delivered: not editable");
+    assert!(s.edit_outbox(&t.id, b, "b2").await.unwrap());
+    assert!(!s.edit_outbox("other", c, "x").await.unwrap(), "only the task's own");
+    assert_eq!(s.cancel_outbox(&t.id, Some(c)).await.unwrap(), 1);
+    s.push_outbox(&t.id, "d").await.unwrap();
+    assert_eq!(s.cancel_outbox(&t.id, None).await.unwrap(), 2, "all but the one being delivered");
+    let left = s.outbox(&t.id).await.unwrap();
+    assert_eq!((left.len(), left[0].text.as_str(), left[0].sending), (1, "a", true));
+    s.unclaim_outbox().await.unwrap();
+    assert!(!s.outbox(&t.id).await.unwrap()[0].sending, "after a restart it's sent again");
+}

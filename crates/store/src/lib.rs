@@ -406,6 +406,17 @@ pub struct KeptTemplate {
     pub updated: i64,
 }
 
+/// A message queued for a task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Queued {
+    pub id: i64,
+    pub text: String,
+    #[sqlx(rename = "created")]
+    pub at: i64,
+    /// Being handed to the task: no longer editable.
+    pub sending: bool,
+}
+
 /// One of a task's reports.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Report {
@@ -712,9 +723,30 @@ impl Store {
         sqlx::query_scalar("insert into outbox (task, text) values ($1, $2) returning id").bind(task).bind(text).fetch_one(&self.pool).await
     }
 
-    /// The task's messages not delivered yet, oldest first: id, text, when queued.
-    pub async fn outbox(&self, task: &str) -> R<Vec<(i64, String, i64)>> {
-        sqlx::query_as("select id, text, created from outbox where task = $1 order by id").bind(task).fetch_all(&self.pool).await
+    /// The task's messages not delivered yet, oldest first.
+    pub async fn outbox(&self, task: &str) -> R<Vec<Queued>> {
+        sqlx::query_as("select id, text, created, sending from outbox where task = $1 order by id").bind(task).fetch_all(&self.pool).await
+    }
+
+    /// Takes a queued message for delivery: from then on it can't be changed or cancelled.
+    pub async fn claim_outbox(&self, id: i64) -> R<bool> {
+        Ok(sqlx::query("update outbox set sending = 1 where id = $1 and sending = 0").bind(id).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    /// A message not yet being delivered, changed.
+    pub async fn edit_outbox(&self, task: &str, id: i64, text: &str) -> R<bool> {
+        Ok(sqlx::query("update outbox set text = $3 where task = $1 and id = $2 and sending = 0").bind(task).bind(id).bind(text).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    /// Cancels one message not yet being delivered, or (None) all of them: how many.
+    pub async fn cancel_outbox(&self, task: &str, id: Option<i64>) -> R<u64> {
+        Ok(sqlx::query("delete from outbox where task = $1 and ($2 is null or id = $2) and sending = 0").bind(task).bind(id).execute(&self.pool).await?.rows_affected())
+    }
+
+    /// After a restart nothing is being delivered: claimed ones are sent again.
+    pub async fn unclaim_outbox(&self) -> R<()> {
+        sqlx::query("update outbox set sending = 0").execute(&self.pool).await?;
+        Ok(())
     }
 
     /// Tasks with messages waiting.

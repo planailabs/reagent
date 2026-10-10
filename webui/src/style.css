@@ -128,3 +128,4 @@ details.note > summary::-webkit-details-marker { display: none; }
 .picks li:hover { background: var(--line); }
 .choices button.on { font-weight: bold; }
 .limit { min-width: 4.5em; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, inject, onMounted, ref, watch } from "vue";
-import { get, post } from "../lib/api.js";
+import { del, get, post, put } from "../lib/api.js";
 import { ago, budget, glyph, messageText, money, toolName, waitText } from "../lib/format.js";
 import { sections } from "../lib/transcript.js";
 import { markdown } from "../lib/markdown.js";
@@ -86,6 +86,29 @@ function cancelTask() {
 async function send() {
   if (!msg.value.trim()) return;
   if (await act("message", { text: msg.value }) !== undefined) msg.value = "";
+}
+
+/** Queued messages: edited or cancelled until they're being delivered. */
+const editing = ref(null);
+const shown = (text) => text.replace(/^\[from the person\] /, "");
+async function saveQueued() {
+  error.value = "";
+  try {
+    await put(`/api/tasks/${props.id}/queued/${editing.value.id}`, { text: editing.value.text });
+    editing.value = null;
+  } catch (e) {
+    error.value = e.message;
+  }
+  await load();
+}
+async function cancelQueued(m) {
+  error.value = "";
+  try {
+    await del(m ? `/api/tasks/${props.id}/queued/${m.id}` : `/api/tasks/${props.id}/queued`);
+  } catch (e) {
+    error.value = e.message;
+  }
+  await load();
 }
 
 async function answer(text) {
@@ -230,9 +253,27 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <input v-model="msg" class="grow" :placeholder="['done', 'failed'].includes(t.state) ? 'a message goes on with the task' : 'a message (read before its next step)'" aria-label="message" />
       <button type="submit">send</button>
     </form>
-    <ul v-if="t.queued_messages?.length" class="dim" aria-label="queued messages">
-      <li v-for="(m, i) in t.queued_messages" :key="i">queued, not taken yet: {{ m.text }}</li>
-    </ul>
+    <section v-if="t.queued_messages?.length" class="card stack" aria-label="queued messages">
+      <div class="row">
+        <span class="dim grow">{{ t.queued_messages.length }} queued, not taken yet (oldest first)</span>
+        <button v-if="t.queued_messages.some((m) => !m.sending)" @click="cancelQueued()">cancel all</button>
+      </div>
+      <div v-for="m in t.queued_messages" :key="m.id" class="row" :aria-label="`queued ${m.id}`">
+        <template v-if="editing?.id === m.id">
+          <textarea v-model="editing.text" class="grow" rows="2" aria-label="edit the message"></textarea>
+          <button @click="saveQueued">save</button>
+          <button @click="editing = null">keep</button>
+        </template>
+        <template v-else>
+          <span class="grow pre">{{ shown(m.text) }}</span>
+          <span v-if="m.sending" class="dim">being delivered…</span>
+          <template v-else>
+            <button @click="editing = { id: m.id, text: shown(m.text) }">edit</button>
+            <button @click="cancelQueued(m)">cancel</button>
+          </template>
+        </template>
+      </div>
+    </section>
 
     <div v-if="todos.length" class="todos" aria-label="todo list">
       <h2>todo <span class="dim">{{ todos.filter((x) => x.status === "done").length }} of {{ todos.filter((x) => x.status !== "cancelled").length }} done</span></h2>
