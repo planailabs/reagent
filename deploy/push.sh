@@ -16,5 +16,6 @@ incus file push deploy/nixos-container.nix "$c/etc/nixos/reagent.nix"
 incus exec "$c" -- sh -lc '
   rm -rf /opt/reagent.new && mkdir -p /opt/reagent.new && install -m 755 /root/reagent.new /opt/reagent.new/reagent && rm /root/reagent.new
   rm -rf /opt/reagent.old; [ -d /opt/reagent ] && mv /opt/reagent /opt/reagent.old; mv /opt/reagent.new /opt/reagent
+  chown --reference=/etc/nixos /etc/nixos/reagent.nix
   grep -q reagent.nix /etc/nixos/configuration.nix || sed -i "s|    ./incus.nix|    ./incus.nix\n    ./reagent.nix|" /etc/nixos/configuration.nix
   nixos-rebuild switch >/dev/null && systemctl restart reagent && systemctl is-active reagent'
