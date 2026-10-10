@@ -170,3 +170,49 @@ async fn a_terminal_over_the_websocket() {
 fn chrono_like_now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
 }
+
+#[tokio::test]
+async fn persistent_worktrees_over_the_api() {
+    let r = start().await;
+    let (c, base) = logged_in(&r).await;
+    let u = format!("{base}/api/projects/site/worktrees");
+    // One made by hand is offered for adopting; a task's own isn't.
+    let by_hand = r.project.path().parent().unwrap().join(format!("{}-hand", r.project.path().file_name().unwrap().to_string_lossy()));
+    git(r.project.path(), &["worktree", "add", "-q", "-b", "hand", &by_hand.display().to_string()]);
+    let l = get(&c, u.clone()).await;
+    assert_eq!((l["worktrees"].as_array().unwrap().len(), l["adoptable"][0]["branch"].as_str()), (0, Some("hand")), "{l}");
+    let bad = c.post(&u).json(&json!({"name": "../x"})).send().await.unwrap();
+    assert_eq!(bad.status(), 400);
+    let made = post(&c, u.clone(), json!({"name": "release", "branch": "release-1", "sharing": "exclusive"})).await;
+    assert_eq!((made["branch"].as_str(), made["base"].as_str(), made["sharing_now"].as_str(), made["adopted"].as_bool()), (Some("release-1"), Some("main"), Some("exclusive"), Some(false)));
+    let adopted = post(&c, u.clone(), json!({"name": "hand", "path": by_hand})).await;
+    assert_eq!((adopted["branch"].as_str(), adopted["adopted"].as_bool(), adopted["sharing_now"].as_str()), (Some("hand"), Some(true), Some("shared")));
+    assert!(get(&c, u.clone()).await["adoptable"].as_array().unwrap().is_empty());
+    let set: Value = c.put(format!("{u}/release")).json(&json!({"sharing": null})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(set["sharing_now"], "shared", "back to the project's");
+    std::fs::write(by_hand.join("b.txt"), "b\n").unwrap();
+    git(&by_hand, &["add", "."]);
+    git(&by_hand, &["commit", "-q", "-m", "b"]);
+    let one = get(&c, format!("{u}/hand")).await;
+    assert_eq!(one["worktree"]["ahead"], 1);
+    assert!(one["stat"].as_str().unwrap().contains("b.txt") && one["diff"].as_str().unwrap().contains("+b"), "{one}");
+    // Unmerged commits keep it, then it merges into main.
+    let keep = c.delete(format!("{u}/hand?delete=true")).send().await.unwrap();
+    assert_eq!(keep.status(), 400);
+    let m = post(&c, format!("{u}/hand/merge"), json!({"strategy": "squash", "message": "hand work"})).await;
+    assert!(m["merged"].as_str().unwrap().starts_with("merged hand into main"), "{m}");
+    assert_eq!(std::fs::read_to_string(r.project.path().join("b.txt")).unwrap(), "b\n");
+    // A task starts there over the API.
+    r.push("There", |_| text("ok"));
+    let t = post(&c, format!("{base}/api/tasks"), json!({"project": "site", "title": "There", "prompt": "x", "worktree": "release"})).await;
+    assert_eq!(t["home"], "release");
+    r.done(t["id"].as_str().unwrap()).await;
+    assert_eq!(get(&c, format!("{u}/release")).await["tasks"][0]["title"], "There");
+    // Adopted: forgotten, the folder stays; made: removed with its branch.
+    let gone = c.delete(format!("{u}/hand")).send().await.unwrap();
+    assert!(gone.status().is_success());
+    assert!(by_hand.exists());
+    assert!(c.delete(format!("{u}/release")).send().await.unwrap().status().is_success());
+    assert!(!git(r.project.path(), &["branch", "--list", "release-1"]).contains("release-1"));
+    let _ = std::fs::remove_dir_all(&by_hand);
+}

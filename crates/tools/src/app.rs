@@ -83,6 +83,10 @@ pub struct StartTask {
     /// The template's field values.
     #[serde(default)]
     pub values: serde_json::Map<String, Value>,
+    /// A persistent worktree of the project to work in (none: a subtask's
+    /// parent's, else the project folder; "": the project folder).
+    #[serde(default)]
+    pub worktree: Option<String>,
 }
 
 pub struct App {
@@ -341,7 +345,7 @@ impl App {
             return Err(format!("{} isn't a folder", path.display()));
         }
         p.path = path.display().to_string();
-        for (field, v, ok) in [("devshell", &p.devshell, &["off", "auto", "on"][..]), ("memory", &p.memory, &["central", "repo"]), ("worktrees", &p.worktrees, &["central", "repo"]), ("merge", &p.merge, &["approve", "auto"]), ("default_action", &p.default_action, &["allow", "ask", "deny"])] {
+        for (field, v, ok) in [("devshell", &p.devshell, &["off", "auto", "on"][..]), ("memory", &p.memory, &["central", "repo"]), ("worktrees", &p.worktrees, &["central", "repo"]), ("merge", &p.merge, &["approve", "auto"]), ("default_action", &p.default_action, &["allow", "ask", "deny"]), ("worktree_sharing", &p.worktree_sharing, &["shared", "exclusive"])] {
             if !ok.contains(&v.as_str()) {
                 return Err(format!("{field}: one of {}", ok.join(", ")));
             }
@@ -565,13 +569,33 @@ impl App {
         budget.tokens = if free("tokens") { None } else { budget.tokens.or(p.budget.tokens) };
         budget.cost = if free("cost") { None } else { budget.cost.or(p.budget.cost) };
         budget.minutes = if free("minutes") { None } else { budget.minutes.or(p.budget.minutes) };
-        let skills = self.skills_for(Path::new(&p.path), &p);
+        // Where it works: the persistent worktree asked for, else a subtask's parent's (same project).
+        let home_name = match req.worktree.as_deref().map(str::trim) {
+            Some("") => None,
+            Some(n) => Some(n.to_string()),
+            None => match &req.parent {
+                Some(parent) => self.store.task(parent).await.map_err(|e| e.to_string())?.filter(|t| t.project == p.slug).and_then(|t| t.home),
+                None => None,
+            },
+        };
+        let home = match &home_name {
+            Some(n) => {
+                let w = self.worktrees().get(&p.slug, n).await?;
+                if !Path::new(&w.path).is_dir() {
+                    return Err(format!("the persistent worktree {n} is gone ({} isn't there)", w.path));
+                }
+                Some(w)
+            }
+            None => None,
+        };
+        let cwd = home.as_ref().map(|w| w.path.clone()).unwrap_or_else(|| p.path.clone());
+        let skills = self.skills_for(Path::new(&cwd), &p);
         for name in &req.skills {
             skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
         }
         // Over the limit of tasks running at once: it waits (subtasks never do: their parent waits for them).
         // ponytail: two starts at the same moment may both find the last place; add a lock if that matters.
-        let queue = req.parent.is_none() && !self.has_room(&p).await;
+        let queue = req.parent.is_none() && !self.has_room(&p, home.as_ref()).await;
         let t = self
             .store
             .add_task(&NewTask {
@@ -580,11 +604,12 @@ impl App {
                 title: req.title.trim().into(),
                 prompt: req.prompt.clone(),
                 origin,
-                cwd: p.path.clone(),
+                cwd,
                 profile: profile.clone(),
                 budget,
                 skills: req.skills.clone(),
                 kind,
+                home: home_name,
             })
             .await
             .map_err(|e| e.to_string())?;
@@ -603,8 +628,14 @@ impl App {
         self.store.setting("max_tasks").await.ok().flatten().and_then(|v| v.parse().ok()).filter(|n| *n > 0)
     }
 
-    /// Whether another task of this project may start now.
-    async fn has_room(&self, p: &Project) -> bool {
+    /// Whether another task of this project (in this persistent worktree) may start now.
+    async fn has_room(&self, p: &Project, home: Option<&reagent_store::PersistentWorktree>) -> bool {
+        if let Some(w) = home
+            && crate::persistent::exclusive(p, w)
+            && self.store.tasks_in_home(&p.slug, &w.name).await.unwrap_or(0) > 0
+        {
+            return false;
+        }
         if let Some(max) = self.max_tasks().await
             && self.store.running_tasks(None).await.unwrap_or(0) >= max
         {
@@ -622,7 +653,11 @@ impl App {
     pub async fn start_queued(&self) {
         for t in self.store.queued_tasks().await.unwrap_or_default() {
             let Ok(p) = self.project(&t.project).await else { continue };
-            if !self.has_room(&p).await {
+            let home = match &t.home {
+                Some(n) => self.store.persistent_worktree(&p.slug, n).await.ok().flatten(),
+                None => None,
+            };
+            if !self.has_room(&p, home.as_ref()).await {
                 continue;
             }
             match self.spawn(&t).await {
@@ -645,7 +680,7 @@ impl App {
     async fn spawn(&self, t: &Task) -> Result<Task, String> {
         let p = self.project(&t.project).await?;
         let profile = t.profile.clone();
-        let skills = self.skills_for(Path::new(&p.path), &p);
+        let skills = self.skills_for(Path::new(&t.cwd), &p);
         let mut preload = String::new();
         for name in t.skills.iter() {
             let s = skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
@@ -654,12 +689,19 @@ impl App {
         }
         // Its kind's role, before what to do.
         let role = t.kind.as_deref().and_then(|k| self.config.kind.get(k).and_then(|kd| kd.prompt.as_deref()).map(|r| format!("# Your role ({k})\n\n{}\n\n# What to do\n\n", r.trim()))).unwrap_or_default();
+        let home = match &t.home {
+            Some(n) => match self.store.persistent_worktree(&p.slug, n).await.ok().flatten() {
+                Some(w) => format!("\nPersistent worktree: {n} (branch {}, base {}): work and commit here directly; a worktree you start (git.worktree_start) branches from {} and merges back into it.", w.branch, w.base, w.branch),
+                None => String::new(),
+            },
+            None => String::new(),
+        };
         let first = format!(
-            "Task: {}\nProject: {} ({})\nWorking directory: {}\n\n{role}{}{}",
+            "Task: {}\nProject: {} ({})\nWorking directory: {}{home}\n\n{role}{}{}",
             if t.title.is_empty() { UNTITLED } else { &t.title },
             p.name,
             p.slug,
-            p.path,
+            t.cwd,
             t.prompt.trim(),
             if preload.is_empty() { String::new() } else { format!("\n\n# Skills loaded for this task{preload}") }
         );

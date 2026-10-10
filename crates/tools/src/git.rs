@@ -15,6 +15,19 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// `git` for the commits reagent makes itself (merges, squashes, rebases):
+/// as reagent when git has no identity there (a fresh machine's user), so a
+/// merge doesn't fail on "Please tell me who you are".
+fn git_commit(dir: &Path, args: &[&str]) -> Result<String, String> {
+    if git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty()) {
+        return git(dir, args);
+    }
+    tracing::info!(dir = %dir.display(), "git has no user.email here: committing as reagent <reagent@localhost>");
+    let mut all = vec!["-c", "user.name=reagent", "-c", "user.email=reagent@localhost"];
+    all.extend_from_slice(args);
+    git(dir, &all)
+}
+
 pub fn is_repo(dir: &Path) -> bool {
     git(dir, &["rev-parse", "--git-dir"]).is_ok()
 }
@@ -47,6 +60,43 @@ pub fn add(repo: &Path, path: &Path, branch: &str, base: &str) -> Result<(), Str
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
     git(repo, &["worktree", "add", "-b", branch, &path.display().to_string(), base]).map(|_| ())
+}
+
+/// Makes a worktree at `path` on `branch`: the branch if there is one, else a new one from `base`.
+pub fn add_on(repo: &Path, path: &Path, branch: &str, base: &str) -> Result<(), String> {
+    if git(repo, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_err() {
+        return add(repo, path, branch, base);
+    }
+    if let Some(p) = path.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    git(repo, &["worktree", "add", &path.display().to_string(), branch]).map(|_| ())
+}
+
+/// The repository's worktrees (the main one first): their folder and branch (none: detached).
+pub fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>, String> {
+    let mut out: Vec<(PathBuf, Option<String>)> = vec![];
+    for l in git(repo, &["worktree", "list", "--porcelain"])?.lines() {
+        if let Some(p) = l.strip_prefix("worktree ") {
+            out.push((PathBuf::from(p), None));
+        } else if let (Some(b), Some(last)) = (l.strip_prefix("branch refs/heads/"), out.last_mut()) {
+            last.1 = Some(b.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// Keeps `.worktrees/` out of the repository's status (worktrees in the repo).
+pub fn exclude_worktrees(repo: &Path) {
+    let Ok(dir) = std::process::Command::new("git").arg("-C").arg(repo).args(["rev-parse", "--git-common-dir"]).output() else { return };
+    let gd = PathBuf::from(String::from_utf8_lossy(&dir.stdout).trim());
+    let gd = if gd.is_absolute() { gd } else { repo.join(gd) };
+    let f = gd.join("info/exclude");
+    let text = std::fs::read_to_string(&f).unwrap_or_default();
+    if !text.lines().any(|l| l.trim() == "/.worktrees/") {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(&f, format!("{text}{}/.worktrees/\n", if text.is_empty() || text.ends_with('\n') { "" } else { "\n" }));
+    }
 }
 
 /// `git status --short` in a worktree.
@@ -118,7 +168,7 @@ pub fn merge(repo: &Path, wt: &Path, branch: &str, base: &str, strategy: Strateg
     if ahead(wt, base)? == 0 {
         return Ok(Merged::Nothing);
     }
-    if strategy == Strategy::Rebase && let Err(e) = git(wt, &["rebase", base]) {
+    if strategy == Strategy::Rebase && let Err(e) = git_commit(wt, &["rebase", base]) {
         let files = conflicted(wt);
         let _ = git(wt, &["rebase", "--abort"]);
         return if files.is_empty() { Err(e) } else { Ok(Merged::Conflicts { files }) };
@@ -138,9 +188,9 @@ pub fn merge(repo: &Path, wt: &Path, branch: &str, base: &str, strategy: Strateg
             return Err(format!("{} (where {base} is checked out) has uncommitted changes: it can't take a merge now", target.display()));
         }
         let r = match strategy {
-            Strategy::Merge => git(&target, &["merge", "--no-ff", "-m", message, branch]),
+            Strategy::Merge => git_commit(&target, &["merge", "--no-ff", "-m", message, branch]),
             Strategy::Rebase => git(&target, &["merge", "--ff-only", branch]),
-            Strategy::Squash => git(&target, &["merge", "--squash", branch]).and_then(|_| git(&target, &["commit", "-m", message])),
+            Strategy::Squash => git(&target, &["merge", "--squash", branch]).and_then(|_| git_commit(&target, &["commit", "-m", message])),
         };
         if let Err(e) = r {
             let files = conflicted(&target);
@@ -211,6 +261,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(r.path().join("b.txt")).unwrap(), "new\n", "merged into the main checkout");
         remove(r.path(), &wt, &branch, "main", false).unwrap();
         assert!(!wt.exists() && checkout_of(r.path(), &branch).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_branch_off_a_persistent_worktree_merges_into_it() {
+        let r = repo();
+        git(r.path(), &["branch", "next"]).unwrap();
+        let home = r.path().join("wt/next");
+        add_on(r.path(), &home, "next", "main").unwrap();
+        add_on(r.path(), &r.path().join("wt/fresh"), "fresh", "main").unwrap();
+        let list = worktrees(r.path()).unwrap();
+        assert_eq!(list.iter().map(|(_, b)| b.clone().unwrap()).collect::<Vec<_>>(), ["main", "fresh", "next"]);
+        let wt = r.path().join("wt/fix");
+        add(r.path(), &wt, "reagent/fix", "next").unwrap();
+        commit(&wt, "b.txt", "fix\n");
+        let Merged::Done { .. } = merge(r.path(), &wt, "reagent/fix", "next", Strategy::Merge, "m").unwrap() else { panic!() };
+        assert_eq!(std::fs::read_to_string(home.join("b.txt")).unwrap(), "fix\n", "into the persistent worktree's checkout");
+        assert!(!r.path().join("b.txt").exists(), "not into main");
     }
 
     #[test]

@@ -79,6 +79,9 @@ pub fn routes() -> Router<S> {
         .route("/api/projects/{slug}/agent-rules", get(project_rules))
         .route("/api/projects/{slug}/cron", get(crons))
         .route("/api/projects/{slug}/triggers", get(triggers))
+        .route("/api/projects/{slug}/worktrees", get(worktrees).post(add_worktree))
+        .route("/api/projects/{slug}/worktrees/{name}", get(worktree).put(set_worktree).delete(remove_worktree))
+        .route("/api/projects/{slug}/worktrees/{name}/merge", post(merge_worktree))
         .route("/api/triggers/{project}/{name}", put(put_trigger).delete(remove_trigger))
         .route("/api/triggers/{project}/{name}/run", post(run_trigger))
         .route("/api/triggers/{project}/{name}/enabled", post(enable_trigger))
@@ -483,6 +486,63 @@ async fn set_rules(State(s): State<S>, Path(slug): Path<String>, Json(rules): Js
     }
     db(s.w.app.store.set_rules(&slug, &rules).await)?;
     Ok(Json(json!(db(s.w.app.store.rules(&slug).await)?)))
+}
+
+/// A project's persistent worktrees, and those git has that could be adopted.
+async fn worktrees(State(s): State<S>, Path(slug): Path<String>) -> R {
+    let (kept, adoptable) = s.w.app.worktrees().list(&slug).await?;
+    Ok(Json(json!({"worktrees": kept, "adoptable": adoptable})))
+}
+
+async fn add_worktree(State(s): State<S>, Path(slug): Path<String>, Json(b): Json<reagent_tools::persistent::AddWorktree>) -> R {
+    Ok(Json(json!(s.w.app.worktrees().add(&slug, b).await?)))
+}
+
+/// One: how it is, its status and diff against its base, the tasks that worked there.
+async fn worktree(State(s): State<S>, Path((slug, name)): Path<(String, String)>) -> R {
+    let a = s.w.app.worktrees();
+    let info = a.info_of(&slug, &name).await?;
+    let (stat, diff, status) = if info.missing {
+        (String::new(), String::new(), String::new())
+    } else {
+        (a.diff(&slug, &name, true).await.unwrap_or_else(|e| e), a.diff(&slug, &name, false).await.unwrap_or_default(), a.status(&slug, &name).await.unwrap_or_default())
+    };
+    let tasks: Vec<Value> = a.tasks(&slug, &name).await?.iter().map(|t| json!({"id": t.id, "title": t.name(), "state": t.state, "created": t.created, "parent": t.parent})).collect();
+    Ok(Json(json!({"worktree": info, "stat": stat, "diff": diff, "status": status, "tasks": tasks})))
+}
+
+#[derive(Deserialize)]
+struct SetWorktree {
+    /// shared, exclusive, or null: the project's.
+    sharing: Option<String>,
+}
+
+async fn set_worktree(State(s): State<S>, Path((slug, name)): Path<(String, String)>, Json(b): Json<SetWorktree>) -> R {
+    Ok(Json(json!(s.w.app.worktrees().set_sharing(&slug, &name, b.sharing.as_deref().filter(|x| !x.is_empty())).await?)))
+}
+
+#[derive(Deserialize)]
+struct MergeWorktree {
+    strategy: Option<reagent_tools::git::Strategy>,
+    message: Option<String>,
+}
+
+async fn merge_worktree(State(s): State<S>, Path((slug, name)): Path<(String, String)>, Json(b): Json<MergeWorktree>) -> R {
+    let said = s.w.app.worktrees().merge(&slug, &name, b.strategy.unwrap_or(reagent_tools::git::Strategy::Merge), b.message).await?;
+    Ok(Json(json!({"merged": said})))
+}
+
+#[derive(Deserialize)]
+struct RemoveWorktree {
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    delete: bool,
+}
+
+async fn remove_worktree(State(s): State<S>, Path((slug, name)): Path<(String, String)>, Query(q): Query<RemoveWorktree>) -> R {
+    let said = s.w.app.worktrees().remove(&slug, &name, q.force, q.delete).await?;
+    Ok(Json(json!({"removed": said})))
 }
 
 /// The rules the project's tasks get (`.agents/rules`, global, plugins') and when.

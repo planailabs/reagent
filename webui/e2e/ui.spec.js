@@ -521,6 +521,37 @@ test("a plugin is added from git, its skills reach projects, it updates and goes
   await expect(page.getByLabel("plugin plugin-src")).toHaveCount(0);
 });
 
+test("a persistent worktree is made, a task starts in it, it merges into main and goes", async ({ page }) => {
+  await page.goto("/#/project/site/worktrees");
+  await page.getByLabel("worktree name").fill("next");
+  await page.getByRole("button", { name: "make a worktree" }).click();
+  const card = page.getByLabel("worktree next");
+  await expect(card).toContainText("next → main");
+  await card.getByLabel("sharing of next").selectOption("exclusive");
+  await expect(card.getByLabel("sharing of next")).toHaveValue("exclusive");
+  await page.goto("/#/project/site/new");
+  await page.getByLabel("works in").selectOption("next");
+  await page.getByLabel("title", { exact: true }).fill("Feature work");
+  await page.getByLabel("what to do").fill("go");
+  await page.getByRole("button", { name: "start" }).click();
+  await expect(page.getByRole("heading", { name: "Feature work" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "next", exact: true })).toBeVisible();
+  await expect(page.locator(".reports")).toContainText("Done: Feature work");
+  // A commit there makes it ahead of main; the person merges it.
+  const w = (await (await page.request.get("/api/projects/site/worktrees/next")).json()).worktree;
+  execSync(`echo x > wt.txt && git add wt.txt && git -c user.email=t@t -c user.name=t commit -q -m wt`, { cwd: w.path, shell: "/bin/sh" });
+  await page.goto("/#/project/site/worktrees");
+  await expect(card).toContainText("1 ahead");
+  await card.getByRole("button", { name: /next/ }).first().click();
+  await expect(card.getByRole("link", { name: "Feature work" })).toBeVisible();
+  await expect(card).toContainText("wt.txt");
+  await card.getByRole("button", { name: "merge into main" }).click();
+  await expect(card).toContainText("merged next into main");
+  page.once("dialog", (d) => d.accept());
+  await card.getByRole("button", { name: "remove" }).click();
+  await expect(page.getByText("no persistent worktrees yet")).toBeVisible();
+});
+
 test("reagent's docs are readable", async ({ page }) => {
   await page.goto("/#/docs");
   await expect(page.locator("article")).toContainText("reagent runs coding agents");

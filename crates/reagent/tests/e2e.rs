@@ -550,3 +550,76 @@ async fn helpers_are_subtasks_of_a_kind_and_spawn_agent_says_so() {
     let kids = r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap();
     assert_eq!(kids[0].kind.as_deref(), Some("explore"));
 }
+
+#[tokio::test]
+async fn a_task_in_a_persistent_worktree_works_there_and_merges_back_into_it() {
+    let r = start().await;
+    r.allow_all().await;
+    let mut p = r.run.app.project("site").await.unwrap();
+    p.merge = "auto".into();
+    r.run.app.put_project(p).await.unwrap();
+    let wts = r.run.app.worktrees();
+    let next = wts.add("site", reagent_tools::persistent::AddWorktree { name: "next".into(), ..Default::default() }).await.unwrap();
+    assert_eq!((next.worktree.branch.as_str(), next.worktree.base.as_str(), next.sharing_now.as_str()), ("next", "main", "shared"));
+    let home = std::path::PathBuf::from(&next.worktree.path);
+    assert!(home.join("a.txt").exists());
+
+    r.push("Home", |b| {
+        assert!(all_text(b).contains("Persistent worktree: next (branch next, base main)"), "{}", all_text(b));
+        call("c1", "fs.write", json!({"path": "home.txt", "text": "direct\n"}))
+    });
+    r.push("Home", |_| call("c2", "shell.exec", json!({"cmd": "git add -A && git commit -qm home"})));
+    r.push("Home", |_| call("c3", "git.worktree_start", json!({"base": "main"})));
+    r.push("Home", |b| {
+        assert!(last_result(b).contains("merges back into it, not main"), "another base is refused: {}", last_result(b));
+        call("c4", "git.worktree_start", json!({}))
+    });
+    r.push("Home", |b| {
+        assert!(last_result(b).contains("(from next)"), "{}", last_result(b));
+        call("c5", "shell.exec", json!({"cmd": "echo fix > fix.txt && git add -A && git commit -qm fix"}))
+    });
+    r.push("Home", |_| call("c6", "git.worktree_merge", json!({})));
+    r.push("Home", |b| {
+        assert!(last_result(b).contains("into next"), "{}", last_result(b));
+        call("c7", "git.worktree_drop", json!({}))
+    });
+    r.push("Home", |b| {
+        assert!(last_result(b).contains("persistent/next again"), "back home: {}", last_result(b));
+        call("c8", "tasks.task_spawn", json!({"title": "Sub", "prompt": "look around"}))
+    });
+    r.push("Sub", |_| text("sub done"));
+    r.push("Home", |_| text("waiting"));
+    r.push("Home", |_| text("all done"));
+    let t = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), title: "Home".into(), prompt: "work in next".into(), worktree: Some("next".into()), ..Default::default() }).await.unwrap();
+    assert_eq!((t.home.as_deref(), t.cwd.as_str()), (Some("next"), next.worktree.path.as_str()));
+    let t = r.until(&t.id, "the subtask's report", |t| t.report.as_deref() == Some("all done")).await;
+    assert_eq!(t.cwd, next.worktree.path);
+    assert_eq!(std::fs::read_to_string(home.join("home.txt")).unwrap(), "direct\n");
+    assert_eq!(std::fs::read_to_string(home.join("fix.txt")).unwrap(), "fix\n", "the task's worktree merged into next");
+    assert!(!r.project.path().join("fix.txt").exists() && !r.project.path().join("home.txt").exists(), "main is untouched");
+    let subs = r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap();
+    assert_eq!((subs[0].home.as_deref(), subs[0].cwd.as_str()), (Some("next"), next.worktree.path.as_str()), "a subtask starts in its parent's home");
+    assert_eq!(wts.tasks("site", "next").await.unwrap().len(), 2);
+
+    // Exclusive: a second task waits for the first.
+    wts.set_sharing("site", "next", Some("exclusive")).await.unwrap();
+    r.push("Hold", |_| call("q1", "ask.ask", json!({"question": "go on?"})));
+    let hold = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), title: "Hold".into(), prompt: "x".into(), worktree: Some("next".into()), ..Default::default() }).await.unwrap();
+    r.until(&hold.id, "the question", |t| t.state == "waiting").await;
+    r.push("Second", |_| text("second done"));
+    let second = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), title: "Second".into(), prompt: "x".into(), worktree: Some("next".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(second.state, "queued");
+    let elsewhere = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), title: "Elsewhere".into(), prompt: "x".into(), ..Default::default() }).await.unwrap();
+    assert_ne!(elsewhere.state, "queued", "the project folder isn't held");
+    assert!(wts.remove("site", "next", false, false).await.unwrap_err().contains("tasks work in next"));
+    r.run.app.cancel(&hold.id).await.unwrap();
+    r.until(&second.id, "the second to run", |t| t.report.as_deref() == Some("second done")).await;
+
+    // The person merges it into main, then removes it.
+    let said = wts.merge("site", "next", reagent_tools::git::Strategy::Merge, None).await.unwrap();
+    assert!(said.starts_with("merged next into main"), "{said}");
+    assert_eq!(std::fs::read_to_string(r.project.path().join("fix.txt")).unwrap(), "fix\n");
+    r.run.app.cancel(&elsewhere.id).await.unwrap();
+    wts.remove("site", "next", false, false).await.unwrap();
+    assert!(!home.exists() && wts.list("site").await.unwrap().0.is_empty());
+}

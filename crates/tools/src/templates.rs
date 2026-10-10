@@ -3,7 +3,8 @@
 //! field filled in, the prompt rendered); without, its body is a starting
 //! point to edit. Frontmatter: `description`, `title` (placeholders too;
 //! none: the task names itself), `skills`, `budget`, `profile`, `kind`,
-//! `project` (a global one pinned to a project), `fields` (`name`, `label`,
+//! `project` (a global one pinned to a project), `worktree` (a persistent
+//! worktree of its project the task starts in), `fields` (`name`, `label`,
 //! `type`: text, multiline, select (`options`), checkbox; `default`,
 //! `required`).
 //!
@@ -52,6 +53,7 @@ struct Front {
     profile: Option<String>,
     kind: Option<String>,
     project: Option<String>,
+    worktree: Option<String>,
     #[serde(default)]
     fields: Vec<Field>,
 }
@@ -71,6 +73,8 @@ pub struct Template {
     pub kind: Option<String>,
     /// The project it's for (a global one pinned to it).
     pub project: Option<String>,
+    /// The persistent worktree its task starts in.
+    pub worktree: Option<String>,
     /// project, db, global, plugin:<id>.
     pub source: String,
     pub path: Option<PathBuf>,
@@ -84,7 +88,7 @@ pub struct Template {
 
 /// A template's file; a broken one carries its error.
 pub fn parse(name: &str, text: &str, source: &str) -> Template {
-    let mut t = Template { name: name.into(), description: String::new(), title: None, prompt: String::new(), fields: vec![], skills: vec![], budget: None, profile: None, kind: None, project: None, source: source.into(), path: None, id: None, text: text.into(), error: None };
+    let mut t = Template { name: name.into(), description: String::new(), title: None, prompt: String::new(), fields: vec![], skills: vec![], budget: None, profile: None, kind: None, project: None, worktree: None, source: source.into(), path: None, id: None, text: text.into(), error: None };
     let s = text.trim_start_matches('\u{feff}');
     let (front, body) = match s.strip_prefix("---").map(|r| r.trim_start_matches(['\r', '\n'])).and_then(|r| r.find("\n---").map(|end| (r, end))) {
         Some((r, end)) => match serde_yaml::from_str::<Option<Front>>(&r[..end]) {
@@ -97,7 +101,7 @@ pub fn parse(name: &str, text: &str, source: &str) -> Template {
         None => (Front::default(), s.trim().to_string()),
     };
     t.description = front.description.unwrap_or_else(|| body.lines().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(120).collect());
-    (t.title, t.prompt, t.skills, t.budget, t.profile, t.kind, t.project) = (front.title, body, front.skills, front.budget, front.profile, front.kind, front.project);
+    (t.title, t.prompt, t.skills, t.budget, t.profile, t.kind, t.project, t.worktree) = (front.title, body, front.skills, front.budget, front.profile, front.kind, front.project, front.worktree);
     t.fields = front.fields;
     t.error = check(&t).err();
     t
@@ -223,7 +227,7 @@ pub fn summaries(list: &[Template]) -> Vec<Value> {
     list.iter()
         .map(|t| {
             let mut v = serde_json::json!({"name": t.name, "description": t.description, "source": t.source});
-            for (k, x) in [("title", serde_json::json!(t.title)), ("project", serde_json::json!(t.project)), ("profile", serde_json::json!(t.profile)), ("kind", serde_json::json!(t.kind)), ("budget", serde_json::json!(t.budget)), ("error", serde_json::json!(t.error))] {
+            for (k, x) in [("title", serde_json::json!(t.title)), ("project", serde_json::json!(t.project)), ("profile", serde_json::json!(t.profile)), ("kind", serde_json::json!(t.kind)), ("worktree", serde_json::json!(t.worktree)), ("budget", serde_json::json!(t.budget)), ("error", serde_json::json!(t.error))] {
                 if !x.is_null() {
                     v[k] = x;
                 }
@@ -297,6 +301,7 @@ pub fn apply(t: &Template, given: &Map<String, Value>, req: &mut StartTask) -> R
     }
     req.profile = req.profile.take().or(t.profile.clone());
     req.kind = req.kind.take().or(t.kind.clone());
+    req.worktree = req.worktree.take().or(t.worktree.clone());
     Ok(())
 }
 

@@ -64,6 +64,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PluginCmd,
     },
+    /// Persistent worktrees: a project's named, long-lived checkouts that tasks start in.
+    Worktree {
+        #[command(subcommand)]
+        cmd: WorktreeCmd,
+    },
     /// API tokens for reagent's MCP API (`/mcp`), which other agents use.
     Token {
         #[command(subcommand)]
@@ -255,6 +260,9 @@ enum TaskCmd {
         profile: Option<String>,
         #[arg(long)]
         kind: Option<String>,
+        /// A persistent worktree of the project to work in (`reagent worktree list`).
+        #[arg(long)]
+        worktree: Option<String>,
     },
     /// Start the designer for a rough goal: a design task that reads the project, asks you
     /// (in the web UI, or by notification), and proposes tasks, cron entries, triggers, skills.
@@ -275,6 +283,66 @@ enum TaskCmd {
         /// Print it as JSON.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorktreeCmd {
+    /// A project's persistent worktrees, and those git has that could be adopted.
+    List { project: String },
+    /// Make one: its branch (default: the name; checked out if there is one, else made from --base).
+    Add {
+        project: String,
+        name: String,
+        #[arg(long)]
+        branch: Option<String>,
+        /// What it merges into (default: the branch the project folder is on).
+        #[arg(long)]
+        base: Option<String>,
+        /// shared or exclusive (default: the project's worktree_sharing).
+        #[arg(long)]
+        sharing: Option<String>,
+    },
+    /// Record a worktree git already has.
+    Adopt {
+        project: String,
+        name: String,
+        path: String,
+        #[arg(long)]
+        base: Option<String>,
+        #[arg(long)]
+        sharing: Option<String>,
+    },
+    /// Its sharing: shared, exclusive, or project (the project's).
+    Set { project: String, name: String, sharing: String },
+    /// Branch, base, commits ahead, uncommitted changes, and the tasks that worked there.
+    Status { project: String, name: String },
+    /// Its changes against its base.
+    Diff {
+        project: String,
+        name: String,
+        #[arg(long)]
+        stat: bool,
+    },
+    /// Merge its branch into its base.
+    Merge {
+        project: String,
+        name: String,
+        /// merge, squash or rebase.
+        #[arg(long, default_value = "merge")]
+        strategy: String,
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// Remove it and its branch (an adopted one is only forgotten unless --delete).
+    Remove {
+        project: String,
+        name: String,
+        /// Also with commits not in its base.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        delete: bool,
     },
 }
 
@@ -552,9 +620,10 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             let config = reagent::load_config(&data)?;
             let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
             // A task the running reagent starts (it starts queued ones as places free).
-            let queue = |p: &reagent_store::Project, title: String, prompt: String, origin: &str, skills: Vec<String>, profile: Option<String>, kind: Option<String>, budget: Option<reagent_store::Budget>| {
+            let queue = |p: &reagent_store::Project, title: String, prompt: String, origin: &str, skills: Vec<String>, profile: Option<String>, kind: Option<String>, budget: Option<reagent_store::Budget>, home: Option<reagent_store::PersistentWorktree>| {
                 let store = store.clone();
-                let new = reagent_store::NewTask { project: p.slug.clone(), parent: None, title, prompt, origin: origin.into(), cwd: p.path.clone(), profile: profile.or(p.profile.clone()).unwrap_or(config.default_profile.clone()), budget: budget.unwrap_or_default(), skills, kind };
+                let cwd = home.as_ref().map(|w| w.path.clone()).unwrap_or_else(|| p.path.clone());
+                let new = reagent_store::NewTask { project: p.slug.clone(), parent: None, title, prompt, origin: origin.into(), cwd, profile: profile.or(p.profile.clone()).unwrap_or(config.default_profile.clone()), budget: budget.unwrap_or_default(), skills, kind, home: home.map(|w| w.name) };
                 async move {
                     let t = store.add_task(&new).await?;
                     store.set_state(&t.id, "queued", None).await?;
@@ -562,8 +631,8 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 }
             };
             match cmd {
-                TaskCmd::Start { project, template, set, title, prompt, skills, profile, kind } => {
-                    let mut req = reagent_tools::app::StartTask { project, title, prompt, skills, profile, kind, ..Default::default() };
+                TaskCmd::Start { project, template, set, title, prompt, skills, profile, kind, worktree } => {
+                    let mut req = reagent_tools::app::StartTask { project, title, prompt, skills, profile, kind, worktree, ..Default::default() };
                     if let Some(name) = template {
                         let p = if req.project.is_empty() { None } else { Some(store.project(&req.project).await?.ok_or_else(|| anyhow::anyhow!("no project {:?}", req.project))?) };
                         let t = reagent_tools::templates::find(&store, &data, p.as_ref(), &name).await.map_err(anyhow::Error::msg)?;
@@ -582,7 +651,11 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     budget.cost = budget.cost.or(p.budget.cost);
                     budget.minutes = budget.minutes.or(p.budget.minutes);
                     let kind_profile = req.kind.as_deref().and_then(|k| config.kind.get(k)).and_then(|k| k.profile.clone());
-                    let t = queue(&p, req.title.trim().to_string(), req.prompt, "cli", req.skills, req.profile.or(kind_profile), req.kind, Some(budget)).await?;
+                    let home = match req.worktree.as_deref().filter(|w| !w.trim().is_empty()) {
+                        Some(n) => Some(reagent_tools::persistent::Worktrees { store: &store, data: &data }.get(&p.slug, n).await.map_err(anyhow::Error::msg)?),
+                        None => None,
+                    };
+                    let t = queue(&p, req.title.trim().to_string(), req.prompt, "cli", req.skills, req.profile.or(kind_profile), req.kind, Some(budget), home).await?;
                     println!("{}", t.id);
                     eprintln!("queued: the running reagent starts it");
                 }
@@ -590,7 +663,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     anyhow::ensure!(matches!(target.as_str(), "task" | "cron" | "trigger"), "--target: task, cron or trigger");
                     anyhow::ensure!(!goal.trim().is_empty(), "what do you want done?");
                     let p = store.project(&project).await?.ok_or_else(|| anyhow::anyhow!("no project {project:?}"))?;
-                    let t = queue(&p, reagent_tools::design::title(&goal), reagent_tools::design::task_prompt(&target, &goal), "design", vec!["reagent-prompt-design".into()], config.design_profile.clone(), None, None).await?;
+                    let t = queue(&p, reagent_tools::design::title(&goal), reagent_tools::design::task_prompt(&target, &goal), "design", vec!["reagent-prompt-design".into()], config.design_profile.clone(), None, None, None).await?;
                     println!("{}", t.id);
                     eprintln!("design task queued: the running reagent starts it; answer its questions in the web UI (or a notification), then `reagent task proposal {}`", t.id);
                 }
@@ -616,7 +689,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                         for i in picked {
                             let item = prop.items.get(i).ok_or_else(|| anyhow::anyhow!("there's no item {}", i + 1))?;
                             let done = match item {
-                                reagent_tools::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => queue(&p, title.clone(), prompt.clone(), "ui", skills.clone(), profile.clone(), kind.clone(), budget.clone()).await.map(|t| format!("task {} queued ({})", t.title, t.id)).map_err(|e| e.to_string()),
+                                reagent_tools::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => queue(&p, title.clone(), prompt.clone(), "ui", skills.clone(), profile.clone(), kind.clone(), budget.clone(), None).await.map(|t| format!("task {} queued ({})", t.title, t.id)).map_err(|e| e.to_string()),
                                 other => reagent_tools::design::make(&store, &p, other).await,
                             };
                             eprintln!("{}. {}", i + 1, done.unwrap_or_else(|e| format!("not made: {e}")));
@@ -650,6 +723,47 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     let t = all.iter().find(|t| t.name == name).ok_or_else(|| anyhow::anyhow!("no template {name:?}"))?;
                     print!("{}", t.text);
                 }
+            }
+            Ok(())
+        }
+        Cmd::Worktree { cmd } => {
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let w = reagent_tools::persistent::Worktrees { store: &store, data: &data };
+            let m = anyhow::Error::msg;
+            let line = |i: &reagent_tools::persistent::WorktreeInfo| {
+                let ahead = i.ahead.map(|n| format!("{n} ahead")).unwrap_or_else(|| "?".into());
+                let changes = match i.changes {
+                    Some(0) | None => String::new(),
+                    Some(n) => format!(", {n} changed"),
+                };
+                format!("{}\t{} -> {}\t{ahead}{changes}\t{}{}{}\t{}", i.worktree.name, i.worktree.branch, i.worktree.base, i.sharing_now, if i.worktree.adopted { ", adopted" } else { "" }, if i.missing { ", MISSING" } else { "" }, i.worktree.path)
+            };
+            match cmd {
+                WorktreeCmd::List { project } => {
+                    let (kept, adoptable) = w.list(&project).await.map_err(m)?;
+                    for i in &kept {
+                        println!("{}", line(i));
+                    }
+                    for a in &adoptable {
+                        println!("(adoptable)\t{}\t{}", a.branch, a.path);
+                    }
+                }
+                WorktreeCmd::Add { project, name, branch, base, sharing } => println!("{}", line(&w.add(&project, reagent_tools::persistent::AddWorktree { name, branch, base, path: None, sharing }).await.map_err(m)?)),
+                WorktreeCmd::Adopt { project, name, path, base, sharing } => println!("{}", line(&w.add(&project, reagent_tools::persistent::AddWorktree { name, branch: None, base, path: Some(path), sharing }).await.map_err(m)?)),
+                WorktreeCmd::Set { project, name, sharing } => println!("{}", line(&w.set_sharing(&project, &name, Some(sharing.as_str()).filter(|s| *s != "project")).await.map_err(m)?)),
+                WorktreeCmd::Status { project, name } => {
+                    println!("{}", line(&w.info_of(&project, &name).await.map_err(m)?));
+                    print!("{}", w.status(&project, &name).await.map_err(m)?);
+                    for t in w.tasks(&project, &name).await.map_err(m)? {
+                        println!("task {}\t{}\t{}", t.id, t.state, t.name());
+                    }
+                }
+                WorktreeCmd::Diff { project, name, stat } => print!("{}", w.diff(&project, &name, stat).await.map_err(m)?),
+                WorktreeCmd::Merge { project, name, strategy, message } => {
+                    let strategy: reagent_tools::git::Strategy = serde_json::from_value(serde_json::Value::String(strategy)).map_err(|_| anyhow::anyhow!("--strategy: merge, squash or rebase"))?;
+                    println!("{}", w.merge(&project, &name, strategy, message).await.map_err(m)?);
+                }
+                WorktreeCmd::Remove { project, name, force, delete } => println!("{}", w.remove(&project, &name, force, delete).await.map_err(m)?),
             }
             Ok(())
         }

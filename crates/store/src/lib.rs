@@ -56,6 +56,13 @@ pub struct Project {
     /// Tasks of this project running at once (none: only the global limit).
     #[serde(default)]
     pub max_tasks: Option<i64>,
+    /// `shared` or `exclusive`: tasks in one persistent worktree at once (each may set its own).
+    #[serde(default = "shared")]
+    pub worktree_sharing: String,
+}
+
+fn shared() -> String {
+    "shared".into()
 }
 
 fn auto() -> String {
@@ -80,6 +87,7 @@ impl Project {
             devshell_attr: None,
             kind: None,
             max_tasks: None,
+            worktree_sharing: shared(),
         }
     }
 }
@@ -108,6 +116,21 @@ pub struct Worktree {
     pub path: String,
     pub branch: String,
     pub base: String,
+}
+
+/// A named, long-lived worktree of a project that tasks start in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PersistentWorktree {
+    pub project: String,
+    pub name: String,
+    pub path: String,
+    pub branch: String,
+    pub base: String,
+    /// `shared`, `exclusive`, or none: the project's.
+    pub sharing: Option<String>,
+    /// Recorded as git had it: removing it only forgets it (unless asked to delete).
+    pub adopted: bool,
+    pub created: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -140,6 +163,9 @@ pub struct Task {
     /// When its agent started (a queued task hasn't yet).
     #[serde(default)]
     pub started: Option<i64>,
+    /// The persistent worktree it works in (none: the project folder).
+    #[serde(default)]
+    pub home: Option<String>,
 }
 
 impl Task {
@@ -167,6 +193,7 @@ pub struct NewTask {
     pub budget: Budget,
     pub skills: Vec<String>,
     pub kind: Option<String>,
+    pub home: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -516,10 +543,10 @@ impl Store {
     /// Adds a project, or changes one (by its slug).
     pub async fn put_project(&self, p: &Project) -> R<()> {
         sqlx::query(
-            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks, worktree_sharing)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              on conflict (slug) do update set name = $2, path = $3, memory = $4, worktrees = $5, merge = $6,
-               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14",
+               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14, worktree_sharing = $15",
         )
         .bind(&p.slug)
         .bind(&p.name)
@@ -535,6 +562,7 @@ impl Store {
         .bind(&p.devshell_attr)
         .bind(&p.kind)
         .bind(p.max_tasks)
+        .bind(&p.worktree_sharing)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -586,8 +614,8 @@ impl Store {
     pub async fn add_task(&self, t: &NewTask) -> R<Task> {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "insert into tasks (id, project, parent, title, prompt, origin, cwd, profile, budget, skills, kind)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "insert into tasks (id, project, parent, title, prompt, origin, cwd, profile, budget, skills, kind, home)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&id)
         .bind(&t.project)
@@ -600,6 +628,7 @@ impl Store {
         .bind(Json(&t.budget))
         .bind(Json(&t.skills))
         .bind(&t.kind)
+        .bind(&t.home)
         .execute(&self.pool)
         .await?;
         Ok(self.task(&id).await?.expect("just added"))
@@ -653,6 +682,48 @@ impl Store {
     /// Tasks taking a place (running or waiting; not subtasks): of a project, or all.
     pub async fn running_tasks(&self, project: Option<&str>) -> R<i64> {
         sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting') and ($1 is null or project = $1)").bind(project).fetch_one(&self.pool).await
+    }
+
+    /// Top-level tasks working in a persistent worktree now (running, waiting or paused).
+    pub async fn tasks_in_home(&self, project: &str, home: &str) -> R<i64> {
+        sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting', 'paused') and project = $1 and home = $2").bind(project).bind(home).fetch_one(&self.pool).await
+    }
+
+    /// Tasks that worked or work in a persistent worktree, newest first.
+    pub async fn home_tasks(&self, project: &str, home: &str) -> R<Vec<Task>> {
+        sqlx::query_as("select * from tasks where project = $1 and home = $2 order by created desc limit 200").bind(project).bind(home).fetch_all(&self.pool).await
+    }
+
+    // --- persistent worktrees -------------------------------------------
+
+    pub async fn persistent_worktrees(&self, project: &str) -> R<Vec<PersistentWorktree>> {
+        sqlx::query_as("select * from persistent_worktrees where project = $1 order by name").bind(project).fetch_all(&self.pool).await
+    }
+
+    pub async fn persistent_worktree(&self, project: &str, name: &str) -> R<Option<PersistentWorktree>> {
+        sqlx::query_as("select * from persistent_worktrees where project = $1 and name = $2").bind(project).bind(name).fetch_optional(&self.pool).await
+    }
+
+    pub async fn add_persistent_worktree(&self, w: &PersistentWorktree) -> R<()> {
+        sqlx::query("insert into persistent_worktrees (project, name, path, branch, base, sharing, adopted) values ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(&w.project)
+            .bind(&w.name)
+            .bind(&w.path)
+            .bind(&w.branch)
+            .bind(&w.base)
+            .bind(&w.sharing)
+            .bind(w.adopted)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_worktree_sharing(&self, project: &str, name: &str, sharing: Option<&str>) -> R<bool> {
+        Ok(sqlx::query("update persistent_worktrees set sharing = $3 where project = $1 and name = $2").bind(project).bind(name).bind(sharing).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    pub async fn remove_persistent_worktree(&self, project: &str, name: &str) -> R<bool> {
+        Ok(sqlx::query("delete from persistent_worktrees where project = $1 and name = $2").bind(project).bind(name).execute(&self.pool).await?.rows_affected() > 0)
     }
 
     /// Queued tasks, oldest first.

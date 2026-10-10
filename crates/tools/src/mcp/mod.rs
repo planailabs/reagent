@@ -65,13 +65,19 @@ fn real(p: &Path) -> PathBuf {
 }
 
 /// A path a task names: relative to its working directory, and inside its
-/// places (its working directory, the project, the memories; skills for
+/// places (its working directory, the project, its persistent worktree, the memories; skills for
 /// reading), unless a rule with a matching `target` allows it.
 pub async fn resolve(app: &App, t: &Task, p: &Project, tool: &str, path: &str, write: bool) -> Result<PathBuf, String> {
     let raw = Path::new(path.trim());
     let full = if raw.is_absolute() { raw.to_path_buf() } else { Path::new(&t.cwd).join(raw) };
     let full = real(&normalize(&full));
     let mut roots = vec![PathBuf::from(&t.cwd), PathBuf::from(&p.path), app.project_memory(p).dir, app.global_memory().dir];
+    // Its persistent worktree, also while it works in a worktree of its own.
+    if let Some(n) = &t.home
+        && let Ok(Some(h)) = app.store.persistent_worktree(&p.slug, n).await
+    {
+        roots.push(PathBuf::from(h.path));
+    }
     if !write {
         roots.extend(app.paths.skills.iter().cloned());
         roots.extend(app.skills_for(Path::new(&t.cwd), p).into_iter().map(|s| s.dir));

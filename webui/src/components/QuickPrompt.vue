@@ -14,7 +14,8 @@ const KEPT = "reagent-quick";
 
 const projects = ref([]);
 const skills = ref([]);
-const form = ref({ project: "", title: "", prompt: "", skills: [] });
+const form = ref({ project: "", title: "", prompt: "", skills: [], worktree: "" });
+const homes = ref([]);
 /** Per limit: "default" (the project's), "unlimited", or a number. */
 const limits = ref({ tokens: "default", cost: "default", minutes: "default" });
 const typed = ref({ tokens: "", cost: "", minutes: "" });
@@ -49,6 +50,7 @@ function applyTemplate(t) {
   form.value.title = t.fields.length ? "" : (t.title ?? "");
   form.value.prompt = t.fields.length ? "" : t.prompt;
   form.value.skills = t.skills.filter((s) => skills.value.some((k) => k.name === s));
+  if (t.worktree) form.value.worktree = t.worktree;
   for (const l of LIMITS) {
     const v = t.budget?.[l.key];
     if (v != null) choose(l.key, v);
@@ -64,7 +66,7 @@ async function startTask() {
     else if (typeof v === "number") budget[k] = v;
   }
   try {
-    const body = { project: form.value.project, title: form.value.title, prompt: form.value.prompt, skills: form.value.skills, budget, unlimited };
+    const body = { project: form.value.project, title: form.value.title, prompt: form.value.prompt, skills: form.value.skills, budget, unlimited, worktree: form.value.worktree || undefined };
     if (form_like.value) Object.assign(body, { template: tf.value.current.name, values: values.value, prompt: "" });
     const t = await post("/api/tasks", body);
     try {
@@ -89,6 +91,8 @@ watch(
   () => form.value.project,
   async (slug) => {
     form.value.skills = [];
+    form.value.worktree = "";
+    homes.value = slug ? (await get(`/api/projects/${slug}/worktrees`).catch(() => ({ worktrees: [] }))).worktrees : [];
     skills.value = slug ? await get(`/api/projects/${slug}/skills`).catch(() => []) : [];
     templates.value = slug ? await get(`/api/templates?project=${encodeURIComponent(slug)}`).catch(() => []) : [];
     if (pending) {
@@ -111,6 +115,12 @@ watch(
         <label>project
           <select v-model="form.project" aria-label="project">
             <option v-for="p in projects" :key="p.slug" :value="p.slug">{{ p.name }}</option>
+          </select>
+        </label>
+        <label v-if="homes.length">works in
+          <select v-model="form.worktree" aria-label="works in">
+            <option value="">the project folder</option>
+            <option v-for="w in homes" :key="w.name" :value="w.name" :disabled="w.missing">{{ w.name }} · {{ w.branch }}</option>
           </select>
         </label>
         <input v-model="form.title" class="grow" :placeholder="form_like && tf.current.title ? `title (empty: ${tf.render(tf.current.title)})` : 'title (empty: the agent names it)'" aria-label="title" />

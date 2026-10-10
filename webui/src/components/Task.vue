@@ -67,12 +67,12 @@ async function act(path, body = {}) {
   }
 }
 
-/** A new task from this one's start (same prompt, profile, kind, skills, budget): its own conversation and worktree. */
+/** A new task from this one's start (same prompt, profile, kind, skills, budget, persistent worktree): its own conversation and worktree. */
 async function cloneTask() {
   error.value = "";
   try {
-    const { project, title, prompt, profile, kind, skills, budget } = t.value;
-    const n = await post("/api/tasks", { project, title, prompt, profile, kind, skills, budget });
+    const { project, title, prompt, profile, kind, skills, budget, home } = t.value;
+    const n = await post("/api/tasks", { project, title, prompt, profile, kind, skills, budget, worktree: home ?? "" });
     location.hash = `#/task/${n.id}`;
   } catch (e) {
     error.value = e.message;
@@ -209,7 +209,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <span class="dim">{{ t.state }} · {{ t.kind ? `${t.kind} · ` : "" }}{{ t.profile }} · {{ t.tokens }} tokens · {{ money(t.cost) }} · {{ ago(t.created) }} ago · {{ t.origin }}</span>
     </div>
     <div v-if="t.parent" class="dim">subtask of <a :href="`#/task/${t.parent}`">{{ t.parent.slice(0, 8) }}</a></div>
-    <div class="dim">in {{ t.cwd }}<span v-if="t.worktree"> · worktree {{ t.worktree.branch }} (from {{ t.worktree.base }})</span></div>
+    <div class="dim">in {{ t.cwd }}<span v-if="t.home"> · persistent worktree <a :href="`#/project/${t.project}/worktrees`">{{ t.home }}</a></span><span v-if="t.worktree"> · worktree {{ t.worktree.branch }} (from {{ t.worktree.base }})</span></div>
 
     <div class="row controls">
       <button :disabled="!['running', 'waiting'].includes(t.state)" @click="act('pause', { mode: 'quick' })">pause</button>

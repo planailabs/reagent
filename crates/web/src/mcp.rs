@@ -46,6 +46,49 @@ pub struct Start {
     pub budget: Option<Value>,
     /// A kind of task from reagent's config (it picks the model).
     pub kind: Option<String>,
+    /// A persistent worktree of the project to work in (worktree_list shows them; default: the project folder).
+    pub worktree: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct ProjectId {
+    pub project: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct WorktreeAdd {
+    pub project: String,
+    /// Its name (letters, digits, . _ -).
+    pub name: String,
+    /// Its branch (default: the name): checked out if there is one, else made from base.
+    pub branch: Option<String>,
+    /// What it merges into (default: the branch the project folder is on).
+    pub base: Option<String>,
+    /// Adopt this worktree git already has (worktree_list's adoptable) instead of making one.
+    pub path: Option<String>,
+    /// shared or exclusive (one task at a time); default: the project's.
+    pub sharing: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct WorktreeMerge {
+    pub project: String,
+    pub name: String,
+    /// merge (default), squash or rebase.
+    pub strategy: Option<reagent_tools::git::Strategy>,
+    pub message: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct WorktreeRemove {
+    pub project: String,
+    pub name: String,
+    /// Also when its branch has commits not in its base.
+    #[serde(default)]
+    pub force: bool,
+    /// An adopted one: delete its folder and branch too (default: only forget it).
+    #[serde(default)]
+    pub delete: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -232,7 +275,7 @@ impl ReagentTools {
     #[tool(description = "Start a task in a project (from a prompt, or a template and its values): it works on its own; task_get or task_wait follow it.")]
     async fn task_start(&self, Parameters(a): Parameters<Start>) -> Result<String, String> {
         let budget: Option<Budget> = a.budget.map(serde_json::from_value).transpose().map_err(|e| format!("budget: {e}"))?;
-        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind, template: a.template, values: a.values, unlimited: vec![] }).await?;
+        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind, template: a.template, values: a.values, unlimited: vec![], worktree: a.worktree }).await?;
         j(json!({"task": t.id, "state": t.state}))
     }
 
@@ -434,6 +477,27 @@ impl ReagentTools {
     async fn plugin_remove(&self, Parameters(a): Parameters<PluginId>) -> Result<String, String> {
         self.0.plugin_remove(&a.id).await?;
         Ok(format!("removed {}", a.id))
+    }
+
+    #[tool(description = "A project's persistent worktrees (named, long-lived checkouts tasks start in: task_start's worktree): branch, base, commits ahead, uncommitted changes, tasks there now; and the worktrees git has that could be adopted.")]
+    async fn worktree_list(&self, Parameters(a): Parameters<ProjectId>) -> Result<String, String> {
+        let (kept, adoptable) = self.0.worktrees().list(&a.project).await?;
+        j(json!({"worktrees": kept, "adoptable": adoptable}))
+    }
+
+    #[tool(description = "Make a persistent worktree of a project (a branch checked out apart, for tasks to start in), or adopt one git has (path).")]
+    async fn worktree_add(&self, Parameters(a): Parameters<WorktreeAdd>) -> Result<String, String> {
+        j(self.0.worktrees().add(&a.project, reagent_tools::persistent::AddWorktree { name: a.name, branch: a.branch, base: a.base, path: a.path, sharing: a.sharing }).await?)
+    }
+
+    #[tool(description = "Merge a persistent worktree's branch into its base (commit everything there first); conflicts are named and nothing changes.")]
+    async fn worktree_merge(&self, Parameters(a): Parameters<WorktreeMerge>) -> Result<String, String> {
+        self.0.worktrees().merge(&a.project, &a.name, a.strategy.unwrap_or(reagent_tools::git::Strategy::Merge), a.message).await
+    }
+
+    #[tool(description = "Remove a persistent worktree and its branch (refused while tasks work there, or with commits not in its base unless force); an adopted one is only forgotten unless delete.")]
+    async fn worktree_remove(&self, Parameters(a): Parameters<WorktreeRemove>) -> Result<String, String> {
+        self.0.worktrees().remove(&a.project, &a.name, a.force, a.delete).await
     }
 
     #[tool(description = "Search tasks' whole conversations for a regex: one task's (paged), or every task's (of a project), a few hits each.")]

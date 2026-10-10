@@ -189,6 +189,8 @@ pub struct Spawn {
     pub budget: Option<Value>,
     /// What kind of helper: explore (find and read, changes nothing), review (check a change, runs tests, fixes nothing), code (make a change with its tests), research (the web, with sources), or one of reagent.hcl's; default: by origin.
     pub kind: Option<String>,
+    /// A persistent worktree of its project to work in (default: yours, in this project; "": the project folder).
+    pub worktree: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -384,6 +386,7 @@ impl TaskTools {
                 template: a.template,
                 values: a.values,
                 unlimited: vec![],
+                worktree: a.worktree,
             })
             .await?;
         Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.name()))

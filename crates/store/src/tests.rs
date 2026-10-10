@@ -259,3 +259,27 @@ async fn queued_messages_are_edited_and_cancelled_until_claimed() {
     s.unclaim_outbox().await.unwrap();
     assert!(!s.outbox(&t.id).await.unwrap()[0].sending, "after a restart it's sent again");
 }
+
+#[tokio::test]
+async fn persistent_worktrees_are_kept_and_count_their_tasks() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    assert_eq!(s.project("site").await.unwrap().unwrap().worktree_sharing, "shared");
+    let w = PersistentWorktree { project: "site".into(), name: "next".into(), path: "/wt/next".into(), branch: "next".into(), base: "main".into(), sharing: None, adopted: false, created: 0 };
+    s.add_persistent_worktree(&w).await.unwrap();
+    assert!(s.add_persistent_worktree(&w).await.is_err(), "one name per project");
+    assert!(s.set_worktree_sharing("site", "next", Some("exclusive")).await.unwrap());
+    assert_eq!(s.persistent_worktree("site", "next").await.unwrap().unwrap().sharing.as_deref(), Some("exclusive"));
+    let new = |parent: Option<String>| NewTask { project: "site".into(), parent, title: "T".into(), prompt: "p".into(), origin: "ui".into(), cwd: "/wt/next".into(), profile: "default".into(), home: Some("next".into()), ..Default::default() };
+    let t = s.add_task(&new(None)).await.unwrap();
+    s.add_task(&new(Some(t.id.clone()))).await.unwrap();
+    assert_eq!(t.home.as_deref(), Some("next"));
+    assert_eq!(s.tasks_in_home("site", "next").await.unwrap(), 1, "subtasks don't count");
+    s.set_state(&t.id, "paused", None).await.unwrap();
+    assert_eq!(s.tasks_in_home("site", "next").await.unwrap(), 1, "a paused one still holds it");
+    s.set_state(&t.id, "done", None).await.unwrap();
+    assert_eq!(s.tasks_in_home("site", "next").await.unwrap(), 0);
+    assert_eq!(s.home_tasks("site", "next").await.unwrap().len(), 2);
+    assert!(s.remove_persistent_worktree("site", "next").await.unwrap());
+    assert!(s.persistent_worktrees("site").await.unwrap().is_empty());
+}

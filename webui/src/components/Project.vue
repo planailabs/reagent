@@ -13,6 +13,7 @@ import Designer from "./Designer.vue";
 import SkillPicker from "./SkillPicker.vue";
 import TemplateForm from "./TemplateForm.vue";
 import Templates from "./Templates.vue";
+import Worktrees from "./Worktrees.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -23,7 +24,8 @@ const skills = ref([]);
 const rules = ref([]);
 const config = ref(null);
 const error = ref("");
-const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "" });
+const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "", worktree: "" });
+const homes = ref([]);
 const settings = ref(null);
 const templates = ref([]);
 const chosen = ref("");
@@ -35,7 +37,7 @@ const formLike = computed(() => !!tf.value?.current?.fields.length);
 function applyTemplate(t) {
   if (!t) return;
   const b = t.budget ?? {};
-  start.value = { ...start.value, title: t.fields.length ? "" : (t.title ?? ""), prompt: t.fields.length ? "" : t.prompt, profile: t.profile ?? "", kind: t.kind ?? "", skills: t.skills.filter((s) => skills.value.some((k) => k.name === s)), tokens: b.tokens ?? "", cost: b.cost ?? "", minutes: b.minutes ?? "" };
+  start.value = { ...start.value, title: t.fields.length ? "" : (t.title ?? ""), prompt: t.fields.length ? "" : t.prompt, profile: t.profile ?? "", kind: t.kind ?? "", skills: t.skills.filter((s) => skills.value.some((k) => k.name === s)), tokens: b.tokens ?? "", cost: b.cost ?? "", minutes: b.minutes ?? "", worktree: t.worktree ?? start.value.worktree };
 }
 
 async function load() {
@@ -44,6 +46,7 @@ async function load() {
     tasks.value = await get(`/api/tasks?project=${props.slug}&active=${!showAll.value}&limit=300`);
     skills.value = await get(`/api/projects/${props.slug}/skills`);
     rules.value = await get(`/api/projects/${props.slug}/agent-rules`);
+    homes.value = (await get(`/api/projects/${props.slug}/worktrees`)).worktrees;
     templates.value = (await get(`/api/templates?project=${encodeURIComponent(props.slug)}`)).filter((t) => !t.project || t.project === props.slug);
     config.value ??= await get("/api/config");
     if (!settings.value) {
@@ -67,6 +70,7 @@ async function startTask() {
       kind: start.value.kind || undefined,
       skills: start.value.skills,
       budget: budget(start.value),
+      worktree: start.value.worktree || undefined,
       ...(formLike.value ? { template: tf.value.current.name, values: values.value, prompt: "" } : {}),
     });
     location.hash = `#/task/${t.id}`;
@@ -79,7 +83,7 @@ async function save() {
   error.value = "";
   try {
     const s = settings.value;
-    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
+    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, worktree_sharing: s.worktree_sharing, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
     p.value = await put(`/api/projects/${props.slug}`, body);
     error.value = "saved";
   } catch (e) {
@@ -121,7 +125,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
   <section v-if="p">
     <h2>{{ p.name }} <span class="dim">{{ p.path }}</span></h2>
     <nav class="row tabs">
-      <a v-for="t in ['tasks', 'new', 'templates', 'cron', 'triggers', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
+      <a v-for="t in ['tasks', 'new', 'templates', 'worktrees', 'cron', 'triggers', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
     </nav>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
@@ -136,6 +140,12 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <TemplateForm v-if="templates.length" ref="tf" v-model:chosen="chosen" v-model:values="values" :templates="templates" :project="slug" @pick="applyTemplate" />
       <input v-model="start.title" :placeholder="formLike && tf.current.title ? `title (empty: ${tf.render(tf.current.title)})` : 'title (empty: the agent names it)'" aria-label="title" />
       <textarea v-if="!formLike" v-model="start.prompt" placeholder="what to do" aria-label="what to do" required></textarea>
+      <label v-if="homes.length">works in
+        <select v-model="start.worktree" aria-label="works in">
+          <option value="">the project folder</option>
+          <option v-for="w in homes" :key="w.name" :value="w.name" :disabled="w.missing">{{ w.name }} · {{ w.branch }}{{ w.sharing_now === "exclusive" ? " · one task at a time" : "" }}</option>
+        </select>
+      </label>
       <div class="row">
         <label>profile
           <select v-model="start.profile" aria-label="profile">
@@ -158,6 +168,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
     </form>
 
     <Templates v-if="tab === 'templates'" :project="slug" @changed="load" />
+    <Worktrees v-if="tab === 'worktrees'" :slug="slug" :sharing="p.worktree_sharing" @changed="load" />
     <Cron v-if="tab === 'cron'" :slug="slug" :config="config" />
     <Triggers v-else-if="tab === 'triggers'" :slug="slug" :config="config" />
     <Rules v-else-if="tab === 'policy'" :slug="slug" />
@@ -186,6 +197,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <label>memory <select v-model="settings.memory"><option>central</option><option>repo</option></select> <span class="dim">central: in reagent's data; repo: .reagent/memory in the folder</span></label>
       <label>worktrees <select v-model="settings.worktrees"><option>central</option><option>repo</option></select></label>
       <label>merging <select v-model="settings.merge"><option>approve</option><option>auto</option></select></label>
+      <label>persistent worktrees <select v-model="settings.worktree_sharing" aria-label="worktree sharing"><option value="shared">shared</option><option value="exclusive">one task at a time</option></select> <span class="dim">tasks in one persistent worktree at once (each worktree may set its own)</span></label>
       <label>nix dev shell <select v-model="settings.devshell"><option>auto</option><option>on</option><option>off</option></select>
         <input v-model="settings.devshell_attr" size="10" placeholder="default" aria-label="dev shell" />
         <span class="dim">auto: when there's a flake.nix; commands and terminals run in `nix develop`</span></label>

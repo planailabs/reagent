@@ -1,7 +1,7 @@
 //! Worktrees: start one (the task moves into it), see what changed, merge
 //! it back (now, or once the person approves, per project), drop it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use reagent_store::Worktree;
@@ -22,7 +22,8 @@ pub struct GitTools(pub Arc<App>);
 pub struct Start {
     /// The new branch (default reagent/<task>).
     pub branch: Option<String>,
-    /// What it starts from (default: the branch the project is on).
+    /// What it starts from (default: the branch the project is on; in a
+    /// persistent worktree, its branch, the only base there).
     pub base: Option<String>,
 }
 
@@ -52,19 +53,6 @@ fn worktree(t: &reagent_store::Task) -> Result<Worktree, String> {
     t.worktree.as_ref().map(|w| w.0.clone()).ok_or_else(|| "you aren't in a worktree: git.worktree_start makes one".into())
 }
 
-/// Keeps `.worktrees/` out of the repository's status (worktrees in the repo).
-fn exclude(repo: &Path) {
-    let Ok(dir) = std::process::Command::new("git").arg("-C").arg(repo).args(["rev-parse", "--git-common-dir"]).output() else { return };
-    let gd = PathBuf::from(String::from_utf8_lossy(&dir.stdout).trim());
-    let gd = if gd.is_absolute() { gd } else { repo.join(gd) };
-    let f = gd.join("info/exclude");
-    let text = std::fs::read_to_string(&f).unwrap_or_default();
-    if !text.lines().any(|l| l.trim() == "/.worktrees/") {
-        let _ = std::fs::create_dir_all(f.parent().unwrap());
-        let _ = std::fs::write(&f, format!("{text}{}/.worktrees/\n", if text.is_empty() || text.ends_with('\n') { "" } else { "\n" }));
-    }
-}
-
 #[tool_router(server_handler)]
 impl GitTools {
     #[tool(description = "Start working in your own git worktree: a new branch from a base, checked out apart; your working directory moves there.")]
@@ -74,14 +62,20 @@ impl GitTools {
             return Err(format!("you're already in a worktree ({} on {})", w.0.path, w.0.branch));
         }
         let repo = git::top(Path::new(&p.path)).map_err(|_| format!("{} isn't a git repository", p.path))?;
-        let base = match a.base {
-            Some(b) => b,
-            None => git::current_branch(&repo)?,
+        let home = match &t.home {
+            Some(n) => Some(self.0.worktrees().get(&p.slug, n).await?),
+            None => None,
+        };
+        let base = match (a.base.filter(|b| !b.trim().is_empty()), &home) {
+            (Some(b), Some(h)) if b != h.branch => return Err(format!("you work in the persistent worktree {} ({}): your worktree branches from {} and merges back into it, not {b}", h.name, h.path, h.branch)),
+            (_, Some(h)) => h.branch.clone(),
+            (Some(b), None) => b,
+            (None, None) => git::current_branch(&repo)?,
         };
         let branch = a.branch.unwrap_or_else(|| git::branch_for(&t.title, &t.id));
         let path = self.0.worktree_dir(&p, &branch);
         if p.worktrees == "repo" {
-            exclude(&repo);
+            git::exclude_worktrees(&repo);
         }
         git::add(&repo, &path, &branch, &base)?;
         let w = Worktree { path: path.display().to_string(), branch: branch.clone(), base: base.clone() };
@@ -135,13 +129,17 @@ impl GitTools {
         })
     }
 
-    #[tool(description = "Remove your worktree and its branch (refused while it has unmerged commits, unless force); your working directory goes back to the project.")]
+    #[tool(description = "Remove your worktree and its branch (refused while it has unmerged commits, unless force); your working directory goes back to the project (or your persistent worktree).")]
     async fn worktree_drop(&self, Parameters(a): Parameters<Drop>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
         let w = worktree(&t)?;
         let repo = git::top(Path::new(&p.path))?;
         git::remove(&repo, Path::new(&w.path), &w.branch, &w.base, a.force)?;
-        self.0.store.set_cwd(&t.id, &p.path, None).await.map_err(|e| e.to_string())?;
-        Ok(format!("removed {} and {}; your working directory is {} again", w.path, w.branch, p.path))
+        let back = match &t.home {
+            Some(n) => self.0.worktrees().get(&p.slug, n).await.map(|h| h.path).unwrap_or_else(|_| p.path.clone()),
+            None => p.path.clone(),
+        };
+        self.0.store.set_cwd(&t.id, &back, None).await.map_err(|e| e.to_string())?;
+        Ok(format!("removed {} and {}; your working directory is {back} again", w.path, w.branch))
     }
 }
