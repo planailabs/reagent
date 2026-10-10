@@ -121,6 +121,11 @@ pub struct App {
     /// What wakes a task's shell.sleep: a message to it.
     // ponytail: one entry per task that ever slept, never removed; small.
     wakers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    /// Tasks whose queued messages a worker is delivering.
+    delivering: Mutex<std::collections::HashSet<String>>,
+    /// Tasks with a message just queued, for the dispatcher (`follow`) to deliver.
+    queued_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    queued_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
 }
 
 /// Prompt, completion and cached prompt tokens from an agent's usage.
@@ -140,6 +145,7 @@ fn root() -> Addr {
 
 impl App {
     pub fn new(paths: Paths, config: Config, store: Store, sup: Arc<sup::Client>) -> Arc<App> {
+        let (queued_tx, queued_rx) = tokio::sync::mpsc::unbounded_channel();
         let notifier = crate::notify::Notifier::new(config.notify.clone());
         Arc::new(App {
             paths,
@@ -162,6 +168,9 @@ impl App {
             errors_in_a_row: Default::default(),
             fell_back: Default::default(),
             wakers: Default::default(),
+            delivering: Default::default(),
+            queued_tx,
+            queued_rx: Mutex::new(Some(queued_rx)),
             triggers: Default::default(),
         })
     }
@@ -684,8 +693,13 @@ impl App {
         self.wakers.lock().unwrap().entry(id.into()).or_default().clone()
     }
 
+    /// A message for a task: queued (kept in reagent.db) and delivered by
+    /// its worker in order, so the caller doesn't wait for the agent to take it.
     pub async fn message(&self, id: &str, text: &str) -> Result<(), String> {
         let t = self.task(id).await?;
+        if t.state == "cancelled" {
+            return Err(format!("{} is cancelled", t.name()));
+        }
         if let Some(w) = self.wakers.lock().unwrap().get(id) {
             w.notify_waiters();
         }
@@ -695,6 +709,68 @@ impl App {
             self.task_changed(id).await;
             return Ok(());
         }
+        self.store.push_outbox(id, text).await.map_err(|e| e.to_string())?;
+        self.task_changed(id).await;
+        let _ = self.queued_tx.send(id.to_string());
+        Ok(())
+    }
+
+    /// Starts the task's delivery worker unless one runs: it sends what's
+    /// queued, oldest first, retrying (with backoff) until it's taken; for a
+    /// task that's gone or cancelled the messages are dropped.
+    fn deliver(self: &Arc<Self>, id: &str) {
+        if !self.delivering.lock().unwrap().insert(id.to_string()) {
+            return;
+        }
+        let (me, id) = (self.clone(), id.to_string());
+        tokio::spawn(async move {
+            let mut backoff = 1u64;
+            loop {
+                let next = me.store.outbox(&id).await.map(|v| v.into_iter().next());
+                let (row, text) = match next {
+                    Ok(Some((row, text, _))) => (row, text),
+                    Ok(None) => {
+                        me.delivering.lock().unwrap().remove(&id);
+                        // One queued between the look and the removal: go on, unless another worker took it.
+                        if me.store.outbox(&id).await.is_ok_and(|v| !v.is_empty()) && me.delivering.lock().unwrap().insert(id.clone()) {
+                            continue;
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(task = %id, error = %e, "reading queued messages");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+                match me.send_now(&id, &text).await {
+                    Ok(()) => {
+                        backoff = 1;
+                        let _ = me.store.remove_outbox(row).await;
+                        me.task_changed(&id).await;
+                    }
+                    Err(e) => {
+                        let gone = me.task(&id).await.map(|t| t.state == "cancelled").unwrap_or(true);
+                        if gone {
+                            tracing::info!(task = %id, "dropping queued messages: the task is gone or cancelled");
+                            for (r, _, _) in me.store.outbox(&id).await.unwrap_or_default() {
+                                let _ = me.store.remove_outbox(r).await;
+                            }
+                            me.task_changed(&id).await;
+                            continue;
+                        }
+                        tracing::warn!(task = %id, error = %e, retry_in = backoff, "delivering a message");
+                        tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+                        backoff = (backoff * 2).min(60);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Hands a message to the task's agent (it waits until the agent takes it).
+    async fn send_now(&self, id: &str, text: &str) -> Result<(), String> {
+        let t = self.task(id).await?;
         let agent = Self::agent_of(&t)?;
         self.hub()?.op(&root(), Op::Send { to: Addr::Agent(agent), content: text.into() }).await?;
         if matches!(t.state.as_str(), "done" | "failed") {
@@ -1394,8 +1470,19 @@ impl App {
         }
     }
 
-    /// Runs the followers: reports, agent states, job ends, checkpoints.
+    /// Runs the followers: reports, agent states, job ends, checkpoints,
+    /// messages still queued from before a restart.
     pub fn follow(self: &Arc<Self>) {
+        let me = self.clone();
+        let mut queued = self.queued_rx.lock().unwrap().take().expect("follow runs once");
+        tokio::spawn(async move {
+            for id in me.store.outbox_tasks().await.unwrap_or_default() {
+                me.deliver(&id);
+            }
+            while let Some(id) = queued.recv().await {
+                me.deliver(&id);
+            }
+        });
         let me = self.clone();
         tokio::spawn(async move {
             loop {

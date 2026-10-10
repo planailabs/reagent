@@ -126,3 +126,22 @@ async fn a_merge_approved_after_a_restart_is_made() {
     until_state(&run, &t.id, "done", |t| t.state == "done").await;
     assert_eq!(std::fs::read_to_string(r.project.path().join("m.txt")).unwrap(), "m\n");
 }
+
+#[tokio::test]
+async fn a_message_queued_before_a_restart_is_delivered_after_it() {
+    let r = start().await;
+    r.push("Later", |_| text("first"));
+    r.push("Later", |b| {
+        assert!(all_text(b).contains("kept across"));
+        text("got it after the restart")
+    });
+    let t = r.start_task("Later", "x").await;
+    r.done(&t.id).await;
+    reagent::stop(&r.run).await;
+    // Queued but not delivered when reagent stopped.
+    r.run.app.store.push_outbox(&t.id, "kept across").await.unwrap();
+    let run = again(&r).await;
+    let d = until_state(&run, &t.id, "the second report", |t| t.state == "done" && t.report.as_deref() == Some("got it after the restart")).await;
+    assert_eq!(d.state, "done");
+    assert!(run.app.store.outbox(&t.id).await.unwrap().is_empty());
+}

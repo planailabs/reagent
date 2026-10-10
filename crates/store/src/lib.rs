@@ -707,6 +707,26 @@ impl Store {
         Ok(sqlx::query("delete from templates where id = $1").bind(id).execute(&self.pool).await?.rows_affected() > 0)
     }
 
+    /// Queues a message for a task (delivered, then removed, by the app); its id.
+    pub async fn push_outbox(&self, task: &str, text: &str) -> R<i64> {
+        sqlx::query_scalar("insert into outbox (task, text) values ($1, $2) returning id").bind(task).bind(text).fetch_one(&self.pool).await
+    }
+
+    /// The task's messages not delivered yet, oldest first: id, text, when queued.
+    pub async fn outbox(&self, task: &str) -> R<Vec<(i64, String, i64)>> {
+        sqlx::query_as("select id, text, created from outbox where task = $1 order by id").bind(task).fetch_all(&self.pool).await
+    }
+
+    /// Tasks with messages waiting.
+    pub async fn outbox_tasks(&self) -> R<Vec<String>> {
+        sqlx::query_scalar("select distinct task from outbox").fetch_all(&self.pool).await
+    }
+
+    pub async fn remove_outbox(&self, id: i64) -> R<()> {
+        sqlx::query("delete from outbox where id = $1").bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
+
     /// Every report the task made, oldest first (`set_report` appends).
     pub async fn reports(&self, task: &str) -> R<Vec<Report>> {
         sqlx::query_as("select content, at from reports where task = $1 order by id").bind(task).fetch_all(&self.pool).await

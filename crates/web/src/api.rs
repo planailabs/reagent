@@ -707,6 +707,7 @@ async fn task(State(s): State<S>, Path(id): Path<String>) -> R {
     v["todos"] = json!(db(s.w.app.store.todos(&id).await)?);
     v["working_memory"] = json!(db(s.w.app.store.working_memory(&id).await)?);
     v["reports"] = json!(db(s.w.app.store.reports(&id).await)?);
+    v["queued_messages"] = json!(db(s.w.app.store.outbox(&id).await)?.into_iter().map(|(_, text, at)| json!({"text": text, "at": at})).collect::<Vec<_>>());
     Ok(Json(v))
 }
 

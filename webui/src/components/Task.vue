@@ -230,6 +230,9 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <input v-model="msg" class="grow" :placeholder="['done', 'failed'].includes(t.state) ? 'a message goes on with the task' : 'a message (read before its next step)'" aria-label="message" />
       <button type="submit">send</button>
     </form>
+    <ul v-if="t.queued_messages?.length" class="dim" aria-label="queued messages">
+      <li v-for="(m, i) in t.queued_messages" :key="i">queued, not taken yet: {{ m.text }}</li>
+    </ul>
 
     <div v-if="todos.length" class="todos" aria-label="todo list">
       <h2>todo <span class="dim">{{ todos.filter((x) => x.status === "done").length }} of {{ todos.filter((x) => x.status !== "cancelled").length }} done</span></h2>

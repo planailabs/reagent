@@ -488,3 +488,31 @@ async fn tasks_start_from_templates_in_the_repo_kept_or_pinned() {
     let e = r.run.app.start_task(reagent_tools::app::StartTask { project: "site".into(), template: Some("broken".into()), ..Default::default() }).await.unwrap_err();
     assert!(e.contains("broken"), "{e}");
 }
+
+#[tokio::test]
+async fn a_message_is_queued_at_once_and_delivered_in_order() {
+    let r = start().await;
+    r.allow_all().await;
+    r.push("Busy", |_| call("c1", "shell.exec", json!({"cmd": "sleep 2; echo done sleeping"})));
+    r.push("Busy", |b| {
+        let all = all_text(b);
+        let (one, two) = (all.find("first note").expect("the first message"), all.find("second note").expect("the second"));
+        assert!(one < two, "in order: {all}");
+        text("read both")
+    });
+    let t = r.start_task("Busy", "x").await;
+    for _ in 0..100 {
+        if r.run.app.sup.jobs(Some(&t.id)).await.unwrap().iter().any(|j| j.running()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // The agent is in its command: the messages are taken at once, not when it gets to them.
+    let started = std::time::Instant::now();
+    r.run.app.message(&t.id, "first note").await.unwrap();
+    r.run.app.message(&t.id, "second note").await.unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_millis(500), "queued, not delivered: {:?}", started.elapsed());
+    let t = r.done(&t.id).await;
+    assert_eq!(t.report.as_deref(), Some("read both"));
+    assert!(r.run.app.store.outbox(&t.id).await.unwrap().is_empty(), "delivered ones go");
+}
