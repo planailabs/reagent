@@ -122,6 +122,7 @@ pub struct App {
     fell_back: Mutex<HashMap<String, HashSet<String>>>,
     /// Triggers' runs going on.
     pub triggers: crate::triggers::Runs,
+    pub services: crate::services::Services,
     /// What wakes a task's shell.sleep: a message to it.
     // ponytail: one entry per task that ever slept, never removed; small.
     wakers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
@@ -176,6 +177,7 @@ impl App {
             queued_tx,
             queued_rx: Mutex::new(Some(queued_rx)),
             triggers: Default::default(),
+            services: Default::default(),
         })
     }
 
@@ -192,6 +194,11 @@ impl App {
     }
 
     /// A trigger changed (or went): the UI hears it.
+    pub async fn emit_service(&self, project: &str, name: &str) {
+        let v = self.store.service(project, name).await.ok().flatten();
+        self.emit(json!({"kind": "service", "project": project, "name": name, "service": v}));
+    }
+
     pub async fn emit_trigger(&self, project: &str, name: &str) {
         let t = self.store.trigger(project, name).await.ok().flatten();
         self.emit(json!({"kind": "trigger", "project": project, "name": name, "trigger": t}));
@@ -1518,8 +1525,8 @@ impl App {
             return;
         }
         let Some(owner) = &j.owner else { return };
-        // A watcher's end: its trigger reads it.
-        if owner.starts_with("trigger:") {
+        // A watcher's or a service's end: its trigger or service reads it.
+        if owner.starts_with("trigger:") || owner.starts_with("service:") {
             return;
         }
         let Ok(t) = self.task(owner).await else { return };

@@ -24,6 +24,11 @@ async function approveTrigger(t, approved, always = false) {
   await load();
 }
 
+async function approveService(v, approved, always = false) {
+  await post(`/api/services/${v.project}/${v.name}/approve`, { approved, always }).catch((e) => (error.value = e.message));
+  await load();
+}
+
 async function seen(n) {
   const top = inbox.value?.notifications?.[0]?.id;
   const body = n ? { id: n.id } : top ? { upto: top } : null;
@@ -39,7 +44,7 @@ watch(() => live.tick, load);
   <section>
     <h2>waiting for you</h2>
     <p v-if="error" class="err">{{ error }}</p>
-    <div v-if="inbox && !inbox.waiting.length && !inbox.failed.length && !inbox.triggers?.length" class="dim">nothing waits for you</div>
+    <div v-if="inbox && !inbox.waiting.length && !inbox.failed.length && !inbox.triggers?.length && !inbox.services?.length" class="dim">nothing waits for you</div>
     <TaskRow v-for="t in inbox?.waiting ?? []" :key="t.id" :t="t" project />
     <TaskRow v-for="t in inbox?.failed ?? []" :key="t.id" :t="t" project />
     <div v-for="tr in inbox?.triggers ?? []" :key="`${tr.project}/${tr.name}`" class="err wait" :aria-label="`trigger ${tr.name} approval`">
@@ -50,6 +55,18 @@ watch(() => live.tick, load);
         <button @click="approveTrigger(tr, true, true)">always allow</button>
         <button @click="approveTrigger(tr, false)">deny</button>
       </div>
+    </div>
+    <div v-for="v in inbox?.services ?? []" :key="`${v.project}/${v.name}`" class="err wait" :aria-label="`service ${v.name}`">
+      <template v-if="v.state.asking">
+        <div>service <a :href="`#/project/${v.project}/services`" class="hi">{{ v.name }}</a> in {{ v.project }} (by {{ v.made_by }}) wants to run:</div>
+        <pre>{{ v.state.command }}</pre>
+        <div class="row">
+          <button @click="approveService(v, true)">allow this command</button>
+          <button @click="approveService(v, true, true)">always allow</button>
+          <button @click="approveService(v, false)">deny</button>
+        </div>
+      </template>
+      <div v-else>service <a :href="`#/project/${v.project}/services`" class="hi">{{ v.name }}</a> in {{ v.project }} failed {{ v.state.failures }} in a row: {{ v.state.last_error }}<span v-if="v.state.repair"> · <a :href="`#/task/${v.state.repair}`">repair task</a></span></div>
     </div>
     <h2>going on</h2>
     <div v-if="!active.length" class="dim">no task is running</div>

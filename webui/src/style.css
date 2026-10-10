@@ -130,3 +130,10 @@ details.note > summary::-webkit-details-marker { display: none; }
 .limit { min-width: 4.5em; }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 button.link { background: none; border: none; padding: 0; color: inherit; cursor: pointer; font: inherit; }
+.badge { border: 1px solid var(--line); padding: 0 6px; }
+.badge.up { border-color: var(--hi); color: var(--hi); }
+.badge.up::before { content: "● "; }
+.badge.starting::before, .badge.stopping::before { content: "◐ "; }
+.badge.backoff, .badge.waiting, .badge.denied { border-style: dashed; border-color: var(--hi); }
+.badge.backoff::before, .badge.waiting::before, .badge.denied::before { content: "! "; }
+.badge.stopped::before, .badge.new::before { content: "○ "; }

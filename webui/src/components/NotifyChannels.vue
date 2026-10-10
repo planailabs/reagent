@@ -3,7 +3,7 @@
 import { onMounted, ref } from "vue";
 import { del, get, post, put } from "../lib/api.js";
 
-const KINDS = ["done", "failed", "waiting", "budget", "cron", "trigger", "model", "secret"];
+const KINDS = ["done", "failed", "waiting", "budget", "cron", "trigger", "service", "model", "secret"];
 const list = ref(null);
 const form = ref({ name: "", url: "", events: [] });
 const tested = ref({});

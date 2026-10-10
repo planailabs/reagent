@@ -307,6 +307,137 @@ impl Trigger {
     }
 }
 
+/// A command of a project that should always run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Service {
+    #[serde(default)]
+    pub project: String,
+    #[serde(default)]
+    pub name: String,
+    /// db (kept here) or repo (`.agents/services/<name>/SERVICE.md`).
+    #[serde(default = "db_source")]
+    pub source: String,
+    /// person, task:<id>, mcp or repo.
+    #[serde(default = "person")]
+    pub made_by: String,
+    #[serde(default)]
+    pub description: String,
+    /// The command (sh, unless it starts with `#!`).
+    #[serde(default)]
+    pub script: String,
+    /// A repo service's script file, beside its SERVICE.md.
+    #[serde(default = "run_file")]
+    pub script_file: String,
+    /// A command whose exit 0 says it's healthy.
+    #[serde(default)]
+    pub health: Option<String>,
+    /// Seconds between checks while it's up.
+    #[serde(default = "thirty")]
+    pub interval: i64,
+    /// Seconds it may take to come up.
+    #[serde(default = "sixty")]
+    pub ready_timeout: i64,
+    /// Seconds between SIGTERM and SIGKILL.
+    #[serde(default = "ten")]
+    pub stop_timeout: i64,
+    /// A persistent worktree of the project to run in.
+    #[serde(default)]
+    pub worktree: Option<String>,
+    #[serde(default = "yes")]
+    pub devshell: bool,
+    /// For whoever repairs it.
+    #[serde(default)]
+    pub notes: String,
+    /// Switched on: it should run.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub state: Json<ServiceState>,
+    #[serde(default)]
+    pub created: i64,
+}
+
+fn thirty() -> i64 {
+    30
+}
+
+fn ten() -> i64 {
+    10
+}
+
+impl Service {
+    /// `<project>/<name>`.
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.project, self.name)
+    }
+}
+
+/// How a service is doing.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServiceState {
+    /// stopped, starting, up, backoff, waiting (for the person's approval), denied.
+    #[serde(default)]
+    pub status: String,
+    /// Since when it's in this status.
+    #[serde(default)]
+    pub since: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// This start's row in service_runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<i64>,
+    /// When it may be started again (backoff).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_start: Option<i64>,
+    /// Failures in a row.
+    #[serde(default)]
+    pub failures: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// Failed checks in a row while it's up.
+    #[serde(default)]
+    pub bad_checks: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<i64>,
+    /// Being stopped: SIGKILL after this time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kill_at: Option<i64>,
+    /// Why it's being stopped (none: the person or a task stopped it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopping: Option<String>,
+    /// The command (by hash) the person or the policy allowed, or denied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denied: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asking: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The repair task started for this failure streak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<String>,
+    /// Asked to restart (it's stopped, then started at once).
+    #[serde(default)]
+    pub restart: bool,
+    /// The definition (by hash) its job was started from: another restarts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def: Option<String>,
+}
+
+/// One start of a service.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ServiceRun {
+    pub id: i64,
+    pub job: Option<String>,
+    pub started: i64,
+    pub up: Option<i64>,
+    pub ended: Option<i64>,
+    pub exit: Option<i64>,
+    pub error: Option<String>,
+    pub output: String,
+}
+
 /// What reagent keeps about a trigger's runs.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TriggerState {
@@ -1015,6 +1146,84 @@ impl Store {
     /// A trigger's last runs, newest first.
     pub async fn trigger_runs(&self, project: &str, name: &str) -> R<Vec<TriggerRun>> {
         sqlx::query_as("select id, started, ended, exit, ok, events, output, error from trigger_runs where project = $1 and name = $2 order by id desc").bind(project).bind(name).fetch_all(&self.pool).await
+    }
+
+    // --- services ---------------------------------------------------------
+
+    pub async fn services(&self, project: Option<&str>) -> R<Vec<Service>> {
+        sqlx::query_as("select * from services where $1 is null or project = $1 order by project, name").bind(project).fetch_all(&self.pool).await
+    }
+
+    pub async fn service(&self, project: &str, name: &str) -> R<Option<Service>> {
+        sqlx::query_as("select * from services where project = $1 and name = $2").bind(project).bind(name).fetch_optional(&self.pool).await
+    }
+
+    /// Adds or changes a service's definition (its state, whether it's on and when it was made stay).
+    pub async fn put_service(&self, v: &Service) -> R<()> {
+        sqlx::query(
+            "insert into services (project, name, source, made_by, description, script, script_file, health, interval, ready_timeout, stop_timeout, worktree, devshell, notes, enabled, state)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             on conflict (project, name) do update set source = $3, made_by = $4, description = $5, script = $6, script_file = $7, health = $8,
+               interval = $9, ready_timeout = $10, stop_timeout = $11, worktree = $12, devshell = $13, notes = $14",
+        )
+        .bind(&v.project)
+        .bind(&v.name)
+        .bind(&v.source)
+        .bind(&v.made_by)
+        .bind(&v.description)
+        .bind(&v.script)
+        .bind(&v.script_file)
+        .bind(&v.health)
+        .bind(v.interval)
+        .bind(v.ready_timeout)
+        .bind(v.stop_timeout)
+        .bind(&v.worktree)
+        .bind(v.devshell)
+        .bind(&v.notes)
+        .bind(v.enabled)
+        .bind(&v.state)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_service_state(&self, project: &str, name: &str, state: &ServiceState) -> R<()> {
+        sqlx::query("update services set state = $3 where project = $1 and name = $2").bind(project).bind(name).bind(Json(state)).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn set_service_enabled(&self, project: &str, name: &str, enabled: bool) -> R<bool> {
+        Ok(sqlx::query("update services set enabled = $3 where project = $1 and name = $2").bind(project).bind(name).bind(enabled).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    pub async fn remove_service(&self, project: &str, name: &str) -> R<bool> {
+        Ok(sqlx::query("delete from services where project = $1 and name = $2").bind(project).bind(name).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    /// Records a start (the last 20 are kept); its id.
+    pub async fn add_service_run(&self, project: &str, name: &str, job: &str, started: i64) -> R<i64> {
+        let id = sqlx::query_scalar("insert into service_runs (project, name, job, started) values ($1, $2, $3, $4) returning id").bind(project).bind(name).bind(job).bind(started).fetch_one(&self.pool).await?;
+        sqlx::query("delete from service_runs where project = $1 and name = $2 and id not in (select id from service_runs where project = $1 and name = $2 order by id desc limit 20)")
+            .bind(project)
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(id)
+    }
+
+    pub async fn service_run_up(&self, id: i64, at: i64) -> R<()> {
+        sqlx::query("update service_runs set up = $2 where id = $1").bind(id).bind(at).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn service_run_ended(&self, id: i64, at: i64, exit: Option<i64>, error: Option<&str>, output: &str) -> R<()> {
+        sqlx::query("update service_runs set ended = $2, exit = $3, error = $4, output = $5 where id = $1").bind(id).bind(at).bind(exit).bind(error).bind(output).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// A service's last starts, newest first.
+    pub async fn service_runs(&self, project: &str, name: &str) -> R<Vec<ServiceRun>> {
+        sqlx::query_as("select id, job, started, up, ended, exit, error, output from service_runs where project = $1 and name = $2 order by id desc").bind(project).bind(name).fetch_all(&self.pool).await
     }
 
     // --- settings, sessions, push ---------------------------------------

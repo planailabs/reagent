@@ -78,3 +78,46 @@ async fn another_agent_starts_and_follows_a_task_with_a_token() {
 fn call_tool(id: &str, tool: &str, args: Value) -> Vec<String> {
     common::call(id, tool, args)
 }
+
+#[tokio::test]
+async fn another_agent_manages_services_and_persistent_worktrees() {
+    let r = start().await;
+    let token = "rgt_svc-token";
+    r.run.app.store.add_api_token("outside", &reagent_web::auth::token_hash(token)).await.unwrap();
+    let c = client(&r.run.web_url, token).await.unwrap();
+    let (err, said) = call(&c, "service_add", json!({"project": "site", "name": "web", "script": "echo hi; exec sleep 600"})).await;
+    assert!(!err, "{said}");
+    // The project asks: an agent's service waits for the person.
+    let mut waiting = false;
+    for _ in 0..100 {
+        let (_, l) = call(&c, "service_list", json!({"project": "site"})).await;
+        if l.contains("[waiting") {
+            waiting = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(waiting);
+    let v = r.run.app.store.service("site", "web").await.unwrap().unwrap();
+    assert_eq!(v.made_by, "mcp");
+    let (_, stopped) = call(&c, "service_stop", json!({"project": "site", "name": "web"})).await;
+    assert!(stopped.contains("switched off"), "{stopped}");
+    let (err, _) = call(&c, "service_remove", json!({"project": "site", "name": "web"})).await;
+    assert!(!err && r.run.app.store.service("site", "web").await.unwrap().is_none());
+    // Persistent worktrees, and a task started in one.
+    let (err, said) = call(&c, "worktree_add", json!({"project": "site", "name": "next"})).await;
+    assert!(!err && said.contains("\"branch\": \"next\""), "{said}");
+    let (_, l) = call(&c, "worktree_list", json!({"project": "site"})).await;
+    assert!(l.contains("\"name\": \"next\""), "{l}");
+    r.push("There", |b| {
+        assert!(all_text(b).contains("Persistent worktree: next"));
+        text("ok")
+    });
+    let (err, said) = call(&c, "task_start", json!({"project": "site", "title": "There", "prompt": "x", "worktree": "next"})).await;
+    assert!(!err, "{said}");
+    let id = serde_json::from_str::<Value>(&said).unwrap()["task"].as_str().unwrap().to_string();
+    let t = r.done(&id).await;
+    assert_eq!(t.home.as_deref(), Some("next"));
+    let (err, said) = call(&c, "worktree_remove", json!({"project": "site", "name": "next"})).await;
+    assert!(!err, "{said}");
+}

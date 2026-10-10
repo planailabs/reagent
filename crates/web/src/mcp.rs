@@ -205,6 +205,22 @@ pub struct TriggerAdd {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct ServiceAdd {
+    /// The project it belongs to.
+    pub project: String,
+    #[serde(flatten)]
+    pub def: reagent_tools::services::Def,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct ServiceLogs {
+    pub project: String,
+    pub name: String,
+    /// How many of its last lines (default 100).
+    pub lines: Option<usize>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TriggerRef {
     pub project: String,
     pub name: String,
@@ -456,6 +472,60 @@ impl ReagentTools {
         let t = reagent_tools::triggers::move_to(&self.0.store, &p, &a.name, &a.to).await?;
         self.0.emit_trigger(&p.slug, &t.name).await;
         Ok(format!("{} is {} now", t.name, if t.source == "repo" { "in the repo" } else { "kept in reagent" }))
+    }
+
+    #[tool(description = "Services (of a project, or all): commands that should always run, each with its state (starting, up, stopping, backoff, waiting for approval, stopped), since when, failures and last error.")]
+    async fn service_list(&self, Parameters(a): Parameters<Project>) -> Result<String, String> {
+        let v = self.0.store.services(a.project.as_deref()).await.map_err(|e| e.to_string())?;
+        Ok(if v.is_empty() { "no services".into() } else { v.iter().map(|x| format!("{}: {}", x.project, reagent_tools::services::line(x))).collect::<Vec<_>>().join("\n") })
+    }
+
+    #[tool(description = "Add (or replace) a service of a project: a command that should always run. reagent starts it, checks it (health), restarts it with backoff, and after 5 failures in a row starts a task to repair it. The project's policy decides whether its command runs (it may ask the person).")]
+    async fn service_add(&self, Parameters(a): Parameters<ServiceAdd>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        let v = reagent_tools::services::save(&self.0.store, &p, a.def.into_service(&p.slug, "mcp")?, false).await?;
+        self.0.emit_service(&p.slug, &v.name).await;
+        Ok(format!("added: {}", reagent_tools::services::line(&v)))
+    }
+
+    #[tool(description = "Remove a service: it's stopped (a repo service's files go too).")]
+    async fn service_remove(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
+        reagent_tools::services::remove(&self.0, &a.project, &a.name).await?;
+        Ok("removed".into())
+    }
+
+    #[tool(description = "Switch a service on: started at once, its failure streak cleared.")]
+    async fn service_start(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
+        let v = reagent_tools::services::set_enabled(&self.0.store, &a.project, &a.name, true).await?;
+        self.0.emit_service(&a.project, &a.name).await;
+        Ok(format!("{} switched on", v.name))
+    }
+
+    #[tool(description = "Switch a service off: stopped; it stays off until started.")]
+    async fn service_stop(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
+        let v = reagent_tools::services::set_enabled(&self.0.store, &a.project, &a.name, false).await?;
+        self.0.emit_service(&a.project, &a.name).await;
+        Ok(format!("{} switched off", v.name))
+    }
+
+    #[tool(description = "Restart a service: stopped and started again at once.")]
+    async fn service_restart(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
+        let v = reagent_tools::services::restart(&self.0.store, &a.project, &a.name).await?;
+        self.0.emit_service(&a.project, &a.name).await;
+        Ok(format!("{} restarts", v.name))
+    }
+
+    #[tool(description = "The end of a service's output.")]
+    async fn service_logs(&self, Parameters(a): Parameters<ServiceLogs>) -> Result<String, String> {
+        reagent_tools::services::logs(&self.0, &a.project, &a.name, a.lines.unwrap_or(100)).await
+    }
+
+    #[tool(description = "Move a service into the project's repo (.agents/services/<name>/) or back into reagent.")]
+    async fn service_move(&self, Parameters(a): Parameters<TriggerMove>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        let v = reagent_tools::services::move_to(&self.0.store, &p, &a.name, &a.to).await?;
+        self.0.emit_service(&p.slug, &v.name).await;
+        Ok(format!("{} is {} now", v.name, if v.source == "repo" { "in the repo" } else { "kept in reagent" }))
     }
 
     #[tool(description = "The plugins: git repositories in reagent's data folder whose skills and rules every task gets (id, URL, ref, commit, skills, rules).")]

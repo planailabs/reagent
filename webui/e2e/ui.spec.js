@@ -552,6 +552,27 @@ test("a persistent worktree is made, a task starts in it, it merges into main an
   await expect(page.getByText("no persistent worktrees yet")).toBeVisible();
 });
 
+test("a service is added, comes up, shows its output, stops and goes", async ({ page }) => {
+  await page.goto("/#/project/site/services");
+  await page.getByLabel("service name").fill("web");
+  await page.getByLabel("service command").fill("echo serving; exec sleep 600");
+  await page.getByLabel("health check").fill("true");
+  await page.getByLabel("check interval").fill("1s");
+  await page.getByRole("button", { name: "save" }).click();
+  const card = page.getByLabel("service web");
+  await expect(card.getByLabel("status of web")).toHaveText("up", { timeout: 15000 });
+  await card.getByRole("button", { name: "output" }).click();
+  await expect(card.getByLabel("output of web")).toContainText("serving");
+  await card.getByRole("button", { name: "starts" }).click();
+  await expect(card.locator(".runs summary").first()).toContainText("up at");
+  await card.getByRole("button", { name: "stop", exact: true }).click();
+  await expect(card.getByLabel("status of web")).toHaveText("stopped", { timeout: 15000 });
+  await expect(card.getByRole("button", { name: "start", exact: true })).toBeVisible();
+  page.once("dialog", (d) => d.accept());
+  await card.getByRole("button", { name: "remove" }).click();
+  await expect(page.getByText("no services")).toBeVisible();
+});
+
 test("reagent's docs are readable", async ({ page }) => {
   await page.goto("/#/docs");
   await expect(page.locator("article")).toContainText("reagent runs coding agents");

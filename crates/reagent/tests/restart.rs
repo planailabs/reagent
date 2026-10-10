@@ -145,3 +145,28 @@ async fn a_message_queued_before_a_restart_is_delivered_after_it() {
     assert_eq!(d.state, "done");
     assert!(run.app.store.outbox(&t.id).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_service_keeps_running_across_a_restart() {
+    let r = start().await;
+    let p = r.run.app.project("site").await.unwrap();
+    let v: reagent_store::Service = serde_json::from_value(json!({"name": "web", "script": "exec sleep 600"})).unwrap();
+    reagent_tools::services::save(&r.run.app.store, &p, v, true).await.unwrap();
+    let mut job = None;
+    for _ in 0..100 {
+        let v = r.run.app.store.service("site", "web").await.unwrap().unwrap();
+        if v.state.0.status == "up" {
+            job = v.state.0.job;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let job = job.expect("it came up");
+    reagent::stop(&r.run).await;
+    let run = again(&r).await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let v = run.app.store.service("site", "web").await.unwrap().unwrap();
+    assert_eq!((v.state.0.status.as_str(), v.state.0.job.as_deref(), v.state.0.failures), ("up", Some(job.as_str()), 0), "the same job, still up");
+    assert!(run.app.sup.job(&job).await.unwrap().running());
+    reagent_tools::services::remove(&run.app, "site", "web").await.unwrap();
+}

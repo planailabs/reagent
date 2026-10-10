@@ -54,7 +54,7 @@ function start() {
       live.todos[e.task] = e.todos;
     } else if (e.kind === "wm") {
       live.wm[e.task] = e.wm;
-    } else if (e.kind === "job" || e.kind === "project" || e.kind === "trigger") {
+    } else if (e.kind === "job" || e.kind === "project" || e.kind === "trigger" || e.kind === "service") {
       live.tick++;
     }
   });

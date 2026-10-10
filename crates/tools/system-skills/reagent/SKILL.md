@@ -30,6 +30,9 @@ are summarised as they go.
   instructions, always or for the files touched (`reagent-skills`).
 - **Cron and triggers**: tasks started on a schedule, or when a script sees
   something happen (CI failing, say) (`reagent-cron-and-triggers`).
+- **Services**: commands that should always run (dev servers, databases);
+  started, checked, restarted, and repaired by a task when that keeps
+  failing (`reagent-services`).
 - **Secrets**: tokens and keys the person (or a task) keeps; commands get
   them as environment variables, results show them as `***`
   (`reagent-secrets`).

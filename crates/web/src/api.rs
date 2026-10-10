@@ -79,6 +79,14 @@ pub fn routes() -> Router<S> {
         .route("/api/projects/{slug}/agent-rules", get(project_rules))
         .route("/api/projects/{slug}/cron", get(crons))
         .route("/api/projects/{slug}/triggers", get(triggers))
+        .route("/api/projects/{slug}/services", get(services))
+        .route("/api/services/{project}/{name}", put(put_service).delete(remove_service))
+        .route("/api/services/{project}/{name}/start", post(start_service))
+        .route("/api/services/{project}/{name}/stop", post(stop_service))
+        .route("/api/services/{project}/{name}/restart", post(restart_service))
+        .route("/api/services/{project}/{name}/approve", post(approve_service))
+        .route("/api/services/{project}/{name}/move", post(move_service))
+        .route("/api/services/{project}/{name}/runs", get(service_runs))
         .route("/api/projects/{slug}/worktrees", get(worktrees).post(add_worktree))
         .route("/api/projects/{slug}/worktrees/{name}", get(worktree).put(set_worktree).delete(remove_worktree))
         .route("/api/projects/{slug}/worktrees/{name}/merge", post(merge_worktree))
@@ -272,7 +280,9 @@ async fn inbox(State(s): State<S>) -> R {
     let unseen: Vec<_> = db(s.w.app.store.notifications(100).await)?.into_iter().filter(|n| !n.seen).collect();
     // Triggers whose script waits for the person's approval.
     let triggers: Vec<_> = db(s.w.app.store.triggers(None).await)?.into_iter().filter(|t| t.state.0.asking.is_some()).collect();
-    Ok(Json(json!({"waiting": waiting, "failed": failed, "notifications": unseen, "triggers": triggers})))
+    // Services waiting for an approval, or failing.
+    let services: Vec<_> = db(s.w.app.store.services(None).await)?.into_iter().filter(|v| v.enabled && (v.state.0.asking.is_some() || v.state.0.failures > 0)).collect();
+    Ok(Json(json!({"waiting": waiting, "failed": failed, "notifications": unseen, "triggers": triggers, "services": services})))
 }
 
 async fn notifications(State(s): State<S>) -> R {
@@ -731,6 +741,71 @@ async fn trigger_runs(State(s): State<S>, Path((project, name)): Path<(String, S
     Ok(Json(json!(db(s.w.app.store.trigger_runs(&project, &name).await)?)))
 }
 
+/// A project's services, and its repo services that couldn't be read.
+async fn services(State(s): State<S>, Path(slug): Path<String>) -> R {
+    s.w.app.project(&slug).await?;
+    let list: Vec<Value> = db(s.w.app.store.services(Some(&slug)).await)?
+        .into_iter()
+        .map(|v| {
+            let mut j = json!(v);
+            j["hash"] = json!(reagent_tools::services::script_hash(&v));
+            j
+        })
+        .collect();
+    let errors = s.w.app.services.repo_errors.lock().unwrap().get(&slug).cloned().unwrap_or_default();
+    Ok(Json(json!({"services": list, "errors": errors})))
+}
+
+/// Adds or changes a service (the person's: its command is allowed).
+async fn put_service(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(mut v): Json<reagent_store::Service>) -> R {
+    let p = s.w.app.project(&project).await?;
+    v.name = name;
+    v.made_by = "person".into();
+    v.health = v.health.filter(|h| !h.trim().is_empty());
+    v.worktree = v.worktree.filter(|w| !w.trim().is_empty());
+    let v = reagent_tools::services::save(&s.w.app.store, &p, v, true).await?;
+    s.w.app.emit_service(&project, &v.name).await;
+    Ok(Json(json!(v)))
+}
+
+async fn remove_service(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    reagent_tools::services::remove(&s.w.app, &project, &name).await?;
+    Ok(Json(json!({"removed": true})))
+}
+
+async fn start_service(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    let v = reagent_tools::services::set_enabled(&s.w.app.store, &project, &name, true).await?;
+    s.w.app.emit_service(&project, &name).await;
+    Ok(Json(json!(v)))
+}
+
+async fn stop_service(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    let v = reagent_tools::services::set_enabled(&s.w.app.store, &project, &name, false).await?;
+    s.w.app.emit_service(&project, &name).await;
+    Ok(Json(json!(v)))
+}
+
+async fn restart_service(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    let v = reagent_tools::services::restart(&s.w.app.store, &project, &name).await?;
+    s.w.app.emit_service(&project, &name).await;
+    Ok(Json(json!(v)))
+}
+
+async fn approve_service(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(a): Json<TriggerApproval>) -> R {
+    Ok(Json(json!(reagent_tools::services::approve(&s.w.app, &project, &name, a.approved, a.always).await?)))
+}
+
+async fn move_service(State(s): State<S>, Path((project, name)): Path<(String, String)>, Json(m): Json<MoveTo>) -> R {
+    let p = s.w.app.project(&project).await?;
+    let v = reagent_tools::services::move_to(&s.w.app.store, &p, &name, &m.to).await?;
+    s.w.app.emit_service(&project, &name).await;
+    Ok(Json(json!(v)))
+}
+
+async fn service_runs(State(s): State<S>, Path((project, name)): Path<(String, String)>) -> R {
+    Ok(Json(json!(db(s.w.app.store.service_runs(&project, &name).await)?)))
+}
+
 /// A webhook (no login: the trigger's secret signs it).
 async fn hook(State(s): State<S>, Path((project, name)): Path<(String, String)>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
     match reagent_tools::triggers::webhook(s.w.app.clone(), &project, &name, &headers, body).await {
@@ -1067,7 +1142,7 @@ struct OutQ {
 async fn job_project(s: &S, job: &str) -> Option<String> {
     let owner = s.w.app.sup.job(job).await.ok()?.owner?;
     // A watcher's job: its trigger's project.
-    if let Some(id) = owner.strip_prefix("trigger:") {
+    if let Some(id) = owner.strip_prefix("trigger:").or_else(|| owner.strip_prefix("service:")) {
         return id.split_once('/').map(|(p, _)| p.to_string());
     }
     Some(s.w.app.task(&owner).await.ok()?.project)

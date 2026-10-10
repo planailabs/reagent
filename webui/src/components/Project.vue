@@ -14,6 +14,7 @@ import SkillPicker from "./SkillPicker.vue";
 import TemplateForm from "./TemplateForm.vue";
 import Templates from "./Templates.vue";
 import Worktrees from "./Worktrees.vue";
+import Services from "./Services.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -125,7 +126,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
   <section v-if="p">
     <h2>{{ p.name }} <span class="dim">{{ p.path }}</span></h2>
     <nav class="row tabs">
-      <a v-for="t in ['tasks', 'new', 'templates', 'worktrees', 'cron', 'triggers', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
+      <a v-for="t in ['tasks', 'new', 'templates', 'worktrees', 'cron', 'triggers', 'services', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
     </nav>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
@@ -171,6 +172,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
     <Worktrees v-if="tab === 'worktrees'" :slug="slug" :sharing="p.worktree_sharing" @changed="load" />
     <Cron v-if="tab === 'cron'" :slug="slug" :config="config" />
     <Triggers v-else-if="tab === 'triggers'" :slug="slug" :config="config" />
+    <Services v-else-if="tab === 'services'" :slug="slug" />
     <Rules v-else-if="tab === 'policy'" :slug="slug" />
     <Memory v-else-if="tab === 'memory'" :scope="slug" />
     <McpServers v-else-if="tab === 'mcp'" :project="slug" />

@@ -64,6 +64,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PluginCmd,
     },
+    /// Services: commands of a project that should always run (started, checked, restarted, repaired).
+    Service {
+        #[command(subcommand)]
+        cmd: ServiceCmd,
+    },
     /// Persistent worktrees: a project's named, long-lived checkouts that tasks start in.
     Worktree {
         #[command(subcommand)]
@@ -283,6 +288,91 @@ enum TaskCmd {
         /// Print it as JSON.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceCmd {
+    /// Add (or change) a service; its command from --script or --script-file. The running reagent starts it.
+    Add {
+        name: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        script: Option<String>,
+        #[arg(long)]
+        script_file: Option<PathBuf>,
+        /// A command whose exit 0 says it's healthy.
+        #[arg(long)]
+        health: Option<String>,
+        /// Between checks while it's up (default 30s).
+        #[arg(long)]
+        interval: Option<String>,
+        /// How long it may take to come up (default 60s).
+        #[arg(long)]
+        ready_timeout: Option<String>,
+        /// SIGTERM, then SIGKILL after this (default 10s).
+        #[arg(long)]
+        stop_timeout: Option<String>,
+        /// A persistent worktree of the project to run in.
+        #[arg(long)]
+        worktree: Option<String>,
+        #[arg(long)]
+        no_devshell: bool,
+        #[arg(long, default_value = "")]
+        description: String,
+        /// For whoever repairs it.
+        #[arg(long, default_value = "")]
+        notes: String,
+    },
+    List {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    Remove {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    /// Switch it on (started at once).
+    Start {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    /// Switch it off (stopped; it stays off).
+    Stop {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    Restart {
+        name: String,
+        #[arg(long)]
+        project: String,
+    },
+    /// The end of its output.
+    Logs {
+        name: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long, default_value_t = 100)]
+        lines: usize,
+    },
+    /// Into the repo (.agents/services/<name>/) or back into reagent (db).
+    Move {
+        name: String,
+        #[arg(long)]
+        project: String,
+        to: String,
+    },
+    /// Allow (or --deny) its command, which waits for the person.
+    Approve {
+        name: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        deny: bool,
     },
 }
 
@@ -722,6 +812,86 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     let all = reagent_tools::templates::discover(&store, &data, project.as_ref()).await;
                     let t = all.iter().find(|t| t.name == name).ok_or_else(|| anyhow::anyhow!("no template {name:?}"))?;
                     print!("{}", t.text);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Service { cmd } => {
+            use reagent_tools::services;
+            std::fs::create_dir_all(&data)?;
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let m = anyhow::Error::msg;
+            let project = |slug: String| {
+                let store = store.clone();
+                async move { store.project(&slug).await?.ok_or_else(|| anyhow::anyhow!("no project {slug:?}")) }
+            };
+            let service = |slug: String, name: String| {
+                let store = store.clone();
+                async move { store.service(&slug, &name).await?.ok_or_else(|| anyhow::anyhow!("no service {name:?} in {slug}")) }
+            };
+            match cmd {
+                ServiceCmd::Add { name, project: slug, script, script_file, health, interval, ready_timeout, stop_timeout, worktree, no_devshell, description, notes } => {
+                    let p = project(slug).await?;
+                    let script = match (script, script_file) {
+                        (Some(s), None) => s,
+                        (None, Some(f)) => std::fs::read_to_string(&f).map_err(|e| anyhow::anyhow!("{}: {e}", f.display()))?,
+                        _ => anyhow::bail!("--script or --script-file"),
+                    };
+                    let def = services::Def { name, script, health, interval, ready_timeout, stop_timeout, worktree, devshell: Some(!no_devshell), description: Some(description), notes: Some(notes) };
+                    let v = services::save(&store, &p, def.into_service(&p.slug, "person").map_err(m)?, true).await.map_err(m)?;
+                    println!("{}", services::line(&v));
+                    eprintln!("the running reagent starts it within seconds");
+                }
+                ServiceCmd::List { project } => {
+                    for v in store.services(project.as_deref()).await? {
+                        println!("{}\t{}", v.project, services::line(&v));
+                    }
+                }
+                ServiceCmd::Remove { name, project: slug } => {
+                    let p = project(slug.clone()).await?;
+                    let v = service(slug.clone(), name.clone()).await?;
+                    if let Some(j) = &v.state.0.job {
+                        let _ = reagent_supervisor::Client::new(&data.join("supervisor.sock")).kill(j, None).await;
+                    }
+                    if v.source == "repo" {
+                        store.put_service(&reagent_store::Service { source: "db".into(), ..v.clone() }).await?;
+                        services::remove_repo(&p, &v).map_err(m)?;
+                    }
+                    store.remove_service(&slug, &name).await?;
+                    println!("removed {name}");
+                }
+                ServiceCmd::Start { name, project } => println!("{}", services::line(&services::set_enabled(&store, &project, &name, true).await.map_err(m)?)),
+                ServiceCmd::Stop { name, project } => println!("{}", services::line(&services::set_enabled(&store, &project, &name, false).await.map_err(m)?)),
+                ServiceCmd::Restart { name, project } => println!("{}", services::line(&services::restart(&store, &project, &name).await.map_err(m)?)),
+                ServiceCmd::Logs { name, project, lines } => {
+                    let v = service(project.clone(), name.clone()).await?;
+                    let job = match v.state.0.job.clone() {
+                        Some(j) => Some(j),
+                        None => store.service_runs(&project, &name).await?.into_iter().find_map(|r| r.job),
+                    };
+                    match job {
+                        Some(j) => print!("{}", reagent_supervisor::tail(&data, &j, lines)),
+                        None => eprintln!("{name} hasn't run yet"),
+                    }
+                }
+                ServiceCmd::Move { name, project: slug, to } => {
+                    let p = project(slug).await?;
+                    println!("{}", services::line(&services::move_to(&store, &p, &name, &to).await.map_err(m)?));
+                }
+                ServiceCmd::Approve { name, project, deny } => {
+                    let v = service(project.clone(), name.clone()).await?;
+                    let mut st = v.state.0.clone();
+                    let hash = services::script_hash(&v);
+                    st.asking = None;
+                    if deny {
+                        st.denied = Some(hash);
+                    } else {
+                        st.approved = Some(hash);
+                        st.denied = None;
+                        st.next_start = None;
+                    }
+                    store.set_service_state(&project, &name, &st).await?;
+                    println!("{name}: {}", if deny { "denied" } else { "allowed" });
                 }
             }
             Ok(())

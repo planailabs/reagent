@@ -283,3 +283,26 @@ async fn persistent_worktrees_are_kept_and_count_their_tasks() {
     assert!(s.remove_persistent_worktree("site", "next").await.unwrap());
     assert!(s.persistent_worktrees("site").await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn services_keep_their_definition_state_and_last_starts() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let v: Service = serde_json::from_value(serde_json::json!({"project": "site", "name": "web", "script": "python -m http.server"})).unwrap();
+    assert_eq!((v.interval, v.ready_timeout, v.stop_timeout, v.enabled, v.devshell), (30, 60, 10, true, true));
+    s.put_service(&v).await.unwrap();
+    s.set_service_state("site", "web", &ServiceState { status: "up".into(), failures: 2, ..Default::default() }).await.unwrap();
+    s.set_service_enabled("site", "web", false).await.unwrap();
+    // A changed definition keeps the state and the switch.
+    s.put_service(&Service { script: "python -m http.server 9000".into(), ..v.clone() }).await.unwrap();
+    let got = s.service("site", "web").await.unwrap().unwrap();
+    assert_eq!((got.script.as_str(), got.state.0.status.as_str(), got.state.0.failures, got.enabled), ("python -m http.server 9000", "up", 2, false));
+    for i in 0..22 {
+        let id = s.add_service_run("site", "web", &format!("j{i}"), i).await.unwrap();
+        s.service_run_ended(id, i + 1, Some(1), Some("exited with 1"), "out").await.unwrap();
+    }
+    let runs = s.service_runs("site", "web").await.unwrap();
+    assert_eq!((runs.len(), runs[0].job.as_deref(), runs[0].exit), (20, Some("j21"), Some(1)));
+    assert!(s.remove_service("site", "web").await.unwrap());
+    assert!(s.services(Some("site")).await.unwrap().is_empty());
+}

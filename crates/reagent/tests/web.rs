@@ -216,3 +216,31 @@ async fn persistent_worktrees_over_the_api() {
     assert!(!git(r.project.path(), &["branch", "--list", "release-1"]).contains("release-1"));
     let _ = std::fs::remove_dir_all(&by_hand);
 }
+
+#[tokio::test]
+async fn services_over_the_api() {
+    let r = start().await;
+    let (c, base) = logged_in(&r).await;
+    let bad = c.put(format!("{base}/api/services/site/Web")).json(&json!({"script": "x"})).send().await.unwrap();
+    assert_eq!(bad.status(), 400);
+    let v: Value = c.put(format!("{base}/api/services/site/web")).json(&json!({"script": "echo up; exec sleep 600", "health": "", "interval": 5})).send().await.unwrap().json().await.unwrap();
+    assert_eq!((v["made_by"].as_str(), v["health"].is_null()), (Some("person"), true), "{v}");
+    let mut up = false;
+    for _ in 0..100 {
+        let l = get(&c, format!("{base}/api/projects/site/services")).await;
+        if l["services"][0]["state"]["status"] == "up" {
+            up = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(up);
+    let runs = get(&c, format!("{base}/api/services/site/web/runs")).await;
+    assert!(runs[0]["up"].as_i64().is_some(), "{runs}");
+    post(&c, format!("{base}/api/services/site/web/stop"), json!({})).await;
+    let moved = post(&c, format!("{base}/api/services/site/web/move"), json!({"to": "repo"})).await;
+    assert_eq!(moved["source"], "repo");
+    assert!(r.project.path().join(".agents/services/web/SERVICE.md").is_file());
+    assert!(c.delete(format!("{base}/api/services/site/web")).send().await.unwrap().status().is_success());
+    assert!(!r.project.path().join(".agents/services/web").exists());
+}

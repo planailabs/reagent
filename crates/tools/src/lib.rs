@@ -18,5 +18,6 @@ pub mod hooks;
 pub mod mcp;
 pub mod notify;
 pub mod persistent;
+pub mod services;
 pub mod templates;
 pub mod triggers;
