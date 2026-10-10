@@ -516,3 +516,37 @@ async fn a_message_is_queued_at_once_and_delivered_in_order() {
     assert_eq!(t.report.as_deref(), Some("read both"));
     assert!(r.run.app.store.outbox(&t.id).await.unwrap().is_empty(), "delivered ones go");
 }
+
+#[tokio::test]
+async fn helpers_are_subtasks_of_a_kind_and_spawn_agent_says_so() {
+    let r = start().await;
+    r.allow_all().await;
+    r.push("Lead", |_| call("c1", "spawn_agent", json!({"type": "general", "prompt": "look around"})));
+    r.push("Lead", |b| {
+        let l = last_result(b);
+        assert!(l.contains("tasks.task_spawn") && l.contains("explore (") && l.contains("research ("), "{l}");
+        call("c2", "tasks.task_spawn", json!({"title": "Look", "prompt": "Find the greeting.", "kind": "explore"}))
+    });
+    r.push("Look", |b| {
+        let all = all_text(b);
+        assert!(all.contains("# Your role (explore)") && all.contains("You change nothing") && all.contains("Find the greeting."), "{all}");
+        call("e1", "fs.write", json!({"path": "x.txt", "text": "no"}))
+    });
+    r.push("Look", |b| {
+        assert!(last_result(b).contains("doesn't use fs.write"), "{}", last_result(b));
+        call("e2", "fs.read", json!({"path": "a.txt"}))
+    });
+    r.push("Look", |b| {
+        assert!(last_result(b).contains("hello world"), "{}", last_result(b));
+        text("a.txt:1 says hello world")
+    });
+    // The report comes as a message: in the next turn, or in a later one.
+    for _ in 0..2 {
+        r.push("Lead", |b| text(if all_text(b).contains("a.txt:1 says hello world") { "found it" } else { "waiting for it" }));
+    }
+    let t = r.start_task("Lead", "x").await;
+    r.until(&t.id, "the explore report", |t| t.report.as_deref() == Some("found it")).await;
+    assert!(!r.project.path().join("x.txt").exists());
+    let kids = r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap();
+    assert_eq!(kids[0].kind.as_deref(), Some("explore"));
+}

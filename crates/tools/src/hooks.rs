@@ -124,6 +124,11 @@ impl HookTools {
         let tool = q.input["tool"].as_str().unwrap_or_default().replace("__", ".");
         let args = &q.input["args"];
         let default = Action::parse(&p.default_action).unwrap_or(Action::Ask);
+        // Delegation is reagent's subtasks (of a kind), not subnet's in-task agents.
+        if tool == "spawn_agent" {
+            let kinds = self.0.config.kind.iter().map(|(n, k)| format!("{n} ({})", k.description)).collect::<Vec<_>>().join("; ");
+            return Ok(json!({"decision": "deny", "reason": format!("spawn_agent isn't used here: start a subtask with tasks.task_spawn(prompt, kind?, title?) instead; its report comes to you as a message (tasks.task_wait waits for it). Kinds: {kinds}")}).to_string());
+        }
         // Subnet's own tools (search_history, grep_result, …) read the task's own history.
         if !tool.contains('.') {
             return Ok(json!({"decision": "allow"}).to_string());
@@ -141,6 +146,12 @@ impl HookTools {
             if !seen.iter().any(|s| s == path) {
                 seen.push(path.to_string());
             }
+        }
+        // A task of a kind with a tool list (explore, review, research) keeps to it.
+        let added = tool.split_once('.').is_some_and(|(server, _)| !crate::cluster::SERVERS.iter().any(|(n, _)| *n == server));
+        if !self.0.config.kind_may(t.kind.as_deref(), &tool, added) {
+            let k = t.kind.as_deref().unwrap_or_default();
+            return Ok(json!({"decision": "deny", "reason": format!("{} {k} task doesn't use {tool} ({}); report what needs doing instead, or what you found", if k.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" }, self.0.config.kind.get(k).map(|k| k.description.as_str()).unwrap_or_default())}).to_string());
         }
         // A subtask without a project is in this one.
         let target = target_of(&tool, args).or((tool == "tasks.task_spawn").then_some(p.slug.as_str()));

@@ -56,7 +56,51 @@ pub struct Kind {
     /// Escalate by itself after this many tool errors in a row.
     #[serde(default)]
     pub escalate_after: Option<u32>,
+    /// Its role: instructions put in its tasks' first message.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// The tools its tasks may use (globs over `<server>.<tool>`; `added.*`:
+    /// every added MCP server's); none: all of them.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
 }
+
+/// What every read-only kind may use: reading files, memory and skills,
+/// asking, its own lists and notes, and following jobs.
+const READ_TOOLS: &[&str] = &[
+    "fs.read", "fs.grep", "fs.glob", "fs.ls", "memory.memory_read", "memory.memory_search", "skills.*", "ask.ask", "todo.*", "wm.*",
+    "tasks.search_history", "tasks.task_list", "tasks.task_wait", "tasks.task_title", "tasks.template_list", "tasks.cron_list", "triggers.trigger_list",
+    "secrets.secrets_list", "git.worktree_status", "git.worktree_diff", "shell.jobs", "shell.job_output", "shell.job_wait", "shell.sleep", "pty.ptys", "pty.pty_screen",
+];
+
+/// reagent's own kinds (reagent.hcl may change them, or add its own):
+/// name, description, the extra tools beyond reading (None: every tool), its role.
+pub const BUILTIN_KINDS: &[(&str, &str, Option<&[&str]>, &str)] = &[
+    (
+        "explore",
+        "Find and read code, configs and history; answers with file:line references. Changes nothing.",
+        Some(&["shell.exec"]),
+        "You explore. Find and read what you're asked about (code, configs, docs, git history) and answer with what you found, with file:line references. You change nothing: no file edits, and shell commands only to read (rg, git log, git blame, git show, ls, cat). Be thorough but compact: another agent reads your answer, so give it what it needs to act and say what you couldn't find.",
+    ),
+    (
+        "review",
+        "Check a change or a claim for bugs, regressions and gaps; runs tests; reports findings, worst first. Fixes nothing.",
+        Some(&["shell.exec", "shell.exec_bg", "shell.job_input", "shell.job_stop"]),
+        "You review. Check the change or the claim you're given for bugs, regressions, missing tests, wrong assumptions and unhandled cases: read what it touches and its callers, and run the tests or a quick check when that settles a question. You fix nothing: no file edits. Report each finding with file:line, what goes wrong (a concrete case), and how sure you are, the worst first; say plainly when you found nothing.",
+    ),
+    (
+        "code",
+        "Make a well-scoped change completely, with its tests; reports what changed and how it was checked.",
+        None,
+        "You code. Make the change you're given, completely: the code, its callers, its tests and the docs it touches, in the working directory you're in. Follow the project's conventions (AGENTS.md, its rules). Run the tests that cover it and fix what fails. Report what you changed (files, commits), how you checked it, and anything left open.",
+    ),
+    (
+        "research",
+        "Look things up outside the repository with the web tools (added MCP servers); answers with sources.",
+        Some(&["added.*"]),
+        "You research outside the repository. Look up what you're asked (docs, APIs, issues, releases, prices) with the web tools you have (the added MCP servers: load_tools lists them), and read the repository when it helps to know what to look for. Answer with what you found, citing each source's URL, and say what you couldn't confirm. You change nothing.",
+    ),
+];
 
 /// Kinds for tasks by origin (a task's own choice and the project's default come first).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -226,9 +270,34 @@ notify {
 
 impl Config {
     pub fn parse(text: &str) -> anyhow::Result<Config> {
-        let c: Config = hcl::from_str(text)?;
+        let mut c: Config = hcl::from_str(text)?;
+        c.add_builtin_kinds();
         c.check()?;
         Ok(c)
+    }
+
+    /// reagent's own kinds; one reagent.hcl defines with the same name is its own instead (whole).
+    fn add_builtin_kinds(&mut self) {
+        for (name, description, extra, prompt) in BUILTIN_KINDS {
+            self.kind.entry(name.to_string()).or_insert_with(|| Kind {
+                description: description.to_string(),
+                prompt: Some(prompt.to_string()),
+                tools: extra.map(|e| READ_TOOLS.iter().chain(e.iter()).map(|t| t.to_string()).collect()),
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Whether a task of this kind may call the tool (`<server>.<tool>`;
+    /// `added`: whether the tool's server is an added one, not reagent's own).
+    pub fn kind_may(&self, kind: Option<&str>, tool: &str, added: bool) -> bool {
+        let Some(tools) = kind.and_then(|k| self.kind.get(k)).and_then(|k| k.tools.as_ref()) else { return true };
+        tools.iter().any(|g| {
+            if let Some(rest) = g.strip_prefix("added.") {
+                return added && (rest == "*" || tool.split_once('.').is_some_and(|(_, t)| t == rest));
+            }
+            globset::Glob::new(g).is_ok_and(|g| g.compile_matcher().is_match(tool))
+        })
     }
 
     pub fn check(&self) -> anyhow::Result<()> {
@@ -292,6 +361,23 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_kinds_are_there_and_reagent_hcl_changes_them() {
+        let c = Config::parse(&format!("{EXAMPLE}\nkind \"chore\" {{\n  profile = \"default\"\n}}\n")).unwrap();
+        let e = &c.kind["explore"];
+        assert!(e.prompt.as_deref().unwrap().starts_with("You explore") && !e.description.is_empty() && e.profile.is_none());
+        // reagent.hcl's kind of the same name is its own, whole.
+        let mine = Config::parse(&format!("{EXAMPLE}\nkind \"research\" {{\n  profile = \"default\"\n}}\n")).unwrap();
+        assert_eq!((mine.kind["research"].prompt.as_ref(), mine.kind["research"].tools.as_ref()), (None, None));
+        assert!(mine.kind_may(Some("research"), "tasks.task_spawn", false));
+        assert!(["explore", "review", "code", "research"].iter().all(|k| c.kind.contains_key(*k)));
+        assert!(c.kind_may(Some("explore"), "fs.read", false) && c.kind_may(Some("explore"), "shell.exec", false));
+        assert!(!c.kind_may(Some("explore"), "fs.write", false) && !c.kind_may(Some("review"), "fs.edit", false));
+        assert!(!c.kind_may(Some("explore"), "firecrawl.scrape", true), "web tools are research's");
+        assert!(c.kind_may(Some("research"), "firecrawl.scrape", true) && !c.kind_may(Some("research"), "shell.exec", false));
+        assert!(c.kind_may(Some("code"), "fs.write", false) && c.kind_may(None, "fs.write", false), "code and no kind: every tool");
+    }
 
     #[test]
     fn the_example_parses() {

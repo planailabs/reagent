@@ -652,8 +652,10 @@ impl App {
             let (body, files) = skills::load(s)?;
             preload.push_str(&format!("\n\n## Skill: {name} (in {})\n\n{body}\n{}", s.dir.display(), if files.is_empty() { String::new() } else { format!("\nIts files: {}\n", files.join(", ")) }));
         }
+        // Its kind's role, before what to do.
+        let role = t.kind.as_deref().and_then(|k| self.config.kind.get(k).and_then(|kd| kd.prompt.as_deref()).map(|r| format!("# Your role ({k})\n\n{}\n\n# What to do\n\n", r.trim()))).unwrap_or_default();
         let first = format!(
-            "Task: {}\nProject: {} ({})\nWorking directory: {}\n\n{}{}",
+            "Task: {}\nProject: {} ({})\nWorking directory: {}\n\n{role}{}{}",
             if t.title.is_empty() { UNTITLED } else { &t.title },
             p.name,
             p.slug,
@@ -1277,9 +1279,10 @@ impl App {
         let _ = self.store.set_state(&t.id, state, None).await;
         self.task_changed(&t.id).await;
         tracing::info!(task = %t.id, state, "task reported");
+        // Its parent hears it even after ending its turn ("waiting for it"): the message wakes it; not a cancelled one.
         if let Some(parent) = &t.parent
             && let Ok(p) = self.task(parent).await
-            && p.is_active()
+            && p.state != "cancelled"
         {
             let _ = self.message(parent, &format!("[subtask {} ({}) {state}]\n{content}", t.name(), t.id)).await;
         }

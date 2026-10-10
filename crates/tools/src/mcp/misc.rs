@@ -187,7 +187,7 @@ pub struct Spawn {
     pub skills: Vec<String>,
     /// Limits: {tokens?, cost?, minutes?}.
     pub budget: Option<Value>,
-    /// A kind of task from reagent's config (it picks the model); default: by origin.
+    /// What kind of helper: explore (find and read, changes nothing), review (check a change, runs tests, fixes nothing), code (make a change with its tests), research (the web, with sources), or one of reagent.hcl's; default: by origin.
     pub kind: Option<String>,
 }
 
@@ -365,7 +365,7 @@ impl TaskTools {
         Ok(serde_json::to_string_pretty(&crate::templates::summaries(&list)).unwrap_or_default())
     }
 
-    #[tool(description = "Start a subtask: another task working on its own (in this project, or another if the policy allows). Its report comes to you as a message when it ends.")]
+    #[tool(description = "Start a subtask: another task working on its own (in this project, or another if the policy allows), of a kind: explore (find and read code, answers with file:line), review (check a change, runs tests), code (make a change completely), research (look things up on the web). Its report comes to you as a message when it ends; start several to work in parallel, tasks.task_wait waits for one.")]
     async fn task_spawn(&self, Parameters(a): Parameters<Spawn>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
         let budget: Option<Budget> = a.budget.map(serde_json::from_value).transpose().map_err(|e| format!("budget: {e}"))?;

@@ -29,7 +29,16 @@ project or another one the policy allows. Subtasks never wait in the queue.
    person and proposes the work; its proposal comes to you as a message.
 2. **Start it**: `tasks.task_spawn(title, prompt, project?, profile?, kind?,
    skills?, budget?)`. Give the paths, branch, constraints, what "done"
-   means, and what to put in the report.
+   means, and what to put in the report. This is the way to delegate:
+   subnet's `spawn_agent` is refused. Pick a **kind**:
+   - `explore`: find and read code, configs and history; answers with
+     file:line references; changes nothing (file edits are refused).
+   - `review`: checks a change or a claim, runs tests; reports findings,
+     worst first; fixes nothing.
+   - `code`: makes a well-scoped change completely, with its tests.
+   - `research`: looks things up on the web (the added MCP servers, e.g.
+     firecrawl); answers with sources.
+   Several at once work in parallel (a survey split by area, say).
 3. **Go on** with your own work; its report comes to you as a message
    (`[subtask … done]`) and wakes you. `tasks.task_wait(task)` waits for
    one, `tasks.task_list` shows them, `tasks.task_message` tells one
