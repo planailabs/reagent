@@ -258,6 +258,7 @@ Each start is recorded in `service_runs` (the last 20: started, up, ended, exit,
 
 Vue + Parcel (`webui/`), built into `webui/dist` and embedded in the binary (rust-embed; a debug build reads the folder): served by `reagent up` (hashed assets cached for good, the page and the service worker not); live over SSE (`/api/events`).
 
+- **Every page:** ↑ and ↓ jump to the top and the bottom; ↓ then follows the bottom as the page grows (a live transcript, a job's output) until the person scrolls (wheel, touch, scroll keys, the scrollbar) or presses ↑.
 - **Docs:** the system skills, rendered.
 - **Inbox:** waiting tasks (approvals, questions, merges, budgets), triggers whose script waits for approval (allow, always, deny), failed ones, tasks going on, new notifications (each one line, unfolding to its body; marked seen one by one or all at once: `POST /api/notifications/seen` with `{id}` or `{upto}`).
 - **Quick prompt** (`#/quick`): a task for any project fast: the project, a template (a form-like one shows its fields and the prompt rendered live; a plain one fills the prompt to edit; one pinned to another project moves there; either sets the title, skills, limits it gives), where it works (the project folder or a persistent worktree), an optional title, what to do, each limit (tokens, cost, minutes) from "project default" (showing it), presets, "unlimited" or typed, skills by search; the project and limits are remembered in the browser for the next one.

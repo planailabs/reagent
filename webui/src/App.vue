@@ -70,6 +70,27 @@ async function logout() {
 // scrollTo turns Infinity into 0, so clamp to the page height.
 const jump = (top) => scrollTo({ top: Math.min(top, document.documentElement.scrollHeight), behavior: "smooth" });
 
+/** ↓ follows the bottom (a transcript growing, say) until the person scrolls themselves (or presses ↑). */
+const following = ref(false);
+const grows = new ResizeObserver(() => following.value && scrollTo({ top: document.documentElement.scrollHeight }));
+grows.observe(document.body);
+function follow() {
+  following.value = true;
+  jump(Infinity);
+}
+function unfollow() {
+  following.value = false;
+}
+const SCROLL_KEYS = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
+const userScrolls = (e) => {
+  if (!following.value) return;
+  if (e.type === "keydown" && (!SCROLL_KEYS.includes(e.key) || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable)) return;
+  // A press on the page's scrollbar (the root itself), not on what's in it.
+  if (e.type === "mousedown" && e.target !== document.documentElement) return;
+  unfollow();
+};
+for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) addEventListener(ev, userScrolls, { passive: true });
+
 const onLoggedOut = () => {
   stop?.();
   stop = null;
@@ -116,8 +137,8 @@ onUnmounted(() => {
       <p v-else class="dim">nothing here: <a href="#/inbox">the inbox</a></p>
     </main>
     <nav class="jump">
-      <button title="to the top" aria-label="to the top" @click="jump(0)">↑</button>
-      <button title="to the bottom" aria-label="to the bottom" @click="jump(Infinity)">↓</button>
+      <button title="to the top" aria-label="to the top" @click="unfollow(); jump(0)">↑</button>
+      <button :class="{ on: following }" :title="following ? 'following the bottom: scroll to stop' : 'to the bottom, and follow it'" aria-label="to the bottom" :aria-pressed="following" @click="follow">↓</button>
     </nav>
   </template>
 </template>

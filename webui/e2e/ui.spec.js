@@ -591,6 +591,26 @@ test("a stuck foreground command is moved to the background and the task goes on
   await page.request.put("/api/projects/site/rules", { data: rules });
 });
 
+test("↓ follows the bottom as the page grows, until the person scrolls", async ({ page }) => {
+  await page.goto("/#/inbox");
+  const grow = (px) => page.evaluate((h) => document.querySelector("main").insertAdjacentHTML("beforeend", `<div class="grown" style="height:${h}px"></div>`), px);
+  const atBottom = () => page.evaluate(() => Math.abs(scrollY + innerHeight - document.documentElement.scrollHeight) < 4);
+  await grow(3000);
+  const down = page.getByRole("button", { name: "to the bottom" });
+  await down.click();
+  await expect(down).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(atBottom).toBe(true);
+  await grow(2000);
+  await expect.poll(atBottom).toBe(true);
+  // The person scrolls up: no more following.
+  await page.mouse.move(200, 200);
+  await page.mouse.wheel(0, -600);
+  await expect(down).toHaveAttribute("aria-pressed", "false");
+  await grow(2000);
+  await page.waitForTimeout(300);
+  expect(await atBottom()).toBe(false);
+});
+
 test("reagent's docs are readable", async ({ page }) => {
   await page.goto("/#/docs");
   await expect(page.locator("article")).toContainText("reagent runs coding agents");
