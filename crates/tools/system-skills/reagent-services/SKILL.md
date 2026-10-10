@@ -53,6 +53,7 @@ to repair it.
    an hour (**backoff**).
 4. After 5 failures in a row: a task "Repair service <name>" starts (once per
    streak) with its command, notes, last error and output; the person hears it.
+   It waits (queued) until nothing else goes on in the project.
 
 ## Repairing one
 

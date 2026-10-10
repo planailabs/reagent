@@ -51,6 +51,12 @@ pub enum MergeAnswer {
 }
 
 /// The first message's title line for a task started without one.
+/// A task that repairs a failing trigger or service: it waits until nothing
+/// else goes on in its project (it starts queued, behind everything else).
+pub fn is_repair(origin: &str) -> bool {
+    origin.starts_with("trigger-repair:") || origin.starts_with("service-repair:")
+}
+
 pub const UNTITLED: &str = "(untitled: first name this task with tasks.task_title, a few words saying what it's about)";
 
 /// What starting a task takes.
@@ -602,7 +608,8 @@ impl App {
         }
         // Over the limit of tasks running at once: it waits (subtasks never do: their parent waits for them).
         // ponytail: two starts at the same moment may both find the last place; add a lock if that matters.
-        let queue = req.parent.is_none() && !self.has_room(&p, home.as_ref()).await;
+        let repair = is_repair(&origin);
+        let queue = req.parent.is_none() && (!self.has_room(&p, home.as_ref()).await || (repair && self.store.busy_besides(&p.slug, "").await.unwrap_or(0) > 0));
         let t = self
             .store
             .add_task(&NewTask {
@@ -623,7 +630,7 @@ impl App {
         if queue {
             self.store.set_state(&t.id, "queued", None).await.map_err(|e| e.to_string())?;
             self.task_changed(&t.id).await;
-            tracing::info!(task = %t.id, title = %t.name(), project = %p.slug, "task queued: as many as may run at once already do");
+            tracing::info!(task = %t.id, title = %t.name(), project = %p.slug, "task queued: {}", if repair { "a repair waits until nothing else goes on in the project" } else { "as many as may run at once already do" });
             return self.task(&t.id).await;
         }
         self.spawn(&t).await
@@ -664,7 +671,7 @@ impl App {
                 Some(n) => self.store.persistent_worktree(&p.slug, n).await.ok().flatten(),
                 None => None,
             };
-            if !self.has_room(&p, home.as_ref()).await {
+            if !self.has_room(&p, home.as_ref()).await || (is_repair(&t.origin) && self.store.busy_besides(&p.slug, &t.id).await.unwrap_or(1) > 0) {
                 continue;
             }
             match self.spawn(&t).await {

@@ -174,3 +174,24 @@ async fn a_task_adds_a_service_and_reads_its_output() {
     let v = r.service_until("web", "it to stop", |v| v.state.0.status == "stopped").await;
     assert_eq!((v.made_by, v.enabled, v.notes.as_str()), (format!("task:{}", t.id), false, "the docs server"));
 }
+
+#[tokio::test]
+async fn a_repair_waits_until_nothing_else_goes_on_in_the_project() {
+    let r = start().await;
+    r.allow_all().await;
+    r.push("Busy", |_| call("q1", "ask.ask", json!({"question": "still there?"})));
+    let busy = r.start_task("Busy", "x").await;
+    r.until(&busy.id, "the question", |t| t.state == "waiting").await;
+    r.push("Repair service crash", |_| text("fixed it"));
+    let mut v = r.save_service(svc(json!({"name": "crash", "script": "exit 3"})), true).await;
+    v.state.0.failures = 4;
+    r.run.app.store.set_service_state("site", "crash", &v.state.0).await.unwrap();
+    let v = r.service_until("crash", "the repair", |v| v.state.0.repair.is_some()).await;
+    let repair = v.state.0.repair.clone().unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(r.task(&repair).await.state, "queued", "behind the task that waits");
+    r.run.app.cancel(&busy.id).await.unwrap();
+    let t = r.until(&repair, "the repair to run", |t| t.state == "done").await;
+    assert_eq!(t.report.as_deref(), Some("fixed it"));
+    services::remove(&r.run.app, "site", "crash").await.unwrap();
+}

@@ -817,6 +817,16 @@ impl Store {
         sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting') and ($1 is null or project = $1)").bind(project).fetch_one(&self.pool).await
     }
 
+    /// What a repair task waits behind: the project's other tasks running or
+    /// waiting, and those queued that aren't repairs.
+    pub async fn busy_besides(&self, project: &str, except: &str) -> R<i64> {
+        sqlx::query_scalar("select count(*) from tasks where project = $1 and id != $2 and (state in ('running', 'waiting') or (state = 'queued' and origin not like 'trigger-repair:%' and origin not like 'service-repair:%'))")
+            .bind(project)
+            .bind(except)
+            .fetch_one(&self.pool)
+            .await
+    }
+
     /// Top-level tasks working in a persistent worktree now (running, waiting or paused).
     pub async fn tasks_in_home(&self, project: &str, home: &str) -> R<i64> {
         sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting', 'paused') and project = $1 and home = $2").bind(project).bind(home).fetch_one(&self.pool).await

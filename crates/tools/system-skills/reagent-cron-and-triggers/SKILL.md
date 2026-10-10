@@ -57,7 +57,7 @@ decides (`triggers.run`; a repo trigger's command is
 `./.agents/triggers/<name>/<file>`). Asks wait in the inbox.
 
 **Failures** back off (up to an hour); after 5 in a row a task is started to
-repair the trigger.
+repair the trigger (queued until nothing else goes on in the project).
 
 Example poll script (CI on main):
 
