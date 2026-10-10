@@ -56,6 +56,10 @@ function reply(body) {
     if (!tools.length) return call("t1", "shell__exec", { cmd: "touch from-ui.txt" });
     return text("touched");
   }
+  if (title.startsWith("Hang")) {
+    if (!tools.length) return call("h1", "shell__exec", { cmd: "sleep 600" });
+    return text(all.includes("the person moved it to the background") ? "moved on" : "never moved");
+  }
   if (title.startsWith("Run")) {
     if (!tools.length) return call("r1", "shell__exec_bg", { cmd: "for i in 1 2 3; do echo tick $i; sleep 1; done", name: "ticker" });
     if (all.includes("[job ")) return text("ticker finished");

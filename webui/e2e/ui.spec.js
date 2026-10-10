@@ -573,6 +573,24 @@ test("a service is added, comes up, shows its output, stops and goes", async ({ 
   await expect(page.getByText("no services")).toBeVisible();
 });
 
+test("a stuck foreground command is moved to the background and the task goes on", async ({ page }) => {
+  const rules = await (await page.request.get("/api/projects/site/rules")).json();
+  await page.request.put("/api/projects/site/rules", { data: [{ tool: "shell.exec*", command: "sleep *", action: "allow" }, ...rules] });
+  await startTask(page, "Hang on");
+  const box = page.getByLabel(/^foreground command /);
+  await expect(box).toContainText("sleep 600");
+  await expect(box).toContainText(/running \d+s/);
+  await box.getByRole("button", { name: "move shell to background" }).click();
+  await expect(page.locator(".reports")).toContainText("moved on");
+  await expect(box).toHaveCount(0);
+  // The job goes on in the background.
+  const id = page.url().split("/task/")[1];
+  const jobs = await (await page.request.get(`/api/tasks/${id}/jobs`)).json();
+  expect(jobs.some((j) => j.backgrounded && j.ended == null)).toBe(true);
+  for (const j of jobs) await page.request.post(`/api/jobs/${j.id}/kill`, { data: {} });
+  await page.request.put("/api/projects/site/rules", { data: rules });
+});
+
 test("reagent's docs are readable", async ({ page }) => {
   await page.goto("/#/docs");
   await expect(page.locator("article")).toContainText("reagent runs coding agents");

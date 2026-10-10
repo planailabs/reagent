@@ -14,7 +14,7 @@ This document describes reagent as built; the Status section at the end lists wh
 | Command safety | Unsandboxed, as the user. A policy per project: allow / ask / deny by tool, command pattern and target; ask parks the call until it's approved. |
 | Tasks | One subnet agent per task, in one project. Subtasks are tasks of their own (root agents) that reagent links to their parent: their reports come to it as messages. |
 | Worktrees | The agent decides: tools to start a worktree, see its diff, merge it back, drop it. Merging is auto or needs approval, per project. |
-| Commands | Foreground (the task waits), background jobs, and PTY terminals. A foreground command moves to the background at its timeout or from the UI. |
+| Commands | Foreground (the task waits), background jobs, and PTY terminals. A foreground command moves to the background at its timeout or from the UI ("move shell to background" on the task's page, for one that looks stuck). |
 | Memory | Markdown: an `INDEX.md` per scope (global, each project) linking topic, folder and task files. Stored centrally, or in the project's repo, per project. The indexes are injected; tools read and change the files. |
 | Skills | The generic layout: `.agents/skills/<name>/SKILL.md` (and `.agent/skills/`, `.claude/skills/`) in the working directory, the project and globally (`~/.agents/skills/`, `<data>/skills/`). Names and descriptions are injected; a tool loads one. The project's `AGENTS.md` is injected too, and its rules (`.agents/rules/`: always, by the files touched, or listed by description). |
 | Cron | Per project, in reagent's database, managed in the UI (and by tasks through tools). |
@@ -131,7 +131,7 @@ Besides these, subnet gives every task `search_history` (its own whole conversat
 **Commands (`shell`)**
 | tool | |
 |---|---|
-| `exec(cmd, cwd?, timeout?, stdin?, devshell?)` | `sh -c` in the foreground: exit code and output (the last 60 000 characters). Past `timeout` (default 600 s), or when the person moves it, it goes on as a background job: the call says so, with the output so far. |
+| `exec(cmd, cwd?, timeout?, stdin?, devshell?)` | `sh -c` in the foreground: exit code and output (the last 60 000 characters). Past `timeout` (default 600 s), or when the person moves it (the task's page lists the foreground commands it waits for, with how long each has run and its last lines, and a "move shell to background" button), it goes on as a background job: the call says so (and that the person moved it, so it may be stuck: hanging or waiting for input), with the output so far and the tools to follow, answer or stop it. |
 | `exec_bg(cmd, cwd?, name?)` | a background job, its id at once; its end comes as a message |
 | `jobs()` / `job_output(job, from?, to?, tail?, pattern?)` / `job_wait(job, timeout?)` / `job_input(job, text, close?)` / `job_kill(job, signal?)` | list, read, wait, write to stdin, signal the process group |
 | `sleep(duration? \| until?)` | waits (`90s`, `10m`, `2h`; or until `HH:MM`, the next one in the machine's time zone, or an RFC 3339 time; at most 7 days) to look at something outside again; a message to the task (the person's, a subtask's, a job's end, a trigger's) wakes it early. Allowed in every project (a starter rule; migration 0016 adds it). Run again after a restart: a duration starts over |

@@ -43,6 +43,10 @@ const reports = computed(() => {
 /** Something waits for the person: a call to approve, a question, a merge, the budget. */
 const waiting = computed(() => !!call.value || ["question", "merge", "budget"].includes(t.value?.wait?.kind));
 const ptys = ref([]);
+/** Foreground commands the task waits for: each with its last lines, to move to the background when stuck. */
+const fg = ref([]);
+const now = ref(Date.now() / 1000);
+setInterval(() => (now.value = Date.now() / 1000), 1000);
 const term = ref(null);
 
 async function load() {
@@ -51,10 +55,20 @@ async function load() {
     if (t.value.agent) tr.value = await get(`/api/tasks/${props.id}/transcript?full=true`).catch(() => tr.value);
     diff.value = t.value.worktree ? await get(`/api/tasks/${props.id}/diff`).catch(() => null) : null;
     ptys.value = await get(`/api/tasks/${props.id}/ptys`).catch(() => []);
+    const running = (await get(`/api/tasks/${props.id}/jobs`).catch(() => [])).filter((j) => j.fg && !j.backgrounded && j.ended == null);
+    fg.value = await Promise.all(running.map(async (j) => ({ ...j, tail: (await get(`/api/jobs/${j.id}/output?tail=5`).catch(() => ({ text: [] }))).text.map((l) => l.text).join("\n") })));
   } catch (e) {
     error.value = e.message;
   }
 }
+
+async function toBackground(j) {
+  error.value = "";
+  await post(`/api/jobs/${j.id}/background`).catch((e) => (error.value = e.message));
+  await load();
+}
+
+const took = (s) => (s < 60 ? `${Math.floor(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`);
 
 async function act(path, body = {}) {
   error.value = "";
@@ -227,6 +241,15 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <button :disabled="!switchTo" title="the conversation goes on there" @click="switchProfile">switch</button>
     </div>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
+
+    <div v-for="j in fg" :key="j.id" class="card" :aria-label="`foreground command ${j.id}`">
+      <div class="row">
+        <span class="dim">waits for</span> <code class="grow">{{ j.cmd }}</code>
+        <span class="dim">running {{ took(now - j.started) }}</span>
+        <button title="the task goes on and gets the job to follow, answer or stop (for a command that looks stuck)" @click="toBackground(j)">move shell to background</button>
+      </div>
+      <pre v-if="j.tail">{{ j.tail }}</pre>
+    </div>
 
     <div v-if="t.state === 'failed'" class="err wait" aria-label="failed">
       <pre>{{ t.report }}</pre>

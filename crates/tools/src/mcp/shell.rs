@@ -237,8 +237,9 @@ impl ShellTools {
                 }
                 // In the background now: its end comes as a message.
                 self.0.fg_waiting.lock().unwrap().remove(&j.id);
+                let why = if w == Waited::Timeout { format!("still running after {secs:.0}s") } else { format!("the person moved it to the background after {secs:.0}s (it looked stuck: hanging, or waiting for input?)") };
                 Ok(format!(
-                    "still running after {secs:.0}s: it goes on in the background as job {} (you get a message when it ends; shell.job_output reads it, shell.job_kill stops it)\noutput so far:\n{}",
+                    "{why}: it goes on in the background as job {} (you get a message when it ends; shell.job_output reads it, shell.job_wait waits for it, shell.job_input answers a prompt it waits at, shell.job_kill stops it)\noutput so far:\n{}",
                     j.id,
                     sup::tail(&self.0.paths.data, &j.id, 40)
                 ))
