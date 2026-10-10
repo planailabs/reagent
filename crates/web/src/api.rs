@@ -867,7 +867,7 @@ struct Text {
 }
 
 async fn message(State(s): State<S>, Path(id): Path<String>, Json(m): Json<Text>) -> R {
-    s.w.app.message(&id, &format!("[from the person] {}", m.text)).await?;
+    s.w.app.person_message(&id, &format!("[from the person] {}", m.text)).await?;
     Ok(Json(json!({"ok": true})))
 }
 

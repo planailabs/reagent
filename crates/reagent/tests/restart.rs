@@ -139,7 +139,7 @@ async fn a_message_queued_before_a_restart_is_delivered_after_it() {
     r.done(&t.id).await;
     reagent::stop(&r.run).await;
     // Queued but not delivered when reagent stopped.
-    r.run.app.store.push_outbox(&t.id, "kept across").await.unwrap();
+    r.run.app.store.push_outbox(&t.id, "kept across", false).await.unwrap();
     let run = again(&r).await;
     let d = until_state(&run, &t.id, "the second report", |t| t.state == "done" && t.report.as_deref() == Some("got it after the restart")).await;
     assert_eq!(d.state, "done");

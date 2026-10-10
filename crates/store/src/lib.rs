@@ -573,6 +573,8 @@ pub struct Queued {
     pub at: i64,
     /// Being handed to the task: no longer editable.
     pub sending: bool,
+    /// The person's own (they may change or cancel it); else reagent's (a job's end, a report, …).
+    pub person: bool,
 }
 
 /// One of a task's reports.
@@ -921,13 +923,14 @@ impl Store {
     }
 
     /// Queues a message for a task (delivered, then removed, by the app); its id.
-    pub async fn push_outbox(&self, task: &str, text: &str) -> R<i64> {
-        sqlx::query_scalar("insert into outbox (task, text) values ($1, $2) returning id").bind(task).bind(text).fetch_one(&self.pool).await
+    /// Queues a message; `person`: the person's own, which they may change or cancel until it's taken.
+    pub async fn push_outbox(&self, task: &str, text: &str, person: bool) -> R<i64> {
+        sqlx::query_scalar("insert into outbox (task, text, person) values ($1, $2, $3) returning id").bind(task).bind(text).bind(person).fetch_one(&self.pool).await
     }
 
     /// The task's messages not delivered yet, oldest first.
     pub async fn outbox(&self, task: &str) -> R<Vec<Queued>> {
-        sqlx::query_as("select id, text, created, sending from outbox where task = $1 order by id").bind(task).fetch_all(&self.pool).await
+        sqlx::query_as("select id, text, created, sending, person from outbox where task = $1 order by id").bind(task).fetch_all(&self.pool).await
     }
 
     /// Takes a queued message for delivery: from then on it can't be changed or cancelled.
@@ -937,12 +940,12 @@ impl Store {
 
     /// A message not yet being delivered, changed.
     pub async fn edit_outbox(&self, task: &str, id: i64, text: &str) -> R<bool> {
-        Ok(sqlx::query("update outbox set text = $3 where task = $1 and id = $2 and sending = 0").bind(task).bind(id).bind(text).execute(&self.pool).await?.rows_affected() > 0)
+        Ok(sqlx::query("update outbox set text = $3 where task = $1 and id = $2 and sending = 0 and person").bind(task).bind(id).bind(text).execute(&self.pool).await?.rows_affected() > 0)
     }
 
-    /// Cancels one message not yet being delivered, or (None) all of them: how many.
+    /// Cancels one of the person's messages not yet being delivered, or (None) all of them: how many.
     pub async fn cancel_outbox(&self, task: &str, id: Option<i64>) -> R<u64> {
-        Ok(sqlx::query("delete from outbox where task = $1 and ($2 is null or id = $2) and sending = 0").bind(task).bind(id).execute(&self.pool).await?.rows_affected())
+        Ok(sqlx::query("delete from outbox where task = $1 and ($2 is null or id = $2) and sending = 0 and person").bind(task).bind(id).execute(&self.pool).await?.rows_affected())
     }
 
     /// After a restart nothing is being delivered: claimed ones are sent again.

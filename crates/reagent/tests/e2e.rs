@@ -623,3 +623,26 @@ async fn a_task_in_a_persistent_worktree_works_there_and_merges_back_into_it() {
     wts.remove("site", "next", false, false).await.unwrap();
     assert!(!home.exists() && wts.list("site").await.unwrap().0.is_empty());
 }
+
+#[tokio::test]
+async fn only_the_person_s_queued_messages_can_be_changed_or_cancelled() {
+    let r = start().await;
+    r.push("Held", |_| call("q1", "ask.ask", json!({"question": "go on?"})));
+    let t = r.start_task("Held", "x").await;
+    r.until(&t.id, "the question", |t| t.state == "waiting").await;
+    r.run.app.pause(&t.id, subnet_core::agent::PauseMode::Quick).await.unwrap();
+    r.until(&t.id, "paused", |t| t.state == "paused").await;
+    // Paused: both wait in the queue.
+    r.run.app.person_message(&t.id, "[from the person] mine").await.unwrap();
+    r.run.app.message(&t.id, "[job j1 (build) exited with 0]").await.unwrap();
+    let q = r.run.app.store.outbox(&t.id).await.unwrap();
+    assert_eq!(q.iter().map(|m| (m.text.as_str(), m.person)).collect::<Vec<_>>(), [("[from the person] mine", true), ("[job j1 (build) exited with 0]", false)]);
+    let e = r.run.app.edit_queued(&t.id, q[1].id, "changed").await.unwrap_err();
+    assert!(e.contains("not yours"), "{e}");
+    assert!(r.run.app.cancel_queued(&t.id, Some(q[1].id)).await.is_err());
+    r.run.app.edit_queued(&t.id, q[0].id, "[from the person] mine, changed").await.unwrap();
+    assert_eq!(r.run.app.cancel_queued(&t.id, None).await.unwrap(), 1, "all of the person's");
+    let left = r.run.app.store.outbox(&t.id).await.unwrap();
+    assert_eq!((left.len(), left[0].person), (1, false), "reagent's own stays");
+    r.run.app.cancel(&t.id).await.unwrap();
+}

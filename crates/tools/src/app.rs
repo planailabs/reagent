@@ -747,6 +747,16 @@ impl App {
     /// A message for a task: queued (kept in reagent.db) and delivered by
     /// its worker in order, so the caller doesn't wait for the agent to take it.
     pub async fn message(&self, id: &str, text: &str) -> Result<(), String> {
+        self.queue_message(id, text, false).await
+    }
+
+    /// The person's message (typed on the task's page): queued like any, but
+    /// they may change or cancel it until it's taken.
+    pub async fn person_message(&self, id: &str, text: &str) -> Result<(), String> {
+        self.queue_message(id, text, true).await
+    }
+
+    async fn queue_message(&self, id: &str, text: &str, person: bool) -> Result<(), String> {
         let t = self.task(id).await?;
         if t.state == "cancelled" {
             return Err(format!("{} is cancelled", t.name()));
@@ -760,7 +770,7 @@ impl App {
             self.task_changed(id).await;
             return Ok(());
         }
-        self.store.push_outbox(id, text).await.map_err(|e| e.to_string())?;
+        self.store.push_outbox(id, text, person).await.map_err(|e| e.to_string())?;
         self.task_changed(id).await;
         let _ = self.queued_tx.send(id.to_string());
         Ok(())
@@ -840,7 +850,7 @@ impl App {
             return Err("an empty message: cancel it instead".into());
         }
         if !self.store.edit_outbox(task, id, text).await.map_err(|e| e.to_string())? {
-            return Err("that message is being delivered already (or gone)".into());
+            return Err("that message is being delivered already, gone, or not yours (reagent's own can't be changed)".into());
         }
         self.task_changed(task).await;
         Ok(())
@@ -850,7 +860,7 @@ impl App {
     pub async fn cancel_queued(&self, task: &str, id: Option<i64>) -> Result<u64, String> {
         let n = self.store.cancel_outbox(task, id).await.map_err(|e| e.to_string())?;
         if id.is_some() && n == 0 {
-            return Err("that message is being delivered already (or gone)".into());
+            return Err("that message is being delivered already, gone, or not yours (reagent's own can't be cancelled)".into());
         }
         self.task_changed(task).await;
         Ok(n)

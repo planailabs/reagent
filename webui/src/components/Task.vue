@@ -279,7 +279,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
     <section v-if="t.queued_messages?.length" class="card stack" aria-label="queued messages">
       <div class="row">
         <span class="dim grow">{{ t.queued_messages.length }} queued, not taken yet (oldest first)</span>
-        <button v-if="t.queued_messages.some((m) => !m.sending)" @click="cancelQueued()">cancel all</button>
+        <button v-if="t.queued_messages.some((m) => m.person && !m.sending)" title="your messages (reagent's own stay)" @click="cancelQueued()">cancel all</button>
       </div>
       <div v-for="m in t.queued_messages" :key="m.id" class="row" :aria-label="`queued ${m.id}`">
         <template v-if="editing?.id === m.id">
@@ -290,6 +290,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
         <template v-else>
           <span class="grow pre">{{ shown(m.text) }}</span>
           <span v-if="m.sending" class="dim">being delivered…</span>
+          <span v-else-if="!m.person" class="dim" title="a job's end, a report, an answer: reagent's, not to change">from reagent</span>
           <template v-else>
             <button @click="editing = { id: m.id, text: shown(m.text) }">edit</button>
             <button @click="cancelQueued(m)">cancel</button>
