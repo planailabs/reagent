@@ -132,6 +132,39 @@ async fn a_worktree_s_work_goes_only_when_the_person_approves_discarding_it() {
 }
 
 #[tokio::test]
+async fn a_task_ending_with_work_left_in_its_worktree_is_nudged_to_commit_and_merge() {
+    let r = start().await;
+    r.allow_all().await;
+    r.push("Leave", |_| call("c1", "git.worktree_start", json!({})));
+    r.push("Leave", |_| call("c2", "fs.write", json!({"path": "left.txt", "text": "work\n"})));
+    r.push("Leave", |_| text("finished"));
+    r.push("Leave", |b| {
+        let all = all_text(b);
+        assert!(all.contains("work left in your worktree") && all.contains("1 uncommitted file(s)") && all.contains("git.worktree_merge"), "{all}");
+        call("c3", "shell.exec", json!({"cmd": "git add -A && git commit -qm left"}))
+    });
+    r.push("Leave", |_| call("c4", "git.worktree_merge", json!({})));
+    r.push("Leave", |b| {
+        assert!(last_result(b).contains("merged"), "{}", last_result(b));
+        text("merged now")
+    });
+    let t = r.start_task("Leave", "leave work behind").await;
+    r.until(&t.id, "the merge to wait", |t| t.wait.as_ref().is_some_and(|w| w.0["kind"] == "merge")).await;
+    r.run.app.decide_merge(&t.id, reagent_tools::app::MergeAnswer::Merge).await.unwrap();
+    let t = r.done(&t.id).await;
+    assert_eq!(t.report.as_deref(), Some("merged now"));
+    assert!(r.project.path().join("left.txt").exists());
+    // Ending again without a change is its answer: done, not nudged forever.
+    r.push("Stubborn", |_| call("c1", "git.worktree_start", json!({})));
+    r.push("Stubborn", |_| call("c2", "fs.write", json!({"path": "keep.txt", "text": "x\n"})));
+    r.push("Stubborn", |_| text("finished"));
+    r.push("Stubborn", |_| text("I'll leave it for the person"));
+    let t = r.start_task("Stubborn", "leave it").await;
+    let t = r.done(&t.id).await;
+    assert_eq!((t.report.as_deref(), r.requests("Stubborn").len()), (Some("I'll leave it for the person"), 4));
+}
+
+#[tokio::test]
 async fn a_worktree_is_merged_once_the_person_approves() {
     let r = start().await;
     r.push("Feature", |_| call("c1", "git.worktree_start", json!({})));

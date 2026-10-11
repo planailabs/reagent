@@ -1359,6 +1359,14 @@ impl App {
         }
         self.record_usage(t).await;
         let _ = self.store.set_report(&t.id, content).await;
+        // Work left in its worktree: it's asked to commit and merge before it's done.
+        if kind == "done"
+            && let Some(nudge) = self.worktree_nudge(t)
+        {
+            tracing::info!(task = %t.id, "ended with work left in its worktree: nudged");
+            let _ = self.message(&t.id, &nudge).await;
+            return;
+        }
         if kind != "cancelled" {
             self.notify(kind, Some(t), &format!("{} — {state}", t.name()), &content.chars().take(400).collect::<String>()).await;
         }
@@ -1374,6 +1382,35 @@ impl App {
         }
         crate::cron::task_ended(self, t).await;
         crate::triggers::task_ended(self, t).await;
+    }
+
+    /// What to tell a task that ended with uncommitted changes or unmerged
+    /// commits in its own worktree; once per state of it (ending again
+    /// without a change is taken as its answer).
+    fn worktree_nudge(&self, t: &Task) -> Option<String> {
+        let w = &t.worktree.as_ref()?.0;
+        let dir = Path::new(&w.path);
+        if !dir.is_dir() {
+            return None;
+        }
+        let changed = crate::git::git(dir, &["status", "--porcelain"]).ok()?.lines().count();
+        let ahead = crate::git::ahead(dir, &w.base).ok()?;
+        if changed == 0 && ahead == 0 {
+            return None;
+        }
+        let head = crate::git::git(dir, &["rev-parse", "HEAD"]).ok()?;
+        if !self.notified.lock().unwrap().insert((t.id.clone(), format!("worktree:{}:{changed}:{ahead}", head.trim()))) {
+            return None;
+        }
+        let what = match (changed, ahead) {
+            (0, a) => format!("{a} commit(s) on {} not merged into {}", w.branch, w.base),
+            (c, 0) => format!("{c} uncommitted file(s)"),
+            (c, a) => format!("{c} uncommitted file(s) and {a} commit(s) on {} not merged into {}", w.branch, w.base),
+        };
+        Some(format!(
+            "[reagent] You ended your turn with work left in your worktree ({}): {what}. Commit what belongs to the change (shell.exec git add/commit; leave out stray files), then request the merge with git.worktree_merge. If the work shouldn't be kept, say why and drop it (git.worktree_drop with discard: true, which the person approves).",
+            w.path
+        ))
     }
 
     /// Pauses a task over its budget (quick: before its next step) and says so.
