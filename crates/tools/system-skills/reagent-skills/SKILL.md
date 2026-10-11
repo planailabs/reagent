@@ -54,6 +54,11 @@ Optional frontmatter says when one applies:
 Rules also come from the global folders `~/.agents/rules/` and
 `<data>/rules/`, and from plugins; a project's win on a name.
 
+`AGENTS.md` is shown too: the global ones (`~/.agents/AGENTS.md`,
+`<data>/AGENTS.md`), the project's (from the working directory, else the
+project folder), and a subfolder's once the task touched a path under it
+(nearer wins where they differ): put a part's conventions next to it.
+
 Use a rule for "how we do things here" (style, conventions, don'ts) and a
 skill for a job's steps.
 

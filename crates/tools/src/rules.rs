@@ -112,6 +112,35 @@ pub fn matches(rule: &Rule, touched: &[String], cwd: &Path, project: &Path) -> b
     })
 }
 
+/// The `AGENTS.md` files in subfolders over the touched paths (relative to
+/// the working directory or the project; outside paths don't count),
+/// shallowest first. The root's own is the caller's.
+pub fn nested_agents(touched: &[String], cwd: &Path, project: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = vec![];
+    for t in touched {
+        let p = Path::new(t);
+        let (root, rel) = match (p.strip_prefix(cwd), p.strip_prefix(project)) {
+            (Ok(r), _) => (cwd, r),
+            (_, Ok(r)) => (project, r),
+            _ if p.is_relative() => (cwd, p),
+            _ => continue,
+        };
+        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
+        // A touched folder's own AGENTS.md counts; a file's starts at its folder.
+        let start = if root.join(rel).is_dir() { Some(rel) } else { rel.parent() };
+        for dir in start.into_iter().flat_map(Path::ancestors) {
+            let f = root.join(dir).join("AGENTS.md");
+            if !dir.as_os_str().is_empty() && dir != Path::new(".") && f.is_file() && !out.contains(&f) {
+                out.push(f);
+            }
+        }
+    }
+    out.sort_by_key(|f| f.components().count());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +149,23 @@ mod tests {
         let p = dir.join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, text).unwrap();
+    }
+
+    #[test]
+    fn nested_agents_md_over_touched_paths() {
+        let t = tempfile::tempdir().unwrap();
+        let (cwd, proj) = (t.path().join("wt"), t.path().join("proj"));
+        write(&cwd, "AGENTS.md", "root");
+        write(&cwd, "crates/a/AGENTS.md", "a");
+        write(&cwd, "crates/a/src/lib.rs", "");
+        write(&cwd, "crates/AGENTS.md", "crates");
+        write(&cwd, "docs/AGENTS.md", "docs");
+        write(&proj, "web/AGENTS.md", "web");
+        let found = |touched: &[&str]| nested_agents(&touched.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &cwd, &proj);
+        assert_eq!(found(&["crates/a/src/lib.rs"]), [cwd.join("crates/AGENTS.md"), cwd.join("crates/a/AGENTS.md")], "shallowest first, not the root's");
+        assert_eq!(found(&[cwd.join("docs").to_str().unwrap()]), [cwd.join("docs/AGENTS.md")], "a folder's own");
+        assert_eq!(found(&[proj.join("web/x.vue").to_str().unwrap()]), [proj.join("web/AGENTS.md")], "under the project");
+        assert!(found(&["README.md", "/etc/x/y", "../wt/docs/z"]).is_empty());
     }
 
     #[test]

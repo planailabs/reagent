@@ -59,7 +59,8 @@ fn hash(s: &str) -> u64 {
     h.finish()
 }
 
-/// What a task should have in view: the memory indexes, `AGENTS.md`, the
+/// What a task should have in view: the memory indexes, the global, the
+/// project's and (by touched paths) subfolders' `AGENTS.md`, the
 /// rules that apply (`.agents/rules`), its skills (by kind, so only what changed is shown again).
 pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String, String)> {
     let mut parts = vec![];
@@ -67,15 +68,28 @@ pub async fn context_parts(app: &App, task: &reagent_store::Task) -> Vec<(String
     parts.push(("global".into(), format!("Global memory index ({}):\n\n{}", app.global_memory().dir.display(), app.global_memory().index())));
     let pm = app.project_memory(&p);
     parts.push(("project".into(), format!("Project memory index ({}):\n\n{}", pm.dir.display(), pm.index())));
+    let body = |text: String| text.chars().take(20_000).collect::<String>();
+    for f in &app.paths.agents {
+        if let Ok(text) = std::fs::read_to_string(f) {
+            parts.push((format!("agents:{}", f.display()), format!("Your global AGENTS.md ({}), for every project:\n\n{}", f.display(), body(text))));
+        }
+    }
     for dir in [Path::new(&task.cwd), Path::new(&p.path)] {
         if let Ok(text) = std::fs::read_to_string(dir.join("AGENTS.md")) {
-            parts.push(("agents".into(), format!("The project's AGENTS.md ({}):\n\n{}", dir.join("AGENTS.md").display(), text.chars().take(20_000).collect::<String>())));
+            parts.push(("agents".into(), format!("The project's AGENTS.md ({}):\n\n{}", dir.join("AGENTS.md").display(), body(text))));
             break;
+        }
+    }
+    let touched = app.touched.lock().unwrap().get(&task.id).cloned().unwrap_or_default();
+    // A subfolder's AGENTS.md, once the task touched something under it (it adds to the root's; nearer wins).
+    for f in crate::rules::nested_agents(&touched, Path::new(&task.cwd), Path::new(&p.path)) {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            let dir = f.parent().unwrap_or(&f).display().to_string();
+            parts.push((format!("agents:{}", f.display()), format!("AGENTS.md for {dir} (applies to files under it; where it differs from an outer one, it wins):\n\n{}", body(text))));
         }
     }
     // Rules (.agents/rules): each that applies on its own, those to read when they fit listed.
     let rules = app.rules_for(Path::new(&task.cwd), &p);
-    let touched = app.touched.lock().unwrap().get(&task.id).cloned().unwrap_or_default();
     let mut described = vec![];
     for r in &rules {
         if r.always || crate::rules::matches(r, &touched, Path::new(&task.cwd), Path::new(&p.path)) {

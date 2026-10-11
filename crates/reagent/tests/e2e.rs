@@ -192,6 +192,28 @@ async fn memory_written_shows_in_the_next_context() {
 }
 
 #[tokio::test]
+async fn agents_md_global_the_project_s_and_a_subfolder_s_once_touched() {
+    let r = start().await;
+    std::fs::write(r.data.path().join("AGENTS.md"), "global: say please").unwrap();
+    std::fs::write(r.project.path().join("AGENTS.md"), "root: use tabs").unwrap();
+    std::fs::create_dir_all(r.project.path().join("ui")).unwrap();
+    std::fs::write(r.project.path().join("ui/AGENTS.md"), "ui: use spaces").unwrap();
+    std::fs::write(r.project.path().join("ui/app.js"), "x\n").unwrap();
+    r.push("Agents", |b| {
+        let all = all_text(b);
+        assert!(all.contains("global: say please") && all.contains("root: use tabs"), "{all}");
+        assert!(!all.contains("ui: use spaces"), "not before something under ui/ is touched");
+        call("c1", "fs.read", json!({"path": "ui/app.js"}))
+    });
+    r.push("Agents", |b| {
+        assert!(all_text(b).contains("ui: use spaces"), "{}", all_text(b));
+        text("read")
+    });
+    let t = r.start_task("Agents", "read the ui").await;
+    r.done(&t.id).await;
+}
+
+#[tokio::test]
 async fn a_subtask_reports_to_its_parent_and_histories_are_searchable_across_tasks() {
     let r = start().await;
     r.push("Parent", |_| call("c1", "tasks.task_spawn", json!({"title": "Child", "prompt": "say the word"})));

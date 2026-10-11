@@ -46,7 +46,7 @@ The person edits the items, ticks the ones they want, and creates them.
 
 ## What a clear task prompt has
 
-A task starts from nothing but its prompt (and the project's AGENTS.md,
+A task starts from nothing but its prompt (and the AGENTS.md files,
 rules, memory index and skills, which it's shown).
 
 1. **The goal** in one or two sentences, and **why** (what it's for).

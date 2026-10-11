@@ -29,6 +29,8 @@ pub struct Paths {
     pub skills: Vec<PathBuf>,
     /// Global rules folders (`~/.agents/rules`, `<data>/rules`).
     pub rules: Vec<PathBuf>,
+    /// Global AGENTS.md files, every task's (`~/.agents/AGENTS.md`, `<data>/AGENTS.md`).
+    pub agents: Vec<PathBuf>,
     /// Where the system skills are written at every start.
     pub system_skills: PathBuf,
 }
@@ -39,7 +41,8 @@ impl Paths {
         let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from);
         let skills = crate::skills::global_places(home.as_deref(), codex.as_deref(), data);
         let rules = home.iter().map(|h| h.join(".agents/rules")).chain([data.join("rules")]).collect();
-        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, rules, system_skills: data.join("system-skills") }
+        let agents = home.iter().map(|h| h.join(".agents/AGENTS.md")).chain([data.join("AGENTS.md")]).collect();
+        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, rules, agents, system_skills: data.join("system-skills") }
     }
 }
 
