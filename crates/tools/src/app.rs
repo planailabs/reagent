@@ -31,6 +31,8 @@ pub struct Paths {
     pub rules: Vec<PathBuf>,
     /// Global AGENTS.md files, every task's (`~/.agents/AGENTS.md`, `<data>/AGENTS.md`).
     pub agents: Vec<PathBuf>,
+    /// Where tasks' scratchpads are (`<temp>/reagent-scratch`): one folder per task, never removed by reagent.
+    pub scratch: PathBuf,
     /// Where the system skills are written at every start.
     pub system_skills: PathBuf,
 }
@@ -42,7 +44,7 @@ impl Paths {
         let skills = crate::skills::global_places(home.as_deref(), codex.as_deref(), data);
         let rules = home.iter().map(|h| h.join(".agents/rules")).chain([data.join("rules")]).collect();
         let agents = home.iter().map(|h| h.join(".agents/AGENTS.md")).chain([data.join("AGENTS.md")]).collect();
-        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, rules, agents, system_skills: data.join("system-skills") }
+        Paths { data: data.into(), socket: data.join("supervisor.sock"), skills, rules, agents, scratch: std::env::temp_dir().join("reagent-scratch"), system_skills: data.join("system-skills") }
     }
 }
 
@@ -693,6 +695,20 @@ impl App {
         self.spawn(&t).await
     }
 
+    /// A task's scratchpad, made if it isn't there (the OS may have cleaned its temp folder).
+    pub fn scratchpad(&self, task: &str) -> PathBuf {
+        let d = self.paths.scratch.join(task);
+        if let Err(e) = std::fs::create_dir_all(&d) {
+            tracing::warn!(task, dir = %d.display(), error = %e, "the scratchpad can't be made");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+        }
+        d
+    }
+
     /// A task's agent: spawned with its first message (the skills it starts with loaded).
     async fn spawn(&self, t: &Task) -> Result<Task, String> {
         let p = self.project(&t.project).await?;
@@ -714,11 +730,12 @@ impl App {
             None => String::new(),
         };
         let first = format!(
-            "Task: {}\nProject: {} ({})\nWorking directory: {}{home}\n\n{role}{}{}",
+            "Task: {}\nProject: {} ({})\nWorking directory: {}{home}\nScratchpad: {} ($REAGENT_SCRATCHPAD): yours alone, for temporary scripts and outputs; they don't go into the project.\n\n{role}{}{}",
             if t.title.is_empty() { UNTITLED } else { &t.title },
             p.name,
             p.slug,
             t.cwd,
+            self.scratchpad(&t.id).display(),
             t.prompt.trim(),
             if preload.is_empty() { String::new() } else { format!("\n\n# Skills loaded for this task{preload}") }
         );

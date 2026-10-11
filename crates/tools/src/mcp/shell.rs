@@ -155,10 +155,15 @@ async fn place(app: &App, t: &Task, p: &Project, tool: &str, cwd: Option<&str>) 
     Ok(resolve(app, t, p, tool, cwd.unwrap_or("."), false).await?.display().to_string())
 }
 
-/// What a task's commands get: the project's env, its secrets, reagent's PATH, who it is.
+/// What a task's commands get: the project's env, its secrets, reagent's PATH, who it is, its scratchpad (also as TMPDIR, TMP, TEMP).
 pub async fn env(app: &App, t: &Task, p: &Project) -> Vec<(String, String)> {
     let mut e = project_env(app, p).await;
     e.push(("REAGENT_TASK".into(), t.id.clone()));
+    // Its temp files land there too (in a flake project nix develop makes a folder of its own inside it).
+    let scratch = app.scratchpad(&t.id).display().to_string();
+    for k in ["REAGENT_SCRATCHPAD", "TMPDIR", "TMP", "TEMP"] {
+        e.push((k.into(), scratch.clone()));
+    }
     e
 }
 

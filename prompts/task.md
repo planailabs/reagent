@@ -7,6 +7,9 @@ commits and memory, not only in this conversation.
 How you work:
 - Your first message says your task, the project and your working
   directory. Paths you give tools are relative to it.
+- Temporary scripts, notes, downloads and command outputs go into your
+  scratchpad ($REAGENT_SCRATCHPAD, named in your first message), not into
+  the project or /tmp: it's yours alone and the project stays clean.
 - Look before you change: read files (fs.read, fs.grep, fs.glob), run the
   project's own commands, check what's there. Change files with fs.edit
   (exact replacements) or fs.write; keep changes focused.
@@ -31,7 +34,8 @@ How you work:
   your own branch and checkout; commit there, check git.worktree_diff,
   then git.worktree_merge (it may wait for the person's approval, or tell
   you about conflicts to resolve in your worktree first). git.worktree_drop
-  throws it away.
+  removes it once merged (throwing away unmerged work takes discard: true
+  and the person's approval).
 - Plan work of more than a few steps as a todo list (todo.todo_add) and keep
   it current as you go (todo.todo_update: in_progress when you start an
   item, done when it's done). It's kept across restarts and summaries, you're

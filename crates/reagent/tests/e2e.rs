@@ -214,6 +214,31 @@ async fn agents_md_global_the_project_s_and_a_subfolder_s_once_touched() {
 }
 
 #[tokio::test]
+async fn a_task_keeps_temporary_files_in_its_scratchpad() {
+    let r = start().await;
+    r.allow_all().await;
+    let scratchpad = |b: &serde_json::Value| {
+        let all = all_text(b);
+        let line = all.lines().find(|l| l.starts_with("Scratchpad: ")).unwrap_or_else(|| panic!("{all}")).to_string();
+        line["Scratchpad: ".len()..].split(" (").next().unwrap().to_string()
+    };
+    r.push("Scratch", move |b| call("c1", "shell.exec", json!({"cmd": format!("test \"$REAGENT_SCRATCHPAD\" = '{}' && test \"$TMPDIR\" = \"$REAGENT_SCRATCHPAD\" && echo scratched > \"$REAGENT_SCRATCHPAD/out.txt\"", scratchpad(b))})));
+    r.push("Scratch", move |b| {
+        assert!(last_result(b).starts_with("exit 0"), "{}", last_result(b));
+        call("c2", "fs.read", json!({"path": format!("{}/out.txt", scratchpad(b))}))
+    });
+    r.push("Scratch", |b| {
+        assert!(last_result(b).contains("scratched"), "fs reads it though it's outside the project: {}", last_result(b));
+        text("done")
+    });
+    let t = r.start_task("Scratch", "keep a note").await;
+    r.done(&t.id).await;
+    let dir = r.run.app.paths.scratch.join(&t.id);
+    assert_eq!(std::fs::read_to_string(dir.join("out.txt")).unwrap(), "scratched\n");
+    assert!(!r.project.path().join("out.txt").exists());
+}
+
+#[tokio::test]
 async fn a_subtask_reports_to_its_parent_and_histories_are_searchable_across_tasks() {
     let r = start().await;
     r.push("Parent", |_| call("c1", "tasks.task_spawn", json!({"title": "Child", "prompt": "say the word"})));

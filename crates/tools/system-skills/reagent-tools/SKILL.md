@@ -38,7 +38,9 @@ policy rule with a target.
 - They run with `sh -c`, in the project's **nix dev shell** when it has one
   (a `flake.nix`; a project setting; `devshell: false` opts one command out).
 - They get the project's environment, its secrets, `REAGENT_TASK`,
-  `REAGENT_PROJECT`, and `PAGER=cat`, `GIT_EDITOR=true`: nothing may wait
+  `REAGENT_PROJECT`, `REAGENT_SCRATCHPAD` (your scratchpad, also `TMPDIR`,
+  `TMP`, `TEMP`: temporary scripts and outputs go there, not into the
+  project), and `PAGER=cat`, `GIT_EDITOR=true`: nothing may wait
   for a person. Use non-interactive flags.
 - Long ones: `exec_bg`, then go on; you get a message when it ends. Servers
   and watchers too. Read output with `job_output` (tail, a range, or a
