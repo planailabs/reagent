@@ -375,7 +375,7 @@ impl App {
         let new = self.store.project(&p.slug).await.map_err(|e| e.to_string())?.is_none();
         self.store.put_project(&p).await.map_err(|e| e.to_string())?;
         if new {
-            self.store.set_rules(&p.slug, &crate::policy::starter_rules(&p.slug)).await.map_err(|e| e.to_string())?;
+            self.store.set_rules(&p.slug, &crate::policy::starter_rules()).await.map_err(|e| e.to_string())?;
         }
         self.emit(json!({"kind": "project", "project": p}));
         Ok(p)

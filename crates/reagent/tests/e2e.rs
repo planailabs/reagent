@@ -191,6 +191,27 @@ async fn a_subtask_reports_to_its_parent_and_histories_are_searchable_across_tas
 }
 
 #[tokio::test]
+async fn a_subtask_starts_in_another_project_without_asking() {
+    let r = start().await;
+    let other = tempfile::tempdir().unwrap();
+    r.run.app.put_project(reagent_store::Project::new("docs", "Docs", &other.path().display().to_string())).await.unwrap();
+    r.push("Parent", |_| call("c1", "tasks.task_spawn", json!({"title": "Elsewhere", "prompt": "say hi", "project": "docs"})));
+    r.push("Parent", |b| {
+        assert!(last_result(b).starts_with("started subtask"), "{}", last_result(b));
+        text("waiting")
+    });
+    r.push("Elsewhere", |_| text("hi from docs"));
+    r.push("Parent", |b| {
+        assert!(all_text(b).contains("hi from docs"), "{}", all_text(b));
+        text("heard it")
+    });
+    let t = r.start_task("Parent", "delegate to docs").await;
+    r.until(&t.id, "the parent's last report", |t| t.report.as_deref() == Some("heard it")).await;
+    let kid = &r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap()[0];
+    assert_eq!((kid.project.as_str(), kid.cwd.as_str()), ("docs", other.path().to_str().unwrap()));
+}
+
+#[tokio::test]
 async fn cron_starts_a_run_when_due() {
     let r = start().await;
     r.push("Nightly", |_| text("checked"));
