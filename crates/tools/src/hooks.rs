@@ -161,6 +161,10 @@ impl HookTools {
             (Some(r), None) => format!("the rule {} {}{}", r.tool, r.command.as_deref().map(|c| format!("`{c}` ")).unwrap_or_default(), r.action),
             (None, _) => format!("the project's default ({})", p.default_action),
         };
+        // Throwing a worktree's work away is the person's call, whatever the rules allow.
+        if d.action != Action::Deny && tool == "git.worktree_drop" && (args["discard"] == true || args["force"] == true) {
+            return Ok(json!({"decision": "ask", "reason": "discards the worktree's work not in its base: the person decides"}).to_string());
+        }
         Ok(match d.action {
             Action::Allow => json!({"decision": "allow"}),
             Action::Ask => json!({"decision": "ask", "reason": format!("needs approval: {why}")}),

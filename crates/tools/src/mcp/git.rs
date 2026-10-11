@@ -44,9 +44,9 @@ pub struct Merge {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Drop {
-    /// Also when its branch has commits not merged.
-    #[serde(default)]
-    pub force: bool,
+    /// Throw away its work not in the base (unmerged commits, uncommitted files): asks the person first.
+    #[serde(default, alias = "force")]
+    pub discard: bool,
 }
 
 fn worktree(t: &reagent_store::Task) -> Result<Worktree, String> {
@@ -129,12 +129,12 @@ impl GitTools {
         })
     }
 
-    #[tool(description = "Remove your worktree and its branch (refused while it has unmerged commits, unless force); your working directory goes back to the project (or your persistent worktree).")]
+    #[tool(description = "Remove your worktree and its branch (refused while it has work not in its base: unmerged commits, uncommitted or untracked files; discard = true throws that away, after the person approves); your working directory goes back to the project (or your persistent worktree).")]
     async fn worktree_drop(&self, Parameters(a): Parameters<Drop>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
         let w = worktree(&t)?;
         let repo = git::top(Path::new(&p.path))?;
-        git::remove(&repo, Path::new(&w.path), &w.branch, &w.base, a.force)?;
+        git::remove(&repo, Path::new(&w.path), &w.branch, &w.base, a.discard)?;
         let back = match &t.home {
             Some(n) => self.0.worktrees().get(&p.slug, n).await.map(|h| h.path).unwrap_or_else(|_| p.path.clone()),
             None => p.path.clone(),

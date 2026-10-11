@@ -428,7 +428,7 @@ enum WorktreeCmd {
     Remove {
         project: String,
         name: String,
-        /// Also with commits not in its base.
+        /// Discard its work not in its base (unmerged commits, uncommitted files).
         #[arg(long)]
         force: bool,
         #[arg(long)]

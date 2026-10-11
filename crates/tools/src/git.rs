@@ -206,13 +206,20 @@ pub fn merge(repo: &Path, wt: &Path, branch: &str, base: &str, strategy: Strateg
     result
 }
 
-/// Removes a worktree and its branch; `force` also when the branch has
-/// commits not merged into `base`.
-pub fn remove(repo: &Path, wt: &Path, branch: &str, base: &str, force: bool) -> Result<(), String> {
-    if !force {
-        let unmerged = git(repo, &["rev-list", "--count", &format!("{base}..{branch}")]).ok().and_then(|s| s.trim().parse::<usize>().ok()).unwrap_or(0);
+/// Removes a worktree and its branch. Refused while it has work not in
+/// `base` (unmerged commits, uncommitted or untracked files) unless
+/// `discard`: that work goes for good.
+pub fn remove(repo: &Path, wt: &Path, branch: &str, base: &str, discard: bool) -> Result<(), String> {
+    if !discard {
+        let unmerged: usize = git(repo, &["rev-list", "--count", &format!("{base}..{branch}")])?.trim().parse().map_err(|e| format!("commits of {branch} not in {base}: {e}"))?;
         if unmerged > 0 {
-            return Err(format!("{branch} has {unmerged} commit(s) not in {base}: merge first, or drop with force = true"));
+            return Err(format!("{branch} has {unmerged} commit(s) not in {base}: merge them first, or discard them explicitly"));
+        }
+        if wt.is_dir() {
+            let changed = git(wt, &["status", "--porcelain"])?.lines().count();
+            if changed > 0 {
+                return Err(format!("{} has {changed} uncommitted or untracked file(s): commit and merge them first, or discard them explicitly", wt.display()));
+            }
         }
     }
     git(repo, &["worktree", "remove", "--force", &wt.display().to_string()])?;
@@ -259,6 +266,10 @@ mod tests {
         assert!(remove(r.path(), &wt, &branch, "main", false).unwrap_err().contains("not in main"));
         let Merged::Done { .. } = merge(r.path(), &wt, &branch, "main", Strategy::Merge, "merge fix").unwrap() else { panic!() };
         assert_eq!(std::fs::read_to_string(r.path().join("b.txt")).unwrap(), "new\n", "merged into the main checkout");
+        std::fs::write(wt.join("scratch.txt"), "not committed\n").unwrap();
+        assert!(remove(r.path(), &wt, &branch, "main", false).unwrap_err().contains("uncommitted or untracked"), "uncommitted work stays");
+        assert!(remove(r.path(), &wt, &branch, "gone", false).is_err(), "an unknown base isn't taken as merged");
+        std::fs::remove_file(wt.join("scratch.txt")).unwrap();
         remove(r.path(), &wt, &branch, "main", false).unwrap();
         assert!(!wt.exists() && checkout_of(r.path(), &branch).unwrap().is_none());
     }

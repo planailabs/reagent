@@ -68,8 +68,9 @@ const doMerge = (w) =>
     said.value[w.name] = (await post(`${base()}/${encodeURIComponent(w.name)}/merge`, { strategy: m.strategy || "merge", message: orNull(m.message) })).merged;
   });
 function remove(w) {
-  const force = w.ahead > 0;
-  const what = w.adopted ? `Forget ${w.name}? (its folder ${w.path} and branch ${w.branch} stay)` : `Remove ${w.name}: ${w.path} and its branch ${w.branch}?${force ? ` It has ${w.ahead} commit(s) not in ${w.base}: they go.` : ""}`;
+  const work = [w.ahead > 0 && `${w.ahead} commit(s) not in ${w.base}`, w.changes > 0 && `${w.changes} uncommitted file(s)`].filter(Boolean);
+  const force = !w.adopted && work.length > 0;
+  const what = w.adopted ? `Forget ${w.name}? (its folder ${w.path} and branch ${w.branch} stay)` : `Remove ${w.name}: ${w.path} and its branch ${w.branch}?${force ? ` It has ${work.join(" and ")}: they're discarded for good.` : ""}`;
   if (confirm(what)) run(w.name, () => del(`${base()}/${encodeURIComponent(w.name)}${force ? "?force=true" : ""}`));
 }
 

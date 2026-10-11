@@ -228,8 +228,9 @@ impl Worktrees<'_> {
     }
 
     /// Removes a persistent worktree: refused while a task works there, and
-    /// while it has commits not in its base unless `force`. An adopted one is
-    /// only forgotten unless `delete`.
+    /// while it has work not in its base (unmerged commits, uncommitted files)
+    /// unless `force` (the person discards it). An adopted one is only
+    /// forgotten unless `delete`.
     pub async fn remove(&self, project: &str, name: &str, force: bool, delete: bool) -> Result<String, String> {
         let p = self.project(project).await?;
         let w = self.get(project, name).await?;

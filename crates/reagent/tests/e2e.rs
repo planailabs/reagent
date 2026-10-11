@@ -106,6 +106,32 @@ async fn a_foreground_command_past_its_timeout_goes_on_in_the_background() {
 }
 
 #[tokio::test]
+async fn a_worktree_s_work_goes_only_when_the_person_approves_discarding_it() {
+    let r = start().await;
+    r.allow_all().await;
+    r.push("Try", |_| call("c1", "git.worktree_start", json!({})));
+    r.push("Try", |_| call("c2", "fs.write", json!({"path": "draft.txt", "text": "not committed\n"})));
+    r.push("Try", |_| call("c3", "git.worktree_drop", json!({})));
+    r.push("Try", |b| {
+        assert!(last_result(b).contains("uncommitted or untracked"), "{}", last_result(b));
+        call("c4", "git.worktree_drop", json!({"discard": true}))
+    });
+    r.push("Try", |b| {
+        assert!(last_result(b).starts_with("removed"), "{}", last_result(b));
+        text("dropped")
+    });
+    let t = r.start_task("Try", "try something").await;
+    let w = r.until(&t.id, "the discard to ask", |t| t.state == "waiting").await;
+    let wait = w.wait.unwrap().0;
+    assert_eq!(wait["kind"], "approval", "asks though every call is allowed: {wait}");
+    let dir = std::path::PathBuf::from(&w.worktree.as_ref().unwrap().0.path);
+    assert!(dir.join("draft.txt").exists(), "kept until the person says so");
+    r.run.app.approve(&t.id, wait["call"]["id"].as_str().unwrap(), true, false).await.unwrap();
+    r.done(&t.id).await;
+    assert!(!dir.exists());
+}
+
+#[tokio::test]
 async fn a_worktree_is_merged_once_the_person_approves() {
     let r = start().await;
     r.push("Feature", |_| call("c1", "git.worktree_start", json!({})));

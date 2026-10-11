@@ -83,7 +83,7 @@ pub struct WorktreeMerge {
 pub struct WorktreeRemove {
     pub project: String,
     pub name: String,
-    /// Also when its branch has commits not in its base.
+    /// Discard its work not in its base (unmerged commits, uncommitted files).
     #[serde(default)]
     pub force: bool,
     /// An adopted one: delete its folder and branch too (default: only forget it).
@@ -595,7 +595,7 @@ impl ReagentTools {
         self.0.worktrees().merge(&a.project, &a.name, a.strategy.unwrap_or(reagent_tools::git::Strategy::Merge), a.message).await
     }
 
-    #[tool(description = "Remove a persistent worktree and its branch (refused while tasks work there, or with commits not in its base unless force); an adopted one is only forgotten unless delete.")]
+    #[tool(description = "Remove a persistent worktree and its branch (refused while tasks work there, or while it has work not in its base, unmerged commits or uncommitted files, unless force: that work is discarded); an adopted one is only forgotten unless delete.")]
     async fn worktree_remove(&self, Parameters(a): Parameters<WorktreeRemove>) -> Result<String, String> {
         self.0.worktrees().remove(&a.project, &a.name, a.force, a.delete).await
     }
