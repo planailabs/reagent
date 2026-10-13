@@ -1,8 +1,8 @@
 //! Instruction rules: markdown files in `.agents/rules/` (or `.agent/rules/`),
 //! `*.md` or Cursor's `*.mdc`, in subfolders too. Optional frontmatter says
 //! when one applies: `alwaysApply: true` (or no `globs` and no `description`):
-//! always in the context; `globs` (a list, or one string split on commas):
-//! once the task touched a matching file; only a `description`: listed, for
+//! always in the context; `globs` (a list, or one string split on commas;
+//! Claude Code's `paths` too): once the task touched a matching file; only a `description`: listed, for
 //! the task to read when it fits.
 
 use std::path::{Path, PathBuf};
@@ -24,6 +24,7 @@ pub struct Rule {
 #[serde(rename_all = "camelCase")]
 struct Front {
     description: Option<String>,
+    #[serde(alias = "paths")]
     globs: Option<Globs>,
     always_apply: Option<bool>,
 }
@@ -174,6 +175,7 @@ mod tests {
         let (wt, proj) = (t.path().join("wt"), t.path().join("proj"));
         write(&proj, ".agents/rules/style.md", "Use tabs.");
         write(&proj, ".agents/rules/rust/errors.mdc", "---\nglobs: src/**/*.rs, *.toml\n---\nNo unwrap.");
+        write(&proj, ".agents/rules/claude.md", "---\npaths:\n  - \"**/*.py\"\n---\nType hints.");
         write(&proj, ".agents/rules/release.md", "---\ndescription: How we release\n---\nTag it.");
         write(&proj, ".agent/rules/web.md", "---\nglobs: [\"webui/**\"]\nalwaysApply: true\n---\nVue 3.");
         write(&wt, ".agents/rules/style.md", "Use spaces.");
@@ -182,7 +184,8 @@ mod tests {
         write(t.path(), "global/global-only.md", "From home.");
         let rules = discover(&wt, &proj, &[t.path().join("global")]);
         let by = |n: &str| rules.iter().find(|r| r.name == n).unwrap();
-        assert_eq!(rules.len(), 5, "{rules:?}");
+        assert_eq!(rules.len(), 6, "{rules:?}");
+        assert_eq!((by("claude").globs.clone(), by("claude").always), (vec!["**/*.py".to_string()], false), "Claude Code's paths are globs");
         assert_eq!(by("global-only").body, "From home.", "global ones come after, the project's win");
         assert_eq!((by("style").body.as_str(), by("style").always), ("Use spaces.", true), "the worktree's wins");
         let errors = by("rust/errors");
