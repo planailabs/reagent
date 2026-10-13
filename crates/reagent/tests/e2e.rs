@@ -517,7 +517,7 @@ async fn rules_come_into_view_always_by_the_files_touched_or_listed() {
 }
 
 #[tokio::test]
-async fn a_plugins_skills_and_rules_reach_tasks() {
+async fn a_plugins_skills_and_rules_reach_tasks_but_not_rules_switched_off() {
     let r = start().await;
     let src = r.data.path().join("plugin-src");
     std::fs::create_dir_all(src.join("skill/greet")).unwrap();
@@ -536,6 +536,15 @@ async fn a_plugins_skills_and_rules_reach_tasks() {
         text("ok")
     });
     let t = r.start_task("Plugged", "x").await;
+    r.done(&t.id).await;
+    let off = r.run.app.plugin_rules_off("kit", &["tone".into()]).await.unwrap();
+    assert_eq!(off.rules_off, ["tone"]);
+    r.push("Unruled", |b| {
+        let all = all_text(b);
+        assert!(all.contains("greet — say hi nicely") && !all.contains("Keep it short."), "a rule switched off: {all}");
+        text("ok")
+    });
+    let t = r.start_task("Unruled", "x").await;
     r.done(&t.id).await;
     let up = r.run.app.plugin_update(None).await.unwrap();
     assert_eq!((up[0]["ok"].as_bool(), up[0]["changed"].as_bool()), (Some(true), Some(false)), "{up:?}");

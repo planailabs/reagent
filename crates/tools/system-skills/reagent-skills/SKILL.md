@@ -47,7 +47,7 @@ too, in the worktree and the project folder (the worktree's wins on a name).
 Optional frontmatter says when one applies:
 
 - no frontmatter, or `alwaysApply: true`: always in the task's context;
-- `globs` (`src/**/*.rs, *.toml`, or a list): shown once the task's file tools
+- `globs` (`src/**/*.rs, *.toml`, or a list; Claude Code's `paths` too): shown once the task's file tools
   touch a matching file (paths relative to the project);
 - only a `description`: listed with its path, for the task to read when it fits.
 
@@ -70,8 +70,9 @@ ones (a skill's source shows `plugin:<id>`). It's cloned into
 `<data>/plugins/<id>/` and updated by fetching what it follows (a branch or tag,
 else the default branch); changes made in its folder are dropped then. The
 person adds, updates and removes plugins on the settings page or with `reagent
-plugin add <url> [--id] [--ref] | list | update [ids…] | remove <id>`; outside
-agents with the MCP API's `plugin_*` tools.
+plugin add <url> [--id] [--ref] | list | update [ids…] | rules-off <id> [rules…] |
+remove <id>`; outside agents with the MCP API's `plugin_*` tools. A plugin's
+rules that don't fit can be switched off one by one (kept across updates).
 
 ## Prompt templates
 

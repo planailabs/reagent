@@ -1,7 +1,8 @@
 //! Plugins: git repositories cloned into `<data>/plugins/<id>/` whose skills
 //! and rules every task gets, like the global ones. The folder is the record
 //! (no table): the clone's remote, the ref it follows (`git config
-//! reagent.ref`, empty: the remote's default branch) and its commit.
+//! reagent.ref`, empty: the remote's default branch), its commit and the
+//! rules switched off (`git config reagent.ruleOff`, one value each).
 //! Updating fetches that ref and resets to it (a plugin's folder is
 //! reagent's: changes made there go).
 
@@ -22,6 +23,8 @@ pub struct Plugin {
     pub date: i64,
     pub skills: Vec<String>,
     pub rules: Vec<String>,
+    /// Its rules no task gets (a name may outlive its rule across an update).
+    pub rules_off: Vec<String>,
 }
 
 pub fn dir(data: &Path) -> PathBuf {
@@ -73,7 +76,32 @@ fn read(id: &str, d: &Path) -> Result<Plugin, String> {
     let (commit, date, subject) = (f.next().unwrap_or_default().to_string(), f.next().and_then(|s| s.parse().ok()).unwrap_or(0), f.next().unwrap_or_default().to_string());
     let skills = crate::skills::in_places(&skill_places(d)).into_iter().map(|s| s.name).collect();
     let rules = crate::rules::in_places(&rule_places(d)).into_iter().map(|r| r.name).collect();
-    Ok(Plugin { id: id.into(), url, reference, commit, subject, date, skills, rules })
+    Ok(Plugin { id: id.into(), url, reference, commit, subject, date, skills, rules, rules_off: rules_off(d) })
+}
+
+fn rules_off(d: &Path) -> Vec<String> {
+    git(d, &["config", "--get-all", "reagent.ruleOff"]).map(|s| s.lines().map(str::to_string).filter(|l| !l.is_empty()).collect()).unwrap_or_default()
+}
+
+/// A plugin's rules that tasks get: those not switched off.
+pub fn rules(plugin: &Path) -> Vec<crate::rules::Rule> {
+    let off = rules_off(plugin);
+    crate::rules::in_places(&rule_places(plugin)).into_iter().filter(|r| !off.contains(&r.name)).collect()
+}
+
+/// Switches these of a plugin's rules off (and the others on again).
+pub fn set_rules_off(data: &Path, id: &str, names: &[String]) -> Result<Plugin, String> {
+    let p = get(data, id)?;
+    if let Some(n) = names.iter().find(|n| !p.rules.contains(n)) {
+        return Err(format!("{id} has no rule {n} (it has: {})", p.rules.join(", ")));
+    }
+    let d = dir(data).join(id);
+    // ponytail: exit 5 just means there was none to unset.
+    let _ = git(&d, &["config", "--unset-all", "reagent.ruleOff"]);
+    for n in names {
+        git(&d, &["config", "--add", "reagent.ruleOff", n])?;
+    }
+    read(id, &d)
 }
 
 pub fn list(data: &Path) -> Vec<Plugin> {
@@ -178,6 +206,13 @@ mod tests {
         let (before, after) = update(&data, "tools").unwrap();
         assert_eq!((before, after.subject.as_str()), (p.commit, "three"));
         assert_eq!(after.skills, ["greet", "second"]);
+        assert!(set_rules_off(&data, "tools", &["nope".into()]).unwrap_err().contains("no rule nope"));
+        assert_eq!(set_rules_off(&data, "tools", &["tone".into()]).unwrap().rules_off, ["tone"]);
+        assert!(rules(&dir(&data).join("tools")).is_empty(), "a rule switched off");
+        update(&data, "tools").unwrap();
+        assert_eq!(get(&data, "tools").unwrap().rules_off, ["tone"], "kept over an update");
+        assert!(set_rules_off(&data, "tools", &[]).unwrap().rules_off.is_empty());
+        assert_eq!(rules(&dir(&data).join("tools")).len(), 1, "on again");
         assert_eq!(list(&data).len(), 1);
         remove(&data, "tools").unwrap();
         assert!(list(&data).is_empty() && remove(&data, "tools").is_err());

@@ -509,6 +509,14 @@ test("a plugin is added from git, its skills reach projects, it updates and goes
   await page.goto("/#/project/site/skills");
   await expect(page.locator("body")).toContainText("plugin:plugin-src");
   await expect(page.getByLabel("rule tone")).toContainText("always");
+  // Its rule switched off: no task gets it, and it stays off.
+  await page.goto("/#/settings");
+  await page.getByLabel("plugin plugin-src").getByText("1 rules").click();
+  await page.getByLabel("plugin rule tone").uncheck();
+  await expect(page.getByLabel("plugin plugin-src")).toContainText("1 off");
+  await page.goto("/#/project/site/skills");
+  await expect(page.locator("body")).toContainText("plugin:plugin-src");
+  await expect(page.getByLabel("rule tone")).toHaveCount(0);
   // A new commit upstream: update moves onto it.
   execSync(`git -C ${pluginSrc} -c user.email=t@t -c user.name=t commit -q --allow-empty -m second`);
   await page.goto("/#/settings");
@@ -516,6 +524,10 @@ test("a plugin is added from git, its skills reach projects, it updates and goes
   await expect(page.getByLabel("plugin plugin-src")).toContainText("updated");
   await page.getByRole("button", { name: "update all" }).click();
   await expect(page.getByLabel("plugin plugin-src")).toContainText("up to date");
+  await expect(page.getByLabel("plugin plugin-src")).toContainText("1 off");
+  await page.getByLabel("plugin plugin-src").getByText("1 rules").click();
+  await page.getByLabel("plugin rule tone").check();
+  await expect(page.getByLabel("plugin plugin-src")).not.toContainText("off");
   page.once("dialog", (d) => d.accept());
   await page.getByLabel("plugin plugin-src").getByRole("button", { name: "remove" }).click();
   await expect(page.getByLabel("plugin plugin-src")).toHaveCount(0);

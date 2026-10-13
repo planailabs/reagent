@@ -66,6 +66,7 @@ pub fn routes() -> Router<S> {
         .route("/api/plugins/update", post(update_plugins))
         .route("/api/plugins/{id}", delete(remove_plugin))
         .route("/api/plugins/{id}/update", post(update_plugin))
+        .route("/api/plugins/{id}/rules-off", put(plugin_rules_off))
         .route("/api/notify/channels", get(channels).post(add_channel))
         .route("/api/notify/channels/{id}", put(set_channel).delete(remove_channel))
         .route("/api/notify/channels/{id}/test", post(test_channel))
@@ -413,6 +414,15 @@ async fn update_plugins(State(s): State<S>) -> R {
 
 async fn update_plugin(State(s): State<S>, Path(id): Path<String>) -> R {
     Ok(Json(json!(s.w.app.plugin_update(Some(&id)).await?[0])))
+}
+
+#[derive(Deserialize)]
+struct RulesOff {
+    rules: Vec<String>,
+}
+
+async fn plugin_rules_off(State(s): State<S>, Path(id): Path<String>, Json(b): Json<RulesOff>) -> R {
+    Ok(Json(json!(s.w.app.plugin_rules_off(&id, &b.rules).await?)))
 }
 
 async fn remove_plugin(State(s): State<S>, Path(id): Path<String>) -> R {

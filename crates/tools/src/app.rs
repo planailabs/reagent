@@ -520,6 +520,15 @@ impl App {
         Ok(out)
     }
 
+    /// Switches these of a plugin's rules off (the others on).
+    pub async fn plugin_rules_off(&self, id: &str, names: &[String]) -> Result<crate::plugins::Plugin, String> {
+        let _g = self.plugin_lock.lock().await;
+        let p = crate::plugins::set_rules_off(&self.paths.data, id, names)?;
+        tracing::info!(plugin = %id, off = ?p.rules_off, "plugin rules switched off");
+        self.emit(json!({"kind": "plugins"}));
+        Ok(p)
+    }
+
     pub async fn plugin_remove(&self, id: &str) -> Result<(), String> {
         let _g = self.plugin_lock.lock().await;
         crate::plugins::remove(&self.paths.data, id)?;
@@ -531,9 +540,15 @@ impl App {
     /// The rules a task sees: the worktree's and project's, the global
     /// folders' (`~/.agents/rules`, `<data>/rules`), then the plugins'.
     pub fn rules_for(&self, cwd: &Path, p: &Project) -> Vec<crate::rules::Rule> {
-        let mut global = self.paths.rules.clone();
-        global.extend(crate::plugins::dirs(&self.paths.data).iter().flat_map(|(_, d)| crate::plugins::rule_places(d)));
-        crate::rules::discover(cwd, Path::new(&p.path), &global)
+        let mut out = crate::rules::discover(cwd, Path::new(&p.path), &self.paths.rules);
+        for (_, d) in crate::plugins::dirs(&self.paths.data) {
+            for r in crate::plugins::rules(&d) {
+                if !out.iter().any(|o| o.name == r.name) {
+                    out.push(r);
+                }
+            }
+        }
+        out
     }
 
     pub fn worktree_dir(&self, p: &Project, branch: &str) -> PathBuf {

@@ -36,7 +36,7 @@ kinds it gets; `reagent.hcl`'s notify block can add URLs too).
 `task start [--template <name> --set field=value] [--worktree <name>]`,
 `worktree list|add|adopt|set|status|diff|merge|remove`,
 `service add|list|remove|start|stop|restart|logs|move|approve`, `task design`, `task proposal`,
-`template list|show`, `plugin add|list|update|remove`, `token add|list|revoke`,
+`template list|show`, `plugin add|list|update|rules-off|remove`, `token add|list|revoke`,
 `supervisor --stop`.
 
 ## MCP API (for other agents)
@@ -48,7 +48,7 @@ kinds it gets; `reagent.hcl`'s notify block can add URLs too).
 `task_switch_profile`, `task_approve`, `task_answer`, `task_merge`,
 `task_wait`, `search`, `prompt_design`, `design_proposal`, `design_create`, `docs_list`, `docs_read`,
 `trigger_list`, `trigger_add`, `trigger_remove`, `trigger_run`, `trigger_move`,
-`plugin_list`, `plugin_add`, `plugin_update`, `plugin_remove`, `template_list`,
+`plugin_list`, `plugin_add`, `plugin_update`, `plugin_rules_off`, `plugin_remove`, `template_list`,
 `worktree_list`, `worktree_add`, `worktree_merge`, `worktree_remove`,
 `service_list`, `service_add`, `service_remove`, `service_start`, `service_stop`,
 `service_restart`, `service_logs`, `service_move`, `reagent_source_ls`, `reagent_source_read`

@@ -1,7 +1,7 @@
 <script setup>
 // Plugins: git repositories whose skills and rules every task gets.
 import { onMounted, ref } from "vue";
-import { del, get, post } from "../lib/api.js";
+import { del, get, post, put } from "../lib/api.js";
 import { ago } from "../lib/format.js";
 
 const list = ref(null);
@@ -34,6 +34,8 @@ const add = () =>
   });
 const update = (p) => run(p.id, async () => (said.value[p.id] = outcome(await post(`/api/plugins/${p.id}/update`))));
 const updateAll = () => run("all", async () => (await post("/api/plugins/update")).forEach((r) => (said.value[r.id] = outcome(r))));
+const toggle = (p, rule, on) =>
+  run(p.id, () => put(`/api/plugins/${p.id}/rules-off`, { rules: on ? p.rules_off.filter((r) => r !== rule) : [...p.rules_off, rule] }));
 const remove = (p) => confirm(`Remove the plugin ${p.id}?`) && run(p.id, () => del(`/api/plugins/${p.id}`));
 
 onMounted(load);
@@ -48,7 +50,16 @@ onMounted(load);
         <td class="dim">{{ p.url }}<span v-if="p.ref"> @ {{ p.ref }}</span></td>
         <td :title="p.subject">{{ p.commit }} <span class="dim">{{ ago(p.date) }} ago</span></td>
         <td>{{ p.skills.join(", ") || "—" }}</td>
-        <td>{{ p.rules.join(", ") || "—" }}</td>
+        <td>
+          <details v-if="p.rules.length">
+            <summary>{{ p.rules.length }} rules<span v-if="p.rules_off.length" class="dim">, {{ p.rules_off.length }} off</span></summary>
+            <label v-for="r in p.rules" :key="r" class="row">
+              <input type="checkbox" :checked="!p.rules_off.includes(r)" :disabled="!!busy" :aria-label="`plugin rule ${r}`" @change="toggle(p, r, $event.target.checked)" />
+              {{ r }}
+            </label>
+          </details>
+          <span v-else>—</span>
+        </td>
         <td class="row">
           <button :disabled="!!busy" @click="update(p)">update</button>
           <button :disabled="!!busy" @click="remove(p)">remove</button>

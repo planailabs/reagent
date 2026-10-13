@@ -465,6 +465,8 @@ enum PluginCmd {
     List,
     /// Fetch what each (or the named) plugin follows and move onto it.
     Update { ids: Vec<String> },
+    /// Switch these of a plugin's rules off, the others on (none: all on).
+    RulesOff { id: String, rules: Vec<String> },
     Remove { id: String },
 }
 
@@ -946,7 +948,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 }
                 PluginCmd::List => {
                     for p in plugins::list(&data) {
-                        println!("{}\t{}{}\t{} {}\tskills: {}\trules: {}", p.id, p.url, p.reference.map(|r| format!("@{r}")).unwrap_or_default(), p.commit, p.subject, p.skills.join(","), p.rules.join(","));
+                        println!("{}\t{}{}\t{} {}\tskills: {}\trules: {}\toff: {}", p.id, p.url, p.reference.map(|r| format!("@{r}")).unwrap_or_default(), p.commit, p.subject, p.skills.join(","), p.rules.join(","), p.rules_off.join(","));
                     }
                 }
                 PluginCmd::Update { ids } => {
@@ -963,6 +965,10 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                         }
                     }
                     anyhow::ensure!(!failed, "not every plugin was updated");
+                }
+                PluginCmd::RulesOff { id, rules } => {
+                    let p = plugins::set_rules_off(&data, &id, &rules).map_err(anyhow::Error::msg)?;
+                    println!("{id}: rules off: {}", if p.rules_off.is_empty() { "none".into() } else { p.rules_off.join(", ") });
                 }
                 PluginCmd::Remove { id } => {
                     plugins::remove(&data, &id).map_err(anyhow::Error::msg)?;

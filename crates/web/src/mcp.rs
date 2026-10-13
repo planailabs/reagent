@@ -275,6 +275,14 @@ pub struct PluginUpdate {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct PluginRulesOff {
+    pub id: String,
+    /// Its rules no task gets (by name, as plugin_list shows them); the others are on. None: all on.
+    #[serde(default)]
+    pub rules: Vec<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TriggerMove {
     pub project: String,
     pub name: String,
@@ -571,6 +579,11 @@ impl ReagentTools {
     #[tool(description = "Update a plugin (or every one): fetch what it follows and move onto it. Each one's commits before and after, or why not.")]
     async fn plugin_update(&self, Parameters(a): Parameters<PluginUpdate>) -> Result<String, String> {
         j(self.0.plugin_update(a.id.as_deref()).await?)
+    }
+
+    #[tool(description = "Switch a plugin's rules off (kept across updates): tasks don't get them. Lists every one that's off; the rest are on.")]
+    async fn plugin_rules_off(&self, Parameters(a): Parameters<PluginRulesOff>) -> Result<String, String> {
+        j(self.0.plugin_rules_off(&a.id, &a.rules).await?)
     }
 
     #[tool(description = "Remove a plugin (its folder).")]
