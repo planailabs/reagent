@@ -169,6 +169,8 @@ pub fn starter_rules() -> Vec<Rule> {
         r("git.worktree_start", None, "allow"),
         r("git.worktree_merge", None, "allow"),
         r("tasks.task_spawn", None, "allow"),
+        // Only its own subtasks', which it could have started without a budget.
+        r("tasks.task_raise_budget", None, "allow"),
         r("tasks.task_list", None, "allow"),
         r("tasks.task_title", None, "allow"),
         r("tasks.template_list", None, "allow"),

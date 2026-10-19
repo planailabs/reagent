@@ -407,6 +407,34 @@ async fn raising_the_budget_lets_a_paused_task_go_on() {
 }
 
 #[tokio::test]
+async fn a_subtask_over_its_budget_tells_its_parent_which_may_raise_it() {
+    let r = start().await;
+    r.push("Lead", |_| call("c1", "tasks.task_spawn", json!({"title": "Look", "prompt": "Find the greeting.", "kind": "explore", "budget": {"tokens": 100}})));
+    r.push("Look", |_| call("e1", "fs.read", json!({"path": "a.txt"})));
+    r.push("Look", |_| text("a.txt:1 says hello world"));
+    // The notes come in whatever turn: it raises the budget once it hears of it, then waits for the report.
+    for _ in 0..5 {
+        r.push("Lead", |b| {
+            let all = all_text(b);
+            if all.contains("a.txt:1 says hello world") {
+                return text("found it");
+            }
+            match all.find(" paused over its budget") {
+                Some(i) if !last_result(b).contains("budget {") => {
+                    let id = &all[all[..i].rfind('(').unwrap() + 1..i - 1];
+                    call("c2", "tasks.task_raise_budget", json!({"task": id, "tokens": 100_000}))
+                }
+                _ => text("waiting for it"),
+            }
+        });
+    }
+    let t = r.start_task("Lead", "x").await;
+    r.until(&t.id, "the report after the raise", |t| t.report.as_deref() == Some("found it")).await;
+    let kids = r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap();
+    assert_eq!((kids[0].budget.tokens, kids[0].state.as_str()), (Some(100_100), "done"));
+}
+
+#[tokio::test]
 async fn a_task_keeps_a_todo_list_in_view() {
     let r = start().await;
     r.push("Plan", |b| {

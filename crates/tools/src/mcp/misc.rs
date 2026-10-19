@@ -185,7 +185,7 @@ pub struct Spawn {
     /// Skills loaded into its first message.
     #[serde(default)]
     pub skills: Vec<String>,
-    /// Limits: {tokens?, cost?, minutes?}.
+    /// Limits: {tokens?, cost?, minutes?}. Tokens count all it reads and writes, every turn: its first turn alone reads its whole context (some 50k), so a few thousand stop it at once; cost or minutes say better what you mean. Over one it pauses and you hear it (task_raise_budget).
     pub budget: Option<Value>,
     /// What kind of helper: explore (find and read, changes nothing), review (check a change, runs tests, fixes nothing), code (make a change with its tests), research (the web, with sources), or one of reagent.hcl's; default: by origin.
     pub kind: Option<String>,
@@ -200,6 +200,16 @@ pub struct TaskList {
     /// Finished ones too.
     #[serde(default)]
     pub all: bool,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct RaiseBudget {
+    /// One of your subtasks.
+    pub task: String,
+    /// Added to its budget.
+    pub tokens: Option<u64>,
+    pub cost: Option<f64>,
+    pub minutes: Option<u64>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -402,6 +412,17 @@ impl TaskTools {
         };
         let v = self.0.store.tasks(project.as_deref(), None, !a.all, 100).await.map_err(|e| e.to_string())?;
         Ok(if v.is_empty() { "no tasks".into() } else { v.iter().map(task_line).collect::<Vec<_>>().join("\n") })
+    }
+
+    #[tool(description = "Add to one of your subtasks' budget: it goes on if it was paused over it.")]
+    async fn task_raise_budget(&self, Parameters(a): Parameters<RaiseBudget>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
+        let (t, _) = caller(&self.0, &ctx).await?;
+        let sub = self.0.task(&a.task).await?;
+        if sub.parent.as_deref() != Some(t.id.as_str()) {
+            return Err(format!("{} isn't your subtask", sub.name()));
+        }
+        let raised = self.0.raise_budget(&sub.id, &Budget { tokens: a.tokens, cost: a.cost, minutes: a.minutes, daily_cost: None }).await?;
+        Ok(format!("{}: budget {} now, {}", raised.name(), serde_json::to_string(&raised.budget.0).unwrap_or_default(), raised.state))
     }
 
     #[tool(description = "Send a message to another task (one of your subtasks, say).")]

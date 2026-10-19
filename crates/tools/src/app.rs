@@ -1441,11 +1441,28 @@ impl App {
         let (Ok(hub), Ok(agent)) = (self.hub(), Self::agent_of(&t)) else { return };
         let _ = hub.op(&root(), Op::Pause { id: agent, mode: PauseMode::Quick, tree: true }).await;
         let wait = json!({"kind": "budget", "tokens": t.tokens, "cost": t.cost, "minutes": minutes, "budget": b});
-        if self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
-            self.notify("budget", Some(&t), &format!("{} is over budget", t.name()), &format!("{} tokens, {:.2} spent, {minutes} min: paused", t.tokens, t.cost)).await;
-        }
+        self.over_budget(&t, t.tokens as u64, t.cost, minutes).await;
         let _ = self.store.set_state(&t.id, "waiting", Some(&wait)).await;
         self.task_changed(&t.id).await;
+    }
+
+    /// Says (once) that a task paused over its budget: to the person, and to its parent,
+    /// which set that budget and may raise it (else the subtask waits, unseen, for the person);
+    /// the note wakes a parent that ended its turn waiting for it, as a report does.
+    async fn over_budget(&self, t: &Task, tokens: u64, cost: f64, minutes: i64) {
+        if !self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
+            return;
+        }
+        let used = format!("{tokens} tokens, {cost:.2} spent, {minutes} min");
+        self.notify("budget", Some(t), &format!("{} is over budget", t.name()), &format!("{used}: paused")).await;
+        if let Some(parent) = &t.parent
+            && let Ok(p) = self.task(parent).await
+            && p.state != "cancelled"
+        {
+            let budget = serde_json::to_string(&t.budget.0).unwrap_or_default();
+            let note = format!("[subtask {} ({}) paused over its budget {budget}: {used}]\ntasks.task_raise_budget adds to it and it goes on; otherwise it waits for the person.", t.name(), t.id);
+            let _ = self.message(parent, &note).await;
+        }
     }
 
     /// What a task's current agent used: tokens and cost.
@@ -1589,9 +1606,7 @@ impl App {
                 let _ = hub.op(&root(), Op::Pause { id: Self::agent_of(&t)?, mode: PauseMode::Quick, tree: true }).await;
                 state = "waiting".into();
                 wait = Some(json!({"kind": "budget", "tokens": all_tokens, "cost": all_cost, "minutes": minutes, "budget": b}));
-                if self.notified.lock().unwrap().insert((t.id.clone(), "budget".into())) {
-                    self.notify("budget", Some(&t), &format!("{} is over budget", t.name()), &format!("{all_tokens} tokens, {all_cost:.2} spent, {minutes} min: paused")).await;
-                }
+                self.over_budget(&t, all_tokens, all_cost, minutes).await;
             }
             if state != t.state || wait != t.wait.as_ref().map(|w| w.0.clone()) {
                 let _ = self.store.set_state(&t.id, &state, wait.as_ref()).await;
