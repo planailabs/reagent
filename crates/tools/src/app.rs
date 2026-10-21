@@ -114,6 +114,9 @@ pub struct App {
     pub fg_waiting: Mutex<HashSet<String>>,
     /// What each task was last shown of its context (hashes by kind).
     pub shown: Mutex<HashMap<String, HashMap<String, u64>>>,
+    /// Held (read) from spawning a task's agent until its id is stored: its first hook calls
+    /// can come before that, and a lookup that misses waits for it (write).
+    pub spawning: tokio::sync::RwLock<()>,
     /// The files each task's file tools touched (for rules with globs).
     pub touched: Mutex<HashMap<String, Vec<String>>>,
     /// One plugin change at a time (git in their folders).
@@ -174,6 +177,7 @@ impl App {
             merges: Default::default(),
             fg_waiting: Default::default(),
             shown: Default::default(),
+            spawning: Default::default(),
             touched: Default::default(),
             plugin_lock: Default::default(),
             notified: Default::default(),
@@ -396,6 +400,11 @@ impl App {
 
     /// The task an agent is (from a tool call's `_meta` or a hook's question).
     pub async fn task_of_agent(&self, agent: &str) -> Result<Task, String> {
+        if let Some(t) = self.store.task_by_agent(agent).await.map_err(|e| e.to_string())? {
+            return Ok(t);
+        }
+        // Maybe one just spawned whose id isn't stored yet.
+        drop(self.spawning.write().await);
         self.store.task_by_agent(agent).await.map_err(|e| e.to_string())?.ok_or_else(|| format!("agent {agent} isn't a reagent task"))
     }
 
@@ -757,6 +766,7 @@ impl App {
         // A project with servers of its own has its own mixture.
         let own = crate::cluster::project_mixture(&profile, &p.slug);
         let ty = if self.hub()?.cluster().spec.mixtures.contains_key(&own) { own } else { crate::cluster::mixture(&profile) };
+        let spawning = self.spawning.read().await;
         let spawned = match self.hub()?.op(&root(), Op::Spawn { ty, prompt: first, tenant: None }).await {
             Ok(v) => v,
             Err(e) => {
@@ -767,6 +777,7 @@ impl App {
         };
         let agent = spawned["id"].as_str().ok_or("the hub didn't say the agent's id")?.to_string();
         self.store.set_agent(&t.id, &agent).await.map_err(|e| e.to_string())?;
+        drop(spawning);
         if t.state == "queued" {
             self.store.set_state(&t.id, "running", None).await.map_err(|e| e.to_string())?;
         }
