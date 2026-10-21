@@ -372,6 +372,70 @@ impl Service {
     }
 }
 
+/// A branch kept in sync with its remote: the project folder's (`place` ""), or a persistent
+/// worktree's (its name). These are the settings kept in reagent.db; the checkout's
+/// `.agents/sync.md` overrides any of them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct GitSync {
+    #[serde(default)]
+    pub project: String,
+    #[serde(default)]
+    pub place: String,
+    #[serde(default)]
+    pub enabled: bool,
+    /// Seconds between rounds.
+    #[serde(default = "sync_every")]
+    pub every: i64,
+    /// rebase, merge or ff-only.
+    #[serde(default = "rebase")]
+    pub strategy: String,
+    /// None: the branch's upstream, else origin.
+    #[serde(default)]
+    pub remote: Option<String>,
+    /// None: the upstream's branch, else the same name.
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub state: Json<SyncState>,
+}
+
+fn sync_every() -> i64 {
+    900
+}
+
+fn rebase() -> String {
+    "rebase".into()
+}
+
+impl GitSync {
+    pub fn new(project: &str, place: &str) -> Self {
+        GitSync { project: project.into(), place: place.into(), enabled: false, every: sync_every(), strategy: rebase(), remote: None, branch: None, notes: String::new(), state: Json::default() }
+    }
+}
+
+/// How a branch's sync is doing.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SyncState {
+    /// ok, skipped (a task works there), fixing (a task resolves it), stuck (it ended unresolved), error.
+    #[serde(default)]
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// When the last round ran, and the last that ended in sync.
+    #[serde(default)]
+    pub last_run: i64,
+    #[serde(default)]
+    pub last_ok: i64,
+    /// The task fixing it now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixer: Option<String>,
+    /// Run a round now (the person asked; a stuck one goes on).
+    #[serde(default)]
+    pub run_now: bool,
+}
+
 /// How a service is doing.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServiceState {
@@ -832,6 +896,11 @@ impl Store {
             .await
     }
 
+    /// Top-level tasks working in the project folder now (no persistent worktree, no own one).
+    pub async fn tasks_in_folder(&self, project: &str) -> R<i64> {
+        sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting', 'paused') and project = $1 and home is null and worktree is null").bind(project).fetch_one(&self.pool).await
+    }
+
     /// Top-level tasks working in a persistent worktree now (running, waiting or paused).
     pub async fn tasks_in_home(&self, project: &str, home: &str) -> R<i64> {
         sqlx::query_scalar("select count(*) from tasks where parent is null and state in ('running', 'waiting', 'paused') and project = $1 and home = $2").bind(project).bind(home).fetch_one(&self.pool).await
@@ -1164,6 +1233,50 @@ impl Store {
     /// A trigger's last runs, newest first.
     pub async fn trigger_runs(&self, project: &str, name: &str) -> R<Vec<TriggerRun>> {
         sqlx::query_as("select id, started, ended, exit, ok, events, output, error from trigger_runs where project = $1 and name = $2 order by id desc").bind(project).bind(name).fetch_all(&self.pool).await
+    }
+
+    // --- git sync ---------------------------------------------------------
+
+    pub async fn git_syncs(&self, project: Option<&str>) -> R<Vec<GitSync>> {
+        sqlx::query_as("select * from git_sync where $1 is null or project = $1 order by project, place").bind(project).fetch_all(&self.pool).await
+    }
+
+    pub async fn git_sync(&self, project: &str, place: &str) -> R<Option<GitSync>> {
+        sqlx::query_as("select * from git_sync where project = $1 and place = $2").bind(project).bind(place).fetch_optional(&self.pool).await
+    }
+
+    /// Adds or changes a branch's sync settings (its state stays).
+    pub async fn put_git_sync(&self, v: &GitSync) -> R<()> {
+        sqlx::query(
+            "insert into git_sync (project, place, enabled, every, strategy, remote, branch, notes) values ($1, $2, $3, $4, $5, $6, $7, $8)
+             on conflict (project, place) do update set enabled = $3, every = $4, strategy = $5, remote = $6, branch = $7, notes = $8",
+        )
+        .bind(&v.project)
+        .bind(&v.place)
+        .bind(v.enabled)
+        .bind(v.every)
+        .bind(&v.strategy)
+        .bind(&v.remote)
+        .bind(&v.branch)
+        .bind(&v.notes)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// A branch's sync state; made with default settings when there are none (a repo-only one).
+    pub async fn set_git_sync_state(&self, project: &str, place: &str, state: &SyncState) -> R<()> {
+        sqlx::query("insert into git_sync (project, place, state) values ($1, $2, $3) on conflict (project, place) do update set state = $3")
+            .bind(project)
+            .bind(place)
+            .bind(Json(state))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_git_sync(&self, project: &str, place: &str) -> R<bool> {
+        Ok(sqlx::query("delete from git_sync where project = $1 and place = $2").bind(project).bind(place).execute(&self.pool).await?.rows_affected() > 0)
     }
 
     // --- services ---------------------------------------------------------

@@ -33,6 +33,10 @@ are summarised as they go.
 - **Services**: commands that should always run (dev servers, databases);
   started, checked, restarted, and repaired by a task when that keeps
   failing (`reagent-services`).
+- **Git sync**: a project's branches (its folder's, each persistent
+  worktree's) pulled (rebase by default) and pushed on an interval; a
+  conflict or uncommitted changes go to a task, then reagent pushes
+  (`reagent-worktrees`).
 - **Secrets**: tokens and keys the person (or a task) keeps; commands get
   them as environment variables, results show them as `***`
   (`reagent-secrets`).

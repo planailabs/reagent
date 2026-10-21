@@ -585,6 +585,21 @@ test("a service is added, comes up, shows its output, stops and goes", async ({ 
   await expect(page.getByText("no services")).toBeVisible();
 });
 
+test("a branch's sync settings are kept on the sync tab", async ({ page }) => {
+  await page.goto("/#/project/site/sync");
+  const card = page.getByLabel("sync of .");
+  await expect(card).toContainText("project folder");
+  await expect(card.getByLabel("sync status of .")).toHaveText("off");
+  await card.getByLabel("sync interval of .").fill("2h");
+  await card.getByLabel("sync strategy of .").selectOption("merge");
+  await card.getByRole("button", { name: "save" }).click();
+  await page.reload();
+  await expect(card.getByLabel("sync interval of .")).toHaveValue("120m");
+  await expect(card.getByLabel("sync strategy of .")).toHaveValue("merge");
+  const kept = (await (await page.request.get("/api/projects/site/sync")).json())[0].kept;
+  expect([kept.enabled, kept.every, kept.strategy]).toEqual([false, 7200, "merge"]);
+});
+
 test("a stuck foreground command is moved to the background and the task goes on", async ({ page }) => {
   const rules = await (await page.request.get("/api/projects/site/rules")).json();
   await page.request.put("/api/projects/site/rules", { data: [{ tool: "shell.exec*", command: "sleep *", action: "allow" }, ...rules] });

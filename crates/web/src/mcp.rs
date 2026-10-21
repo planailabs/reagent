@@ -247,6 +247,31 @@ pub struct TriggerRef {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
+pub struct SyncRef {
+    pub project: String,
+    /// A persistent worktree (none: the project folder).
+    pub worktree: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct SyncSet {
+    pub project: String,
+    /// A persistent worktree (none: the project folder).
+    pub worktree: Option<String>,
+    pub enabled: Option<bool>,
+    /// Between rounds, like 15m (at least a minute).
+    pub every: Option<String>,
+    /// rebase, merge or ff-only.
+    pub strategy: Option<String>,
+    /// The remote ("": the branch's upstream, else origin).
+    pub remote: Option<String>,
+    /// The remote's branch ("": the upstream's, else the same name).
+    pub branch: Option<String>,
+    /// For the task that resolves a conflict or decides about uncommitted changes.
+    pub notes: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 pub struct TemplateList {
     /// A project's id (none: the global templates).
     pub project: Option<String>,
@@ -500,6 +525,46 @@ impl ReagentTools {
         let t = reagent_tools::triggers::move_to(&self.0.store, &p, &a.name, &a.to).await?;
         self.0.emit_trigger(&p.slug, &t.name).await;
         Ok(format!("{} is {} now", t.name, if t.source == "repo" { "in the repo" } else { "kept in reagent" }))
+    }
+
+    #[tool(description = "A project's git sync, a branch each (its folder's, each persistent worktree's): on or off, interval, strategy, remote, what the checkout's .agents/sync.md overrides, and how it's doing (ok, skipped, fixing, stuck, error).")]
+    async fn sync_list(&self, Parameters(a): Parameters<Project>) -> Result<String, String> {
+        let p = self.0.project(a.project.as_deref().ok_or("which project?")?).await?;
+        j(reagent_tools::gitsync::list(&self.0.store, &p).await)
+    }
+
+    #[tool(description = "Change a branch's git sync (kept in reagent; the checkout's .agents/sync.md overrides what it sets). On, reagent pulls with the strategy and pushes every interval; a conflict, or uncommitted changes no task works on, start a task to sort them out, then reagent pushes.")]
+    async fn sync_set(&self, Parameters(a): Parameters<SyncSet>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        let place = a.worktree.unwrap_or_default();
+        let mut v = self.0.store.git_sync(&p.slug, &place).await.map_err(|e| e.to_string())?.unwrap_or_else(|| reagent_store::GitSync::new(&p.slug, &place));
+        if let Some(x) = a.enabled {
+            v.enabled = x;
+        }
+        if let Some(x) = a.every {
+            v.every = reagent_tools::triggers::parse_every(&x)?;
+        }
+        if let Some(x) = a.strategy {
+            v.strategy = x;
+        }
+        if let Some(x) = a.remote {
+            v.remote = Some(x);
+        }
+        if let Some(x) = a.branch {
+            v.branch = Some(x);
+        }
+        if let Some(x) = a.notes {
+            v.notes = x;
+        }
+        let v = reagent_tools::gitsync::put(&self.0.store, &p, v).await?;
+        Ok(format!("{}, every {}m, {}", if v.enabled { "on" } else { "off" }, v.every / 60, v.strategy))
+    }
+
+    #[tool(description = "Sync a branch now (within seconds; a stuck one goes on).")]
+    async fn sync_run(&self, Parameters(a): Parameters<SyncRef>) -> Result<String, String> {
+        let p = self.0.project(&a.project).await?;
+        reagent_tools::gitsync::run_now(&self.0.store, &p.slug, &a.worktree.unwrap_or_default()).await?;
+        Ok("syncs within seconds".into())
     }
 
     #[tool(description = "Services (of a project, or all): commands that should always run, each with its state (starting, up, stopping, backoff, waiting for approval, stopped), since when, failures and last error.")]

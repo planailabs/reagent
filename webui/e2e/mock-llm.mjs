@@ -74,6 +74,12 @@ http
     req.on("data", (c) => (data += c));
     req.on("end", () => {
       const body = JSON.parse(data || "{}");
+      // A request cut off on the way (seen under heavy load) has no body: refused, not a crash that fails every test after it.
+      if (!Array.isArray(body.messages)) {
+        console.error(`mock-llm: a request without messages (${data.length} bytes)`);
+        res.writeHead(400).end();
+        return;
+      }
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.end(reply(body));
     });

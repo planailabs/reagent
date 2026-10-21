@@ -1408,6 +1408,7 @@ impl App {
         }
         crate::cron::task_ended(self, t).await;
         crate::triggers::task_ended(self, t).await;
+        crate::gitsync::task_ended(self, t).await;
     }
 
     /// What to tell a task that ended with uncommitted changes or unmerged

@@ -14,6 +14,7 @@ pub mod cluster;
 pub mod cron;
 pub mod design;
 pub mod devshell;
+pub mod gitsync;
 pub mod hooks;
 pub mod mcp;
 pub mod notify;

@@ -89,6 +89,9 @@ pub fn routes() -> Router<S> {
         .route("/api/services/{project}/{name}/move", post(move_service))
         .route("/api/services/{project}/{name}/runs", get(service_runs))
         .route("/api/projects/{slug}/worktrees", get(worktrees).post(add_worktree))
+        .route("/api/projects/{slug}/sync", get(syncs))
+        .route("/api/projects/{slug}/sync/{place}", put(put_sync))
+        .route("/api/projects/{slug}/sync/{place}/run", post(run_sync))
         .route("/api/projects/{slug}/worktrees/{name}", get(worktree).put(set_worktree).delete(remove_worktree))
         .route("/api/projects/{slug}/worktrees/{name}/merge", post(merge_worktree))
         .route("/api/triggers/{project}/{name}", put(put_trigger).delete(remove_trigger))
@@ -539,6 +542,23 @@ struct SetWorktree {
 
 async fn set_worktree(State(s): State<S>, Path((slug, name)): Path<(String, String)>, Json(b): Json<SetWorktree>) -> R {
     Ok(Json(json!(s.w.app.worktrees().set_sharing(&slug, &name, b.sharing.as_deref().filter(|x| !x.is_empty())).await?)))
+}
+
+async fn syncs(State(s): State<S>, Path(slug): Path<String>) -> R {
+    let p = s.w.app.project(&slug).await?;
+    Ok(Json(json!(reagent_tools::gitsync::list(&s.w.app.store, &p).await)))
+}
+
+async fn put_sync(State(s): State<S>, Path((slug, place)): Path<(String, String)>, Json(mut v): Json<reagent_store::GitSync>) -> R {
+    let p = s.w.app.project(&slug).await?;
+    v.place = place;
+    Ok(Json(json!(reagent_tools::gitsync::put(&s.w.app.store, &p, v).await?)))
+}
+
+async fn run_sync(State(s): State<S>, Path((slug, place)): Path<(String, String)>) -> R {
+    s.w.app.project(&slug).await?;
+    reagent_tools::gitsync::run_now(&s.w.app.store, &slug, reagent_tools::gitsync::place_of(&place)).await?;
+    Ok(Json(json!({"run": true})))
 }
 
 #[derive(Deserialize)]

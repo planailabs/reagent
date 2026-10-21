@@ -18,7 +18,7 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 /// `git` for the commits reagent makes itself (merges, squashes, rebases):
 /// as reagent when git has no identity there (a fresh machine's user), so a
 /// merge doesn't fail on "Please tell me who you are".
-fn git_commit(dir: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_commit(dir: &Path, args: &[&str]) -> Result<String, String> {
     if git(dir, &["config", "user.email"]).is_ok_and(|e| !e.trim().is_empty()) {
         return git(dir, args);
     }

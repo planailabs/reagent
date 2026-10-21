@@ -69,6 +69,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ServiceCmd,
     },
+    /// Git sync: a project's branches pulled (with their strategy) and pushed on an interval.
+    Sync {
+        #[command(subcommand)]
+        cmd: SyncCmd,
+    },
     /// Persistent worktrees: a project's named, long-lived checkouts that tasks start in.
     Worktree {
         #[command(subcommand)]
@@ -373,6 +378,49 @@ enum ServiceCmd {
         project: String,
         #[arg(long)]
         deny: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SyncCmd {
+    /// The project's branches (its folder's, each persistent worktree's) and how their sync is doing.
+    List {
+        #[arg(long)]
+        project: String,
+    },
+    /// Change a branch's sync, kept in reagent.db (the checkout's .agents/sync.md overrides what it sets).
+    Set {
+        #[arg(long)]
+        project: String,
+        /// A persistent worktree (none: the project folder).
+        #[arg(long)]
+        worktree: Option<String>,
+        #[arg(long)]
+        on: bool,
+        #[arg(long, conflicts_with = "on")]
+        off: bool,
+        /// Between rounds, like 15m (default 15m).
+        #[arg(long)]
+        every: Option<String>,
+        /// rebase (default), merge or ff-only.
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Default: the branch's upstream, else origin ("" goes back to it).
+        #[arg(long)]
+        remote: Option<String>,
+        /// The remote's branch. Default: the upstream's, else the same name ("" goes back to it).
+        #[arg(long)]
+        branch: Option<String>,
+        /// For the task that resolves a conflict or decides about uncommitted changes.
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// A round now (the running reagent does it within seconds; a stuck one goes on).
+    Run {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        worktree: Option<String>,
     },
 }
 
@@ -894,6 +942,60 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     }
                     store.set_service_state(&project, &name, &st).await?;
                     println!("{name}: {}", if deny { "denied" } else { "allowed" });
+                }
+            }
+            Ok(())
+        }
+        Cmd::Sync { cmd } => {
+            let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
+            let project = |slug: String| {
+                let store = store.clone();
+                async move { store.project(&slug).await?.ok_or_else(|| anyhow::anyhow!("no project {slug:?}")) }
+            };
+            match cmd {
+                SyncCmd::List { project: slug } => {
+                    let p = project(slug).await?;
+                    for s in reagent_tools::gitsync::list(&store, &p).await {
+                        let v = &s.settings;
+                        let place = if v.place.is_empty() { "." } else { &v.place };
+                        let target = format!("{}/{}", v.remote.as_deref().unwrap_or("(upstream)"), v.branch.as_deref().unwrap_or("(same)"));
+                        let repo = if s.from_repo.is_empty() { String::new() } else { format!(", repo sets {}", s.from_repo.join(" ")) };
+                        let st = &v.state.0;
+                        println!("{place}	{}	{}	every {}m, {}, {target}{repo}	{} {}", s.local_branch.as_deref().unwrap_or("(detached)"), if v.enabled { "on" } else { "off" }, v.every / 60, v.strategy, st.status, st.message.as_deref().unwrap_or(""));
+                        if let Some(e) = &s.repo_error {
+                            println!("\t{}: {e} (ignored)", s.repo_file.as_ref().map(|f| f.display().to_string()).unwrap_or_default());
+                        }
+                    }
+                }
+                SyncCmd::Set { project: slug, worktree, on, off, every, strategy, remote, branch, notes } => {
+                    let p = project(slug).await?;
+                    let place = worktree.unwrap_or_default();
+                    let mut v = store.git_sync(&p.slug, &place).await?.unwrap_or_else(|| reagent_store::GitSync::new(&p.slug, &place));
+                    if on || off {
+                        v.enabled = on;
+                    }
+                    if let Some(e) = every {
+                        v.every = reagent_tools::triggers::parse_every(&e).map_err(anyhow::Error::msg)?;
+                    }
+                    if let Some(x) = strategy {
+                        v.strategy = x;
+                    }
+                    if let Some(x) = remote {
+                        v.remote = Some(x);
+                    }
+                    if let Some(x) = branch {
+                        v.branch = Some(x);
+                    }
+                    if let Some(x) = notes {
+                        v.notes = x;
+                    }
+                    let v = reagent_tools::gitsync::put(&store, &p, v).await.map_err(anyhow::Error::msg)?;
+                    println!("{}: {}, every {}m, {}", if place.is_empty() { "the project folder" } else { &place }, if v.enabled { "on" } else { "off" }, v.every / 60, v.strategy);
+                }
+                SyncCmd::Run { project: slug, worktree } => {
+                    let p = project(slug).await?;
+                    reagent_tools::gitsync::run_now(&store, &p.slug, &worktree.unwrap_or_default()).await.map_err(anyhow::Error::msg)?;
+                    println!("a running reagent syncs it within seconds");
                 }
             }
             Ok(())

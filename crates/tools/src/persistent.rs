@@ -249,6 +249,7 @@ impl Worktrees<'_> {
             format!("removed {name}: {} and its branch {}", w.path, w.branch)
         };
         self.store.remove_persistent_worktree(project, name).await.map_err(|e| e.to_string())?;
+        self.store.remove_git_sync(project, name).await.map_err(|e| e.to_string())?;
         tracing::info!(project, worktree = name, "persistent worktree removed");
         Ok(gone)
     }

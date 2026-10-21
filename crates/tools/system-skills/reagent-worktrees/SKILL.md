@@ -1,6 +1,6 @@
 ---
 name: reagent-worktrees
-description: Working on a branch of one's own with git worktrees in reagent - start, diff, merge (approval, strategies, conflicts), drop; persistent worktrees (a task's home) and how merges come back to them.
+description: Working on a branch of one's own with git worktrees in reagent - start, diff, merge (approval, strategies, conflicts), drop; persistent worktrees (a task's home) and how merges come back to them; git sync (branches pulled and pushed on an interval, conflicts resolved by a task).
 ---
 
 # Worktrees
@@ -45,3 +45,24 @@ one when starting a task. Your first message says so ("Persistent worktree:
 - Merging the persistent worktree into its base is the person's call.
 - A worktree may be exclusive: then one task at a time works there, and
   others wait (queued) until it's done.
+
+## Git sync
+
+A branch can be kept in sync with its remote: the project folder's, and each
+persistent worktree's, each with its own settings (the project's **sync**
+tab, `reagent sync set --project <id> [--worktree <name>] --on`, the MCP API's
+`sync_set`). Every interval (15 min by default) reagent fetches, takes the
+remote's new commits with the strategy (`rebase` by default, `merge`,
+`ff-only`) and pushes what the remote hasn't. Rounds wait while a task works
+in that checkout. The checkout's `.agents/sync.md` overrides any setting
+(frontmatter `enabled`, `every`, `strategy`, `remote`, `branch`; the body is
+notes for the task below), so a branch can carry its own.
+
+When a rebase or merge stops on conflicts, or the checkout has uncommitted
+changes no task works on, reagent starts a task (origin `git-sync:…`) in that
+checkout. If that's you: resolve the conflicts keeping what both sides meant
+and finish the rebase (`GIT_EDITOR=true git rebase --continue`) or merge
+(`git commit --no-edit`), or decide about the changes (commit what belongs,
+remove junk, stash what you can't tell); leave the checkout clean and don't
+push. When you end, reagent checks and pushes; if it's still unresolved the
+sync is stuck until the person says go on.
