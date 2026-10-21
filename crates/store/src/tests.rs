@@ -308,3 +308,25 @@ async fn services_keep_their_definition_state_and_last_starts() {
     assert!(s.remove_service("site", "web").await.unwrap());
     assert!(s.services(Some("site")).await.unwrap().is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_transactions_on_several_connections_dont_fail() {
+    let (s, _d) = store().await;
+    s.put_project(&Project::new("site", "Site", "/src/site")).await.unwrap();
+    let t = s
+        .add_task(&NewTask { project: "site".into(), title: "Fix".into(), prompt: "fix it".into(), origin: "ui".into(), cwd: "/src/site".into(), profile: "default".into(), ..Default::default() })
+        .await
+        .unwrap();
+    // add_todos reads, then writes: deferred, two of these at once fail with SQLITE_BUSY.
+    let runs: Vec<_> = (0..32)
+        .map(|i| {
+            let (s, id) = (s.clone(), t.id.clone());
+            tokio::spawn(async move { s.add_todos(&id, &[format!("item {i}")]).await })
+        })
+        .collect();
+    for r in runs {
+        r.await.unwrap().unwrap();
+    }
+    let ids: Vec<i64> = s.todos(&t.id).await.unwrap().iter().map(|t| t.id).collect();
+    assert_eq!(ids, (1..=32).collect::<Vec<_>>());
+}

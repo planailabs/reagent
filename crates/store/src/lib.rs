@@ -649,6 +649,10 @@ fn load_key(path: &Path) -> anyhow::Result<[u8; 32]> {
 
 type R<T> = Result<T, sqlx::Error>;
 
+/// Takes the write lock up front: a deferred transaction that reads, then writes, fails with
+/// SQLITE_BUSY at once when another connection wrote meanwhile (busy_timeout can't help it).
+const IMMEDIATE: &str = "BEGIN IMMEDIATE";
+
 impl Store {
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
         let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
@@ -656,8 +660,9 @@ impl Store {
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .foreign_keys(true)
             .busy_timeout(std::time::Duration::from_secs(30));
-        // ponytail: one connection, every query serialised; plenty for one user.
-        let pool = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await?;
+        // WAL: readers run alongside the one writer; writers wait on busy_timeout. One connection
+        // queued every query behind the slowest and timed out under load.
+        let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         let key = load_key(&path.with_file_name("secret.key"))?;
         Ok(Store { pool, key })
@@ -719,7 +724,7 @@ impl Store {
 
     /// Replaces a project's rules with these, in this order.
     pub async fn set_rules(&self, project: &str, rules: &[Rule]) -> R<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with(IMMEDIATE).await?;
         sqlx::query("delete from rules where project = $1").bind(project).execute(&mut *tx).await?;
         for (i, r) in rules.iter().enumerate() {
             sqlx::query("insert into rules (project, pos, tool, command, target, action) values ($1, $2, $3, $4, $5, $6)")
@@ -899,7 +904,7 @@ impl Store {
     }
 
     pub async fn set_report(&self, id: &str, report: &str) -> R<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with(IMMEDIATE).await?;
         sqlx::query("update tasks set report = $2, updated = unixepoch() where id = $1").bind(id).bind(report).execute(&mut *tx).await?;
         sqlx::query("insert into reports (task, content) values ($1, $2)").bind(id).bind(report).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -1377,7 +1382,7 @@ impl Store {
     pub async fn set_secret(&self, project: Option<&str>, name: &str, value: &str) -> Result<(), String> {
         check_secret_name(name)?;
         let (nonce, enc) = self.seal(value)?;
-        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = self.pool.begin_with(IMMEDIATE).await.map_err(|e| e.to_string())?;
         sqlx::query("delete from secrets where coalesce(project, '') = coalesce($1, '') and name = $2").bind(project).bind(name).execute(&mut *tx).await.map_err(|e| e.to_string())?;
         sqlx::query("insert into secrets (project, name, nonce, value) values ($1, $2, $3, $4)")
             .bind(project)
@@ -1444,7 +1449,7 @@ impl Store {
 
     /// Adds items at the end; their ids.
     pub async fn add_todos(&self, task: &str, items: &[String]) -> R<Vec<i64>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with(IMMEDIATE).await?;
         let mut next: i64 = sqlx::query_scalar("select coalesce(max(id), 0) + 1 from todos where task = $1").bind(task).fetch_one(&mut *tx).await?;
         let mut ids = vec![];
         for t in items {

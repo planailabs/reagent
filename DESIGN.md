@@ -59,6 +59,8 @@ worktrees/<project>/<branch>/  worktrees (when kept centrally)
 paused-at-stop.json  tasks the last stop paused
 ```
 
+`reagent.db` is SQLite in WAL mode, opened as a pool of 8 connections (readers alongside one writer; writers wait up to 30 s for the lock); transactions take the write lock at their start (`BEGIN IMMEDIATE`).
+
 ## What subnet got for reagent
 
 - **A SQLite store** next to Postgres, chosen by the database URL; migrations for both, kept equal (tested); leader election by a lock file next to the database. The whole subnet suite runs on either (`SUBNET_TEST_DB=sqlite`).
