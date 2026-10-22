@@ -117,6 +117,9 @@ pub struct App {
     /// Held (read) from spawning a task's agent until its id is stored: its first hook calls
     /// can come before that, and a lookup that misses waits for it (write).
     pub spawning: tokio::sync::RwLock<()>,
+    /// Held while a question or a merge is looked up and stored, by the call that waits and the
+    /// person's answer: one given while the call runs again (a restart) isn't overwritten.
+    waits: tokio::sync::Mutex<()>,
     /// The files each task's file tools touched (for rules with globs).
     pub touched: Mutex<HashMap<String, Vec<String>>>,
     /// One plugin change at a time (git in their folders).
@@ -178,6 +181,7 @@ impl App {
             fg_waiting: Default::default(),
             shown: Default::default(),
             spawning: Default::default(),
+            waits: Default::default(),
             touched: Default::default(),
             plugin_lock: Default::default(),
             notified: Default::default(),
@@ -1215,6 +1219,7 @@ impl App {
     /// so is an answer given while nothing waits (reagent was restarting):
     /// `ask` runs again after a restart (it's idempotent) and finds it.
     pub async fn ask(&self, id: &str, question: &str, options: &[String]) -> Result<String, String> {
+        let held = self.waits.lock().await;
         let stored = self.stored_wait(id, "question").await.filter(|w| w["question"] == question);
         if let Some(a) = stored.as_ref().and_then(|w| w["answer"].as_str()) {
             let a = a.to_string();
@@ -1225,6 +1230,7 @@ impl App {
         self.questions.lock().unwrap().insert(id.into(), tx);
         let wait = json!({"kind": "question", "question": question, "options": options});
         self.store.set_state(id, "waiting", Some(&wait)).await.map_err(|e| e.to_string())?;
+        drop(held);
         self.task_changed(id).await;
         // Asked again after a restart: the person already heard it.
         if stored.is_none() {
@@ -1241,6 +1247,7 @@ impl App {
     /// The person's answer: to the waiting question; when nothing waits
     /// (a restart in between), kept for it; with no question, a message.
     pub async fn answer(&self, id: &str, text: &str) -> Result<(), String> {
+        let _held = self.waits.lock().await;
         let waiter = self.questions.lock().unwrap().remove(id);
         if let Some(tx) = waiter
             && tx.send(text.to_string()).is_ok()
@@ -1259,6 +1266,7 @@ impl App {
     /// A worktree merge waits for the person (`merge = "approve"`); stored
     /// like a question, and found again when the call runs again.
     pub async fn wait_merge(&self, id: &str, summary: Value) -> Result<MergeAnswer, String> {
+        let held = self.waits.lock().await;
         let stored = self.stored_wait(id, "merge").await.filter(|w| w["branch"] == summary["branch"]);
         if let Some(d) = stored.as_ref().map(|w| w["decision"].clone()).filter(|d| !d.is_null()) {
             self.done_waiting(id).await;
@@ -1272,6 +1280,7 @@ impl App {
         let mut wait = summary;
         wait["kind"] = json!("merge");
         self.store.set_state(id, "waiting", Some(&wait)).await.map_err(|e| e.to_string())?;
+        drop(held);
         self.task_changed(id).await;
         if stored.is_none() {
             let t = self.task(id).await?;
@@ -1285,6 +1294,7 @@ impl App {
 
     /// The person decides a merge: to the waiting call; kept when nothing waits.
     pub async fn decide_merge(&self, id: &str, a: MergeAnswer) -> Result<(), String> {
+        let _held = self.waits.lock().await;
         let waiter = self.merges.lock().unwrap().remove(id);
         let stored = match waiter {
             Some(tx) => match tx.send(a) {
