@@ -650,3 +650,19 @@ test("logging out locks the API", async ({ page }) => {
   await expect(page.getByLabel("password")).toBeVisible();
   expect((await page.request.get("/api/projects")).status()).toBe(401);
 });
+
+test("a project folder's sync is shown, switched on and kept", async ({ page }) => {
+  await page.goto("/#/project/site/sync");
+  const card = page.getByLabel("sync of .");
+  await expect(card).toContainText("project folder");
+  await expect(page.getByLabel("sync status of .")).toHaveText("off");
+  await page.getByLabel("sync . on").check();
+  await page.getByLabel("sync interval of .").fill("1h");
+  await card.getByRole("button", { name: "save" }).click();
+  await expect(page.getByLabel("sync status of .")).not.toHaveText("off");
+  await page.reload();
+  await expect(page.getByLabel("sync interval of .")).toHaveValue("60m");
+  await page.getByLabel("sync . on").uncheck();
+  await card.getByRole("button", { name: "save" }).click();
+  await expect(page.getByLabel("sync status of .")).toHaveText("off");
+});

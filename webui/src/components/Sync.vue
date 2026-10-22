@@ -59,14 +59,14 @@ watch(() => [props.slug, live.tick], load);
       <div class="row">
         <span class="hi">{{ s.place ? `worktree ${s.place}` : "project folder" }}</span>
         <span class="dim">{{ s.local_branch ?? "(detached)" }}</span>
-        <span :class="['badge', s.settings.enabled ? s.settings.state.status || 'new' : 'stopped']" :aria-label="`sync status of ${key(s)}`">{{ s.settings.enabled ? s.settings.state.status || "new" : "off" }}</span>
+        <span :class="['badge', s.enabled ? s.state.status || 'new' : 'stopped']" :aria-label="`sync status of ${key(s)}`">{{ s.enabled ? s.state.status || "new" : "off" }}</span>
         <span class="grow"></span>
-        <button @click="run(s)">{{ s.settings.state.status === "stuck" ? "go on" : "sync now" }}</button>
+        <button @click="run(s)">{{ s.state.status === "stuck" ? "go on" : "sync now" }}</button>
       </div>
-      <div v-if="s.settings.state.message" :class="{ err: ['error', 'stuck'].includes(s.settings.state.status) }">{{ s.settings.state.message }}</div>
+      <div v-if="s.state.message" :class="{ err: ['error', 'stuck'].includes(s.state.status) }">{{ s.state.message }}</div>
       <div class="dim">
-        last round {{ when(s.settings.state.last_run) }} · last in sync {{ when(s.settings.state.last_ok) }}
-        <span v-if="s.settings.state.fixer"> · <a :href="`#/task/${s.settings.state.fixer}`">its task</a></span>
+        last round {{ when(s.state.last_run) }} · last in sync {{ when(s.state.last_ok) }}
+        <span v-if="s.state.fixer"> · <a :href="`#/task/${s.state.fixer}`">its task</a></span>
       </div>
       <div v-if="s.repo_file" :class="s.repo_error ? 'err' : 'dim'">
         {{ s.repo_file }}: {{ s.repo_error ? `${s.repo_error} (ignored)` : s.from_repo.length ? `sets ${s.from_repo.join(", ")}` : "sets nothing" }}
