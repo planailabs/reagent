@@ -1594,7 +1594,8 @@ impl App {
             if !a["awaiting_approval"].is_null() {
                 let call = a["awaiting_approval"].get("call").cloned().unwrap_or(a["awaiting_approval"].clone());
                 let call_id = call["id"].as_str().unwrap_or_default().to_string();
-                state = "waiting".into();
+                // Paused while it waits: it stays paused (its messages held) with the call still shown.
+                state = if a["paused"] == true { "paused" } else { "waiting" }.into();
                 wait = Some(json!({"kind": "approval", "call": call}));
                 let key = (t.id.clone(), format!("approval:{call_id}"));
                 if self.notified.lock().unwrap().insert(key) {
