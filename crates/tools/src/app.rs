@@ -400,12 +400,16 @@ impl App {
 
     /// The task an agent is (from a tool call's `_meta` or a hook's question).
     pub async fn task_of_agent(&self, agent: &str) -> Result<Task, String> {
-        if let Some(t) = self.store.task_by_agent(agent).await.map_err(|e| e.to_string())? {
-            return Ok(t);
+        self.find_task_of_agent(agent).await.map_err(|e| e.to_string())?.ok_or_else(|| format!("agent {agent} isn't a reagent task"))
+    }
+
+    async fn find_task_of_agent(&self, agent: &str) -> Result<Option<Task>, sqlx::Error> {
+        if let Some(t) = self.store.task_by_agent(agent).await? {
+            return Ok(Some(t));
         }
         // Maybe one just spawned whose id isn't stored yet.
         drop(self.spawning.write().await);
-        self.store.task_by_agent(agent).await.map_err(|e| e.to_string())?.ok_or_else(|| format!("agent {agent} isn't a reagent task"))
+        self.store.task_by_agent(agent).await
     }
 
     // --- the designer ---------------------------------------------------
@@ -1363,7 +1367,9 @@ impl App {
         let mails = self.hub()?.wait_inbox(&root(), Some(25_000)).await.map_err(|e| e.to_string())?;
         for m in mails {
             let Addr::Agent(agent) = &m.from else { continue };
-            let Ok(t) = self.task_of_agent(&agent.to_string()).await else { continue };
+            // The mail is taken: a busy database mustn't lose the report (the task would stay running).
+            let agent = agent.to_string();
+            let Some(t) = persist("finding a report's task", || self.find_task_of_agent(&agent)).await else { continue };
             self.reported(&t, &m.content, m.status).await;
         }
         Ok(())
@@ -1384,7 +1390,7 @@ impl App {
             return;
         }
         self.record_usage(t).await;
-        let _ = self.store.set_report(&t.id, content).await;
+        persist("keeping a report", || self.store.set_report(&t.id, content)).await;
         // Work left in its worktree: it's asked to commit and merge before it's done.
         if kind == "done"
             && let Some(nudge) = self.worktree_nudge(t)
@@ -1396,7 +1402,7 @@ impl App {
         if kind != "cancelled" {
             self.notify(kind, Some(t), &format!("{} — {state}", t.name()), &content.chars().take(400).collect::<String>()).await;
         }
-        let _ = self.store.set_state(&t.id, state, None).await;
+        persist("ending a task", || self.store.set_state(&t.id, state, None)).await;
         self.task_changed(&t.id).await;
         tracing::info!(task = %t.id, state, "task reported");
         // Its parent hears it even after ending its turn ("waiting for it"): the message wakes it; not a cancelled one.
@@ -1760,5 +1766,19 @@ impl App {
                 }
             }
         });
+    }
+}
+
+/// A store call tried until the database takes it: for what exists nowhere
+/// else (a report taken from the hub's inbox).
+async fn persist<T, F: std::future::Future<Output = Result<T, sqlx::Error>>>(what: &str, f: impl Fn() -> F) -> T {
+    loop {
+        match f().await {
+            Ok(v) => return v,
+            Err(e) => {
+                tracing::warn!(error = %e, "{what}: trying again");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
     }
 }
