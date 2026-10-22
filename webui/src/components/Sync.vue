@@ -10,6 +10,8 @@ const forms = ref({});
 const error = ref("");
 
 const key = (s) => s.place || ".";
+// In a URL the folder is "-": a browser drops a "." path segment.
+const path = (s) => encodeURIComponent(s.place || "-");
 const formOf = (k) => ({ enabled: k.enabled, every: `${Math.round(k.every / 60)}m`, strategy: k.strategy, remote: k.remote ?? "", branch: k.branch ?? "", notes: k.notes });
 
 async function load() {
@@ -28,7 +30,7 @@ async function save(s) {
   error.value = "";
   try {
     const f = forms.value[key(s)];
-    await put(`/api/projects/${props.slug}/sync/${encodeURIComponent(key(s))}`, { enabled: f.enabled, every: seconds(f.every), strategy: f.strategy, remote: f.remote || null, branch: f.branch || null, notes: f.notes });
+    await put(`/api/projects/${props.slug}/sync/${path(s)}`, { enabled: f.enabled, every: seconds(f.every), strategy: f.strategy, remote: f.remote || null, branch: f.branch || null, notes: f.notes });
     delete forms.value[key(s)];
     await load();
   } catch (e) {
@@ -38,7 +40,7 @@ async function save(s) {
 
 async function run(s) {
   error.value = "";
-  await post(`/api/projects/${props.slug}/sync/${encodeURIComponent(key(s))}/run`, {}).catch((e) => (error.value = e.message));
+  await post(`/api/projects/${props.slug}/sync/${path(s)}/run`, {}).catch((e) => (error.value = e.message));
   await load();
 }
 

@@ -392,9 +392,9 @@ pub fn schedule(app: Arc<App>) {
     });
 }
 
-/// A place as the API and the CLI name it: "." is the project folder.
+/// A place as the API and the CLI name it: "." (in a URL "-", as browsers drop a "." segment) is the project folder.
 pub fn place_of(s: &str) -> &str {
-    if s == "." { "" } else { s }
+    if s == "." || s == "-" { "" } else { s }
 }
 
 /// Changes a place's kept settings (its state stays).

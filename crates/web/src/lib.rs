@@ -74,6 +74,10 @@ struct Ui;
 /// A file of the UI; anything else is the app (it routes by the hash).
 async fn ui(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    // A call the API doesn't have isn't the page (a 200 with HTML hides it from the caller).
+    if path == "api" || path.starts_with("api/") {
+        return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"error": format!("no API {}", uri.path())}))).into_response();
+    }
     let (file, name) = match Ui::get(path).filter(|_| !path.is_empty()) {
         Some(f) => (f, path),
         None => match Ui::get("index.html") {
