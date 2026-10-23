@@ -432,7 +432,10 @@ test("over the limit a task is queued, and started now by hand", async ({ page }
   await expect(page.locator(".reports")).toContainText("Done: Queued one");
   await page.goto("/#/settings");
   await page.getByLabel("tasks at once").fill("");
+  // Kept before the next test (its page load would cut the call off, leaving the limit at 1).
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"));
   await page.getByRole("button", { name: "save" }).first().click();
+  expect((await saved).ok()).toBe(true);
   await expect(page.getByLabel("tasks at once")).toHaveValue("");
 });
 
