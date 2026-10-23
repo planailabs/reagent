@@ -28,6 +28,9 @@ h2 { font-size: 13px; font-weight: 600; color: var(--hi); text-transform: lowerc
 pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
 table { border-collapse: collapse; width: 100%; }
 td, th { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+/* A marketplace's plugins, nested under it. */
+.tree, .tree ul { list-style: none; margin: 0; padding-left: 1.2em; }
+.tree li { border-left: 1px solid var(--line); padding-left: 8px; }
 
 header a { text-decoration: none; padding: 2px 8px; color: var(--dim); }
 header a.on, header a:hover, .tabs a.on { color: var(--hi); border-bottom: 1px solid var(--hi); }

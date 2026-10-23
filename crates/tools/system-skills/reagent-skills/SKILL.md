@@ -73,6 +73,11 @@ person adds, updates and removes plugins on the settings page or with `reagent
 plugin add <url> [--id] [--ref] | list | update [ids…] | rules-off <id> [rules…] |
 remove <id>`; outside agents with the MCP API's `plugin_*` tools. A plugin's
 rules that don't fit can be switched off one by one (kept across updates).
+A plugin may be a marketplace (Claude Code's `.claude-plugin/marketplace.json`
+or the generic `.agents/plugins/marketplace.json`, like trailofbits/skills):
+its plugins in local folders are its parts, their skills' source
+`plugin:<id>/<part>`; one from elsewhere is listed with why it isn't used (add
+it as its own plugin).
 
 ## Prompt templates
 

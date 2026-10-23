@@ -636,7 +636,7 @@ impl ReagentTools {
         j(self.0.plugins())
     }
 
-    #[tool(description = "Add a plugin: clone a git repository whose skills (skills/, skill/, .agents/skills/) and rules (rules/, .agents/rules/) every task then gets.")]
+    #[tool(description = "Add a plugin: clone a git repository whose skills (skills/, skill/, .agents/skills/) and rules (rules/, .agents/rules/) every task then gets; a marketplace (.claude-plugin/marketplace.json, .agents/plugins/marketplace.json) brings its local plugins' too.")]
     async fn plugin_add(&self, Parameters(a): Parameters<PluginAdd>) -> Result<String, String> {
         j(self.0.plugin_add(&a.url, a.id.as_deref(), a.reference.as_deref()).await?)
     }

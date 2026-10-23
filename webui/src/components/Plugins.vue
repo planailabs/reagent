@@ -45,7 +45,8 @@ onMounted(load);
   <div v-if="list">
     <table v-if="list.length">
       <tr><th>plugin</th><th>from</th><th>at</th><th>skills</th><th>rules</th><th></th></tr>
-      <tr v-for="p in list" :key="p.id" :aria-label="`plugin ${p.id}`">
+      <template v-for="p in list" :key="p.id">
+      <tr :aria-label="`plugin ${p.id}`">
         <td class="hi">{{ p.id }}</td>
         <td class="dim">{{ p.url }}<span v-if="p.ref"> @ {{ p.ref }}</span></td>
         <td :title="p.subject">{{ p.commit }} <span class="dim">{{ ago(p.date) }} ago</span></td>
@@ -67,6 +68,26 @@ onMounted(load);
           <span v-else-if="said[p.id]" :class="said[p.id].startsWith('failed') ? 'err' : 'dim'">{{ said[p.id] }}</span>
         </td>
       </tr>
+      <tr v-if="p.plugins.length" :aria-label="`marketplace ${p.id}`">
+        <td colspan="6">
+          <details>
+            <summary>{{ p.plugins.length }} plugins<span v-if="p.marketplace" class="dim"> in the marketplace {{ p.marketplace }}</span></summary>
+            <ul class="tree">
+              <li v-for="x in p.plugins" :key="x.name" :aria-label="`plugin ${p.id}/${x.name}`">
+                <span class="hi">{{ x.name }}</span> <span v-if="x.version" class="dim">{{ x.version }}</span>
+                <span v-if="!x.error" class="dim"> {{ x.path }}</span>
+                <div v-if="x.description" class="dim">{{ x.description }}</div>
+                <div v-if="x.error" class="err">{{ x.error }}</div>
+                <ul v-if="!x.error">
+                  <li>skills: {{ x.skills.join(", ") || "—" }}</li>
+                  <li v-if="x.rules.length">rules: {{ x.rules.join(", ") }}</li>
+                </ul>
+              </li>
+            </ul>
+          </details>
+        </td>
+      </tr>
+      </template>
     </table>
     <p v-else class="dim">no plugins yet</p>
     <form class="row" @submit.prevent="add">

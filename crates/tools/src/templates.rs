@@ -155,8 +155,10 @@ pub fn global_places(data: &Path) -> Vec<(PathBuf, String)> {
     }
     out.push((data.join("templates"), "global".into()));
     for (id, d) in crate::plugins::dirs(data) {
-        for sub in ["templates", ".agents/templates"] {
-            out.push((d.join(sub), format!("plugin:{id}")));
+        for (part, d) in crate::plugins::parts(&d) {
+            for sub in ["templates", ".agents/templates"] {
+                out.push((d.join(sub), crate::plugins::source(&id, part.as_deref())));
+            }
         }
     }
     out

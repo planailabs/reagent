@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 
 const project = new URL("../../target/tmp/e2e/project", import.meta.url).pathname;
 const pluginSrc = new URL("../../target/tmp/e2e/plugin-src", import.meta.url).pathname;
+const mktSrc = new URL("../../target/tmp/e2e/mkt-src", import.meta.url).pathname;
 
 async function login(page) {
   await page.goto("/");
@@ -534,6 +535,24 @@ test("a plugin is added from git, its skills reach projects, it updates and goes
   page.once("dialog", (d) => d.accept());
   await page.getByLabel("plugin plugin-src").getByRole("button", { name: "remove" }).click();
   await expect(page.getByLabel("plugin plugin-src")).toHaveCount(0);
+});
+
+test("a marketplace's plugins show as a tree under it and their skills reach projects", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("plugin URL").fill(`file://${mktSrc}`);
+  await page.getByRole("button", { name: "add the plugin" }).click();
+  const tree = page.getByLabel("marketplace mkt-src");
+  await tree.getByText("2 plugins").click();
+  await expect(tree).toContainText("in the marketplace sec");
+  await expect(page.getByLabel("plugin mkt-src/scan", { exact: true })).toContainText("semgrep");
+  await expect(page.getByLabel("plugin mkt-src/scan", { exact: true })).toContainText("finds bugs");
+  await expect(page.getByLabel("plugin mkt-src/far", { exact: true })).toContainText("add https://github.com/o/far as its own plugin");
+  await page.goto("/#/project/site/skills");
+  await expect(page.locator("body")).toContainText("plugin:mkt-src/scan");
+  await page.goto("/#/settings");
+  page.once("dialog", (d) => d.accept());
+  await page.getByLabel("plugin mkt-src", { exact: true }).getByRole("button", { name: "remove" }).click();
+  await expect(page.getByLabel("marketplace mkt-src")).toHaveCount(0);
 });
 
 test("a persistent worktree is made, a task starts in it, it merges into main and goes", async ({ page }) => {

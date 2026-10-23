@@ -482,15 +482,16 @@ impl App {
     }
 
     /// The skills a task sees: the system's, the worktree's and project's,
-    /// the global places', then the plugins' (source `plugin:<id>`).
+    /// the global places', then the plugins' (source `plugin:<id>`, or
+    /// `plugin:<id>/<part>` for a marketplace's plugin).
     pub fn skills_for(&self, cwd: &Path, p: &Project) -> Vec<Skill> {
         let plugins = crate::plugins::dirs(&self.paths.data);
         let mut global = self.paths.skills.clone();
         global.extend(plugins.iter().flat_map(|(_, d)| crate::plugins::skill_places(d)));
         let mut out = skills::discover(cwd, Path::new(&p.path), &global, Some(&self.paths.system_skills));
         for s in &mut out {
-            if let Some((id, _)) = plugins.iter().find(|(_, d)| s.dir.starts_with(d)) {
-                s.source = format!("plugin:{id}");
+            if let Some((id, d)) = plugins.iter().find(|(_, d)| s.dir.starts_with(d)) {
+                s.source = crate::plugins::source(id, crate::plugins::part_of(&crate::plugins::parts(d), &s.dir).as_deref());
             }
         }
         out

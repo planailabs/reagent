@@ -1043,14 +1043,26 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
         }
         Cmd::Plugin { cmd } => {
             use reagent_tools::plugins;
+            // A marketplace's plugins, as a tree under it.
+            fn print_parts(p: &plugins::Plugin) {
+                for (i, x) in p.plugins.iter().enumerate() {
+                    let branch = if i + 1 == p.plugins.len() { "└─" } else { "├─" };
+                    match &x.error {
+                        Some(e) => println!("  {branch} {}\t{e}", x.name),
+                        None => println!("  {branch} {}\t{}\tskills: {}\trules: {}", x.name, x.path.as_deref().unwrap_or_default(), x.skills.join(","), x.rules.join(",")),
+                    }
+                }
+            }
             match cmd {
                 PluginCmd::Add { url, id, reference } => {
                     let p = plugins::add(&data, &url, id.as_deref(), reference.as_deref()).map_err(anyhow::Error::msg)?;
                     println!("added {} at {} ({}): skills {}; rules {}", p.id, p.commit, p.subject, p.skills.join(", "), p.rules.join(", "));
+                    print_parts(&p);
                 }
                 PluginCmd::List => {
                     for p in plugins::list(&data) {
-                        println!("{}\t{}{}\t{} {}\tskills: {}\trules: {}\toff: {}", p.id, p.url, p.reference.map(|r| format!("@{r}")).unwrap_or_default(), p.commit, p.subject, p.skills.join(","), p.rules.join(","), p.rules_off.join(","));
+                        println!("{}\t{}{}\t{} {}\tskills: {}\trules: {}\toff: {}", p.id, p.url, p.reference.as_ref().map(|r| format!("@{r}")).unwrap_or_default(), p.commit, p.subject, p.skills.join(","), p.rules.join(","), p.rules_off.join(","));
+                        print_parts(&p);
                     }
                 }
                 PluginCmd::Update { ids } => {

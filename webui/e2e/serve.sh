@@ -38,6 +38,13 @@ echo "Be brief." > "$tmp/plugin-src/.agents/rules/tone.md"
 git -C "$tmp/plugin-src" init -q -b main
 git -C "$tmp/plugin-src" add -A
 git -C "$tmp/plugin-src" -c user.email=t@t -c user.name=t commit -q -m "first"
+# A marketplace to add (Claude Code's, like trailofbits/skills): a local plugin and a remote one.
+mkdir -p "$tmp/mkt-src/.claude-plugin" "$tmp/mkt-src/plugins/scan/skills/semgrep"
+echo '{"name": "sec", "plugins": [{"name": "scan", "description": "finds bugs", "source": "./plugins/scan"}, {"name": "far", "source": {"source": "github", "repo": "o/far"}}]}' > "$tmp/mkt-src/.claude-plugin/marketplace.json"
+printf -- '---\nname: semgrep\ndescription: run semgrep\n---\nScan.\n' > "$tmp/mkt-src/plugins/scan/skills/semgrep/SKILL.md"
+git -C "$tmp/mkt-src" init -q -b main
+git -C "$tmp/mkt-src" add -A
+git -C "$tmp/mkt-src" -c user.email=t@t -c user.name=t commit -q -m "first"
 # Prompt templates in the project's repo: a form and a plain one.
 mkdir -p "$tmp/project/.agents/templates"
 cat > "$tmp/project/.agents/templates/ci.md" <<'MD'
