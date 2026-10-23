@@ -106,6 +106,7 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     tracing::info!("cluster applied");
     app.recount_usage().await;
     resume_paused(&app, &hub).await;
+    app.requeue_unstarted().await;
     app.follow();
     app.watch_mcp();
     reagent_tools::cron::schedule(app.clone());

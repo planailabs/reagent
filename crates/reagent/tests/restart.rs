@@ -46,6 +46,51 @@ async fn a_task_paused_at_stop_goes_on_after_the_next_start() {
     assert_eq!(done.expect("it went on").report.as_deref(), Some("after the restart"));
 }
 
+#[tokio::test]
+async fn a_task_that_never_got_an_agent_starts_after_a_restart() {
+    let r = start().await;
+    r.allow_all().await;
+    r.push("Orphan", |_| text("done now"));
+    // A task born running (the default) but whose agent reagent never set:
+    // it stopped between creating the task and spawning its agent. `sync`
+    // skips it (no agent) and `start_queued` ignores it (not queued).
+    let p = r.run.app.project("site").await.unwrap();
+    let t = r
+        .run
+        .app
+        .store
+        .add_task(&reagent_store::NewTask {
+            project: "site".into(),
+            parent: None,
+            title: "Orphan".into(),
+            prompt: "do the thing".into(),
+            origin: "cron:5".into(),
+            cwd: p.path.clone(),
+            profile: "default".into(),
+            budget: Default::default(),
+            skills: vec![],
+            kind: None,
+            home: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!((t.state.as_str(), t.agent.is_none()), ("running", true), "stuck: running with no agent");
+
+    // The next start recovers it: requeued, then started.
+    reagent::stop(&r.run).await;
+    let again = again(&r).await;
+    let mut done = None;
+    for _ in 0..200 {
+        let t = again.app.task(&t.id).await.unwrap();
+        if t.state == "done" {
+            done = Some(t);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(done.expect("the orphan ran").report.as_deref(), Some("done now"));
+}
+
 async fn again(r: &R) -> reagent::Running {
     reagent::up(reagent::Opts { data: r.data.path().into(), listen: None, in_process_supervisor: true, exe: Default::default() }).await.unwrap()
 }

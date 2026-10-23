@@ -701,6 +701,22 @@ impl App {
         true
     }
 
+    /// Tasks in a live state that never got an agent are set back to queued
+    /// so they start. A task is born `running` (the default state) and gets
+    /// its agent in `spawn`; if reagent stops in between, it is left running
+    /// with no agent, which `sync` skips and `start_queued` ignores — stuck.
+    /// Run once at boot, before the followers.
+    pub async fn requeue_unstarted(&self) {
+        for t in self.store.tasks(None, None, true, 10_000).await.unwrap_or_default() {
+            if t.agent.is_none() && t.state != "queued" {
+                match self.store.set_state(&t.id, "queued", None).await {
+                    Ok(_) => tracing::info!(task = %t.id, title = %t.name(), state = %t.state, "an unstarted task requeued (it had no agent)"),
+                    Err(e) => tracing::warn!(task = %t.id, error = %e, "requeueing an unstarted task"),
+                }
+            }
+        }
+    }
+
     /// Starts queued tasks, oldest first, while there's room.
     pub async fn start_queued(&self) {
         for t in self.store.queued_tasks().await.unwrap_or_default() {
