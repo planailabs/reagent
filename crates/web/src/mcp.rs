@@ -1,199 +1,37 @@
 //! reagent as an MCP server for agents outside (`/mcp` on the web server):
 //! start and manage tasks. They sign in with an API token (`Authorization:
 //! Bearer <token>`, made by `reagent token add <name>` or in the settings).
+//! Its tools are the web API's endpoints (`api::endpoints`, the same handlers
+//! and inputs) and the few below that only agents need.
 
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use reagent_store::Budget;
-use reagent_tools::app::{App, MergeAnswer, StartTask};
+use reagent_tools::app::App;
+use rmcp::handler::server::router::tool::{ToolRoute, ToolRouter};
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::handler::server::tool::ToolCallContext;
+use rmcp::model::{CallToolResult, ContentBlock, Tool, ToolAnnotations};
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager};
-use rmcp::{schemars, tool, tool_router};
+use rmcp::{schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use subnet_core::agent::PauseMode;
 
 use crate::S;
+use crate::endpoints::{Endpoint, Endpoints, Who};
 
+/// The app, the web server's state (for the endpoints) and every tool.
 #[derive(Clone)]
-pub struct ReagentTools(pub Arc<App>);
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Start {
-    /// A project's id (projects lists them; may be left out with a template pinned to one).
-    #[serde(default)]
-    pub project: String,
-    /// A few words (default: the template's, else the task names itself).
-    #[serde(default)]
-    pub title: String,
-    /// What it should do: everything it needs to know (with a template: its rendered prompt unless given).
-    #[serde(default)]
-    pub prompt: String,
-    /// A prompt template to start from (template_list shows them).
-    pub template: Option<String>,
-    /// The template's field values.
-    #[serde(default)]
-    pub values: serde_json::Map<String, Value>,
-    pub profile: Option<String>,
-    /// Skills loaded into its first message.
-    #[serde(default)]
-    pub skills: Vec<String>,
-    /// Limits: {tokens?, cost?, minutes?}.
-    pub budget: Option<Value>,
-    /// A kind of task from reagent's config (it picks the model).
-    pub kind: Option<String>,
-    /// A persistent worktree of the project to work in (worktree_list shows them; default: the project folder).
-    pub worktree: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct ProjectId {
-    pub project: String,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct WorktreeAdd {
-    pub project: String,
-    /// Its name (letters, digits, . _ -).
-    pub name: String,
-    /// Its branch (default: the name): checked out if there is one, else made from base.
-    pub branch: Option<String>,
-    /// What it merges into (default: the branch the project folder is on).
-    pub base: Option<String>,
-    /// Adopt this worktree git already has (worktree_list's adoptable) instead of making one.
-    pub path: Option<String>,
-    /// shared or exclusive (one task at a time); default: the project's.
-    pub sharing: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct WorktreeMerge {
-    pub project: String,
-    pub name: String,
-    /// merge (default), squash or rebase.
-    pub strategy: Option<reagent_tools::git::Strategy>,
-    pub message: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct WorktreeRemove {
-    pub project: String,
-    pub name: String,
-    /// Discard its work not in its base (unmerged commits, uncommitted files).
-    #[serde(default)]
-    pub force: bool,
-    /// An adopted one: delete its folder and branch too (default: only forget it).
-    #[serde(default)]
-    pub delete: bool,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct List {
-    pub project: Option<String>,
-    /// Finished ones too.
-    #[serde(default)]
-    pub all: bool,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Id {
-    pub task: String,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Tail {
-    pub task: String,
-    /// The last n messages (default 20).
-    pub tail: Option<usize>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Message {
-    pub task: String,
-    pub text: String,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Pause {
-    pub task: String,
-    /// quick (default: running commands finish), safe (after this turn) or hard (now).
-    pub mode: Option<PauseMode>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Raise {
-    pub task: String,
-    /// Added to its budget.
-    pub tokens: Option<u64>,
-    pub cost: Option<f64>,
-    pub minutes: Option<u64>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Switch {
-    pub task: String,
-    /// A profile from reagent's config (`projects` doesn't list them; task_get shows the current one).
-    pub profile: String,
-    pub why: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Approve {
-    pub task: String,
-    /// The call it waits on (task_get shows it).
-    pub call_id: String,
-    pub approved: bool,
-    /// Also allow calls like it from now on (a rule).
-    #[serde(default)]
-    pub always: bool,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Merge {
-    pub task: String,
-    pub merge: bool,
-    /// Why not (when sending it back).
-    pub message: Option<String>,
-}
+pub struct ReagentTools(pub Arc<App>, S, ToolRouter<ReagentTools>);
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct Wait {
     pub task: String,
     /// Seconds (default 300, at most 3600).
     pub timeout: Option<u64>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Search {
-    pub pattern: String,
-    pub task: Option<String>,
-    pub project: Option<String>,
-    pub page: Option<u32>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct Design {
-    pub project: String,
-    /// What should be done, roughly.
-    pub goal: String,
-    /// What it's for: task (default), cron or trigger.
-    pub target: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct DesignCreate {
-    pub project: String,
-    /// Items from design_proposal (as they came, edited if you like): the ones to make.
-    pub items: Vec<Value>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct DocName {
-    pub name: String,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -241,19 +79,6 @@ pub struct SourceRead {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
-pub struct TriggerRef {
-    pub project: String,
-    pub name: String,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct SyncRef {
-    pub project: String,
-    /// A persistent worktree (none: the project folder).
-    pub worktree: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
 pub struct SyncSet {
     pub project: String,
     /// A persistent worktree (none: the project folder).
@@ -272,50 +97,6 @@ pub struct SyncSet {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
-pub struct TemplateList {
-    /// A project's id (none: the global templates).
-    pub project: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct PluginAdd {
-    /// A git URL (https, ssh, file).
-    pub url: String,
-    /// Its folder's name (default: the URL's last part).
-    pub id: Option<String>,
-    /// A branch or tag to follow (default: the remote's default branch).
-    #[serde(rename = "ref")]
-    pub reference: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct PluginId {
-    pub id: String,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct PluginUpdate {
-    /// One plugin (default: every one).
-    pub id: Option<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct PluginRulesOff {
-    pub id: String,
-    /// Its rules no task gets (by name, as plugin_list shows them); the others are on. None: all on.
-    #[serde(default)]
-    pub rules: Vec<String>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-pub struct TriggerMove {
-    pub project: String,
-    pub name: String,
-    /// repo (its files into the project folder) or db (kept in reagent).
-    pub to: String,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
 pub struct Project {
     pub project: Option<String>,
 }
@@ -324,120 +105,8 @@ fn j(v: impl serde::Serialize) -> Result<String, String> {
     serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl ReagentTools {
-    #[tool(description = "The projects reagent works on: id, name, folder, tasks going on.")]
-    async fn projects(&self) -> Result<String, String> {
-        let mut out = vec![];
-        for p in self.0.store.projects().await.map_err(|e| e.to_string())? {
-            let active = self.0.store.tasks(Some(&p.slug), None, true, 1000).await.map_err(|e| e.to_string())?.len();
-            out.push(json!({"id": p.slug, "name": p.name, "path": p.path, "active": active, "merge": p.merge}));
-        }
-        j(out)
-    }
-
-    #[tool(description = "Prompt templates: a project's (its repo's, kept in reagent, global, plugins'), or the global ones. Each one's name, what it's for, its fields (a form: task_start's values) or its prompt (a starting point), and what it sets.")]
-    async fn template_list(&self, Parameters(a): Parameters<TemplateList>) -> Result<String, String> {
-        j(reagent_tools::templates::summaries(&self.0.templates(a.project.as_deref()).await?))
-    }
-
-    #[tool(description = "Start a task in a project (from a prompt, or a template and its values): it works on its own; task_get or task_wait follow it.")]
-    async fn task_start(&self, Parameters(a): Parameters<Start>) -> Result<String, String> {
-        let budget: Option<Budget> = a.budget.map(serde_json::from_value).transpose().map_err(|e| format!("budget: {e}"))?;
-        let t = self.0.start_task(StartTask { project: a.project, title: a.title, prompt: a.prompt, profile: a.profile, budget, skills: a.skills, parent: None, origin: Some("mcp".into()), kind: a.kind, template: a.template, values: a.values, unlimited: vec![], worktree: a.worktree }).await?;
-        j(json!({"task": t.id, "state": t.state}))
-    }
-
-    #[tool(description = "Tasks (newest first): of a project or all, going on or (all = true) finished too.")]
-    async fn task_list(&self, Parameters(a): Parameters<List>) -> Result<String, String> {
-        let v = self.0.store.tasks(a.project.as_deref(), None, !a.all, 200).await.map_err(|e| e.to_string())?;
-        j(v.iter().map(|t| json!({"task": t.id, "title": t.title, "project": t.project, "state": t.state, "waits_for": t.wait.as_ref().map(|w| w.0["kind"].clone()), "parent": t.parent})).collect::<Vec<_>>())
-    }
-
-    #[tool(description = "A task: its state, what it waits for (an approval's call, a question, a merge, its budget), its report (the last; reports: every one, oldest first), usage, worktree, subtasks, todo list.")]
-    async fn task_get(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
-        let t = self.0.task(&a.task).await?;
-        let kids = self.0.store.tasks(None, Some(&a.task), false, 100).await.map_err(|e| e.to_string())?;
-        let mut v = json!(t);
-        v["subtasks"] = json!(kids.iter().map(|k| json!({"task": k.id, "title": k.title, "state": k.state})).collect::<Vec<_>>());
-        v["todos"] = json!(self.0.store.todos(&a.task).await.map_err(|e| e.to_string())?);
-        v["working_memory"] = json!(self.0.store.working_memory(&a.task).await.map_err(|e| e.to_string())?);
-        v["reports"] = json!(self.0.store.reports(&a.task).await.map_err(|e| e.to_string())?);
-        v["queued_messages"] = json!(self.0.store.outbox(&a.task).await.map_err(|e| e.to_string())?.into_iter().map(|q| q.text).collect::<Vec<_>>());
-        j(v)
-    }
-
-    #[tool(description = "A task's last messages (its conversation).")]
-    async fn task_transcript(&self, Parameters(a): Parameters<Tail>) -> Result<String, String> {
-        let t = self.0.task(&a.task).await?;
-        let agent: uuid::Uuid = t.agent.as_deref().ok_or("it never started")?.parse().map_err(|e| format!("{e}"))?;
-        let tr = self.0.hub()?.transcript_of(agent, true).await.map_err(|e| e.to_string())?;
-        let n = a.tail.unwrap_or(20);
-        let msgs: Vec<Value> = tr.messages.iter().rev().take(n).rev().map(|m| json!({"role": m.role, "content": m.content, "tool_calls": m.tool_calls, "tool_call_id": m.tool_call_id})).collect();
-        j(msgs)
-    }
-
-    #[tool(description = "Send a task a message (read before its next step; a finished task goes on with it).")]
-    async fn task_message(&self, Parameters(a): Parameters<Message>) -> Result<String, String> {
-        self.0.message(&a.task, &format!("[from an agent outside] {}", a.text)).await?;
-        Ok("sent".into())
-    }
-
-    #[tool(description = "Pause a task.")]
-    async fn task_pause(&self, Parameters(a): Parameters<Pause>) -> Result<String, String> {
-        self.0.pause(&a.task, a.mode.unwrap_or(PauseMode::Quick)).await?;
-        Ok("paused".into())
-    }
-
-    #[tool(description = "Resume a paused task.")]
-    async fn task_resume(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
-        self.0.resume(&a.task).await?;
-        Ok("resumed".into())
-    }
-
-    #[tool(description = "Cancel a task (and its commands and terminals).")]
-    async fn task_cancel(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
-        self.0.cancel(&a.task).await?;
-        Ok("cancelled".into())
-    }
-
-    #[tool(description = "Retry a failed task from where it failed.")]
-    async fn task_retry(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
-        let t = self.0.retry(&a.task).await?;
-        Ok(format!("retrying ({})", t.state))
-    }
-
-    #[tool(description = "Raise a task's budget (it goes on if it was paused over it).")]
-    async fn task_raise_budget(&self, Parameters(a): Parameters<Raise>) -> Result<String, String> {
-        let t = self.0.raise_budget(&a.task, &Budget { tokens: a.tokens, cost: a.cost, minutes: a.minutes, daily_cost: None }).await?;
-        j(json!({"budget": t.budget.0, "state": t.state}))
-    }
-
-    #[tool(description = "Move a task onto another profile (another model): its conversation goes on there; a failed one is retried there.")]
-    async fn task_switch_profile(&self, Parameters(a): Parameters<Switch>) -> Result<String, String> {
-        let t = self.0.switch_profile(&a.task, &a.profile, a.why.as_deref().unwrap_or("an agent outside moved it")).await?;
-        Ok(format!("{} runs on {} now", t.title, t.profile))
-    }
-
-    #[tool(description = "Approve or deny the call a task waits on.")]
-    async fn task_approve(&self, Parameters(a): Parameters<Approve>) -> Result<String, String> {
-        self.0.approve(&a.task, &a.call_id, a.approved, a.always).await?;
-        Ok(if a.approved { "approved" } else { "denied" }.into())
-    }
-
-    #[tool(description = "Answer a task's question.")]
-    async fn task_answer(&self, Parameters(a): Parameters<Message>) -> Result<String, String> {
-        self.0.answer(&a.task, &a.text).await?;
-        Ok("answered".into())
-    }
-
-    #[tool(description = "Decide a merge a task waits for: merge, or send it back with a message.")]
-    async fn task_merge(&self, Parameters(a): Parameters<Merge>) -> Result<String, String> {
-        let ans = if a.merge { MergeAnswer::Merge } else { MergeAnswer::Reject(a.message.unwrap_or_else(|| "not now".into())) };
-        self.0.decide_merge(&a.task, ans).await?;
-        Ok("decided".into())
-    }
-
     #[tool(description = "Wait until a task ends or waits for someone (or the timeout): its state, what it waits for, its report.")]
     async fn task_wait(&self, Parameters(a): Parameters<Wait>) -> Result<String, String> {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(a.timeout.unwrap_or(300).clamp(1, 3600));
@@ -453,48 +122,7 @@ impl ReagentTools {
         }
     }
 
-    #[tool(description = "Start reagent's designer for a rough goal: a design task reads the project, asks the person what it can't find out (task_wait shows its questions; task_answer answers them), and reports a proposal: tasks, cron entries, triggers, repo skills. design_proposal reads it, design_create makes the items you pick.")]
-    async fn prompt_design(&self, Parameters(a): Parameters<Design>) -> Result<String, String> {
-        let target = a.target.as_deref().unwrap_or("task");
-        if !matches!(target, "task" | "cron" | "trigger") {
-            return Err("target: task, cron or trigger".into());
-        }
-        let t = self.0.start_design_task(&a.project, target, &a.goal, None).await?;
-        j(json!({"task": t.id, "state": t.state}))
-    }
-
-    #[tool(description = "A design task's proposal: its note and items (null while it isn't done).")]
-    async fn design_proposal(&self, Parameters(a): Parameters<Id>) -> Result<String, String> {
-        j(self.0.proposal(&a.task).await?)
-    }
-
-    #[tool(description = "Make items from a design proposal (pass the ones you want, as they came or edited): tasks start, cron entries, triggers and repo skills are made.")]
-    async fn design_create(&self, Parameters(a): Parameters<DesignCreate>) -> Result<String, String> {
-        let mut items = vec![];
-        let mut out = vec![];
-        for v in a.items {
-            match serde_json::from_value::<reagent_tools::design::Item>(v) {
-                Ok(i) => items.push(i),
-                Err(e) => out.push(format!("not an item: {e}")),
-            }
-        }
-        for r in self.0.create_items(&a.project, &items).await? {
-            out.push(r.unwrap_or_else(|e| format!("not made: {e}")));
-        }
-        Ok(out.join("\n"))
-    }
-
-    #[tool(description = "reagent's documentation (its system skills): how tasks, subtasks, policy, triggers, memory and the rest work.")]
-    async fn docs_list(&self) -> Result<String, String> {
-        Ok(reagent_tools::skills::system().into_iter().map(|(n, d, _)| format!("{n} — {d}")).collect::<Vec<_>>().join("\n"))
-    }
-
-    #[tool(description = "One of reagent's docs (docs_list names them).")]
-    async fn docs_read(&self, Parameters(a): Parameters<DocName>) -> Result<String, String> {
-        reagent_tools::skills::system_text(&a.name).map(|t| reagent_tools::skills::parse(&t).2).ok_or_else(|| format!("no doc {:?} (docs_list names them)", a.name))
-    }
-
-    #[tool(description = "Triggers (of a project, or all): scripts that watch something and start tasks or message running ones.")]
+    #[tool(description = "Triggers (of a project, or all), a line each: scripts that watch something and start tasks or message running ones.")]
     async fn trigger_list(&self, Parameters(a): Parameters<Project>) -> Result<String, String> {
         let v = self.0.store.triggers(a.project.as_deref()).await.map_err(|e| e.to_string())?;
         Ok(if v.is_empty() { "no triggers".into() } else { v.iter().map(|t| format!("{}: {}", t.project, reagent_tools::triggers::line(t))).collect::<Vec<_>>().join("\n") })
@@ -508,32 +136,7 @@ impl ReagentTools {
         Ok(format!("added: {}{}", reagent_tools::triggers::line(&t), if t.mode == "webhook" { format!("; its URL: <reagent>/hook/{}/{}", p.slug, t.name) } else { String::new() }))
     }
 
-    #[tool(description = "Remove a trigger (a repo trigger's files too).")]
-    async fn trigger_remove(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
-        reagent_tools::triggers::remove(&self.0, &a.project, &a.name).await?;
-        Ok("removed".into())
-    }
-
-    #[tool(description = "Run a poll trigger now (or restart a watcher).")]
-    async fn trigger_run(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
-        reagent_tools::triggers::run_now(&self.0, &a.project, &a.name).await
-    }
-
-    #[tool(description = "Move a trigger into the project's repo (.agents/triggers/<name>/) or back into reagent.")]
-    async fn trigger_move(&self, Parameters(a): Parameters<TriggerMove>) -> Result<String, String> {
-        let p = self.0.project(&a.project).await?;
-        let t = reagent_tools::triggers::move_to(&self.0.store, &p, &a.name, &a.to).await?;
-        self.0.emit_trigger(&p.slug, &t.name).await;
-        Ok(format!("{} is {} now", t.name, if t.source == "repo" { "in the repo" } else { "kept in reagent" }))
-    }
-
-    #[tool(description = "A project's git sync, a branch each (its folder's, each persistent worktree's): on or off, interval, strategy, remote, what the checkout's .agents/sync.md overrides, and how it's doing (ok, skipped, fixing, stuck, error).")]
-    async fn sync_list(&self, Parameters(a): Parameters<Project>) -> Result<String, String> {
-        let p = self.0.project(a.project.as_deref().ok_or("which project?")?).await?;
-        j(reagent_tools::gitsync::list(&self.0.store, &p).await)
-    }
-
-    #[tool(description = "Change a branch's git sync (kept in reagent; the checkout's .agents/sync.md overrides what it sets). On, reagent pulls with the strategy and pushes every interval; a conflict, or uncommitted changes no task works on, start a task to sort them out, then reagent pushes.")]
+    #[tool(description = "Change some of a branch's git sync settings (kept in reagent; the checkout's .agents/sync.md overrides what it sets). On, reagent pulls with the strategy and pushes every interval; a conflict, or uncommitted changes no task works on, start a task to sort them out, then reagent pushes.")]
     async fn sync_set(&self, Parameters(a): Parameters<SyncSet>) -> Result<String, String> {
         let p = self.0.project(&a.project).await?;
         let place = a.worktree.unwrap_or_default();
@@ -560,14 +163,7 @@ impl ReagentTools {
         Ok(format!("{}, every {}m, {}", if v.enabled { "on" } else { "off" }, v.every / 60, v.strategy))
     }
 
-    #[tool(description = "Sync a branch now (within seconds; a stuck one goes on).")]
-    async fn sync_run(&self, Parameters(a): Parameters<SyncRef>) -> Result<String, String> {
-        let p = self.0.project(&a.project).await?;
-        reagent_tools::gitsync::run_now(&self.0.store, &p.slug, &a.worktree.unwrap_or_default()).await?;
-        Ok("syncs within seconds".into())
-    }
-
-    #[tool(description = "Services (of a project, or all): commands that should always run, each with its state (starting, up, stopping, backoff, waiting for approval, stopped), since when, failures and last error.")]
+    #[tool(description = "Services (of a project, or all), a line each: commands that should always run, each with its state (starting, up, stopping, backoff, waiting for approval, stopped), since when, failures and last error.")]
     async fn service_list(&self, Parameters(a): Parameters<Project>) -> Result<String, String> {
         let v = self.0.store.services(a.project.as_deref()).await.map_err(|e| e.to_string())?;
         Ok(if v.is_empty() { "no services".into() } else { v.iter().map(|x| format!("{}: {}", x.project, reagent_tools::services::line(x))).collect::<Vec<_>>().join("\n") })
@@ -581,44 +177,9 @@ impl ReagentTools {
         Ok(format!("added: {}", reagent_tools::services::line(&v)))
     }
 
-    #[tool(description = "Remove a service: it's stopped (a repo service's files go too).")]
-    async fn service_remove(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
-        reagent_tools::services::remove(&self.0, &a.project, &a.name).await?;
-        Ok("removed".into())
-    }
-
-    #[tool(description = "Switch a service on: started at once, its failure streak cleared.")]
-    async fn service_start(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
-        let v = reagent_tools::services::set_enabled(&self.0.store, &a.project, &a.name, true).await?;
-        self.0.emit_service(&a.project, &a.name).await;
-        Ok(format!("{} switched on", v.name))
-    }
-
-    #[tool(description = "Switch a service off: stopped; it stays off until started.")]
-    async fn service_stop(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
-        let v = reagent_tools::services::set_enabled(&self.0.store, &a.project, &a.name, false).await?;
-        self.0.emit_service(&a.project, &a.name).await;
-        Ok(format!("{} switched off", v.name))
-    }
-
-    #[tool(description = "Restart a service: stopped and started again at once.")]
-    async fn service_restart(&self, Parameters(a): Parameters<TriggerRef>) -> Result<String, String> {
-        let v = reagent_tools::services::restart(&self.0.store, &a.project, &a.name).await?;
-        self.0.emit_service(&a.project, &a.name).await;
-        Ok(format!("{} restarts", v.name))
-    }
-
     #[tool(description = "The end of a service's output.")]
     async fn service_logs(&self, Parameters(a): Parameters<ServiceLogs>) -> Result<String, String> {
         reagent_tools::services::logs(&self.0, &a.project, &a.name, a.lines.unwrap_or(100)).await
-    }
-
-    #[tool(description = "Move a service into the project's repo (.agents/services/<name>/) or back into reagent.")]
-    async fn service_move(&self, Parameters(a): Parameters<TriggerMove>) -> Result<String, String> {
-        let p = self.0.project(&a.project).await?;
-        let v = reagent_tools::services::move_to(&self.0.store, &p, &a.name, &a.to).await?;
-        self.0.emit_service(&p.slug, &v.name).await;
-        Ok(format!("{} is {} now", v.name, if v.source == "repo" { "in the repo" } else { "kept in reagent" }))
     }
 
     #[tool(description = "List reagent's own source (as this running build has it): a folder's entries, or every file under it.")]
@@ -630,58 +191,26 @@ impl ReagentTools {
     async fn reagent_source_read(&self, Parameters(a): Parameters<SourceRead>) -> Result<String, String> {
         reagent_tools::source::read(&a.path, a.from, a.to)
     }
+}
 
-    #[tool(description = "The plugins: git repositories in reagent's data folder whose skills and rules every task gets (id, URL, ref, commit, skills, rules).")]
-    async fn plugin_list(&self) -> Result<String, String> {
-        j(self.0.plugins())
-    }
+#[tool_handler(router = self.2)]
+impl rmcp::ServerHandler for ReagentTools {}
 
-    #[tool(description = "Add a plugin: clone a git repository whose skills (skills/, skill/, .agents/skills/) and rules (rules/, .agents/rules/) every task then gets; a marketplace (.claude-plugin/marketplace.json, .agents/plugins/marketplace.json) brings its local plugins' too.")]
-    async fn plugin_add(&self, Parameters(a): Parameters<PluginAdd>) -> Result<String, String> {
-        j(self.0.plugin_add(&a.url, a.id.as_deref(), a.reference.as_deref()).await?)
-    }
-
-    #[tool(description = "Update a plugin (or every one): fetch what it follows and move onto it. Each one's commits before and after, or why not.")]
-    async fn plugin_update(&self, Parameters(a): Parameters<PluginUpdate>) -> Result<String, String> {
-        j(self.0.plugin_update(a.id.as_deref()).await?)
-    }
-
-    #[tool(description = "Switch a plugin's rules off (kept across updates): tasks don't get them. Lists every one that's off; the rest are on.")]
-    async fn plugin_rules_off(&self, Parameters(a): Parameters<PluginRulesOff>) -> Result<String, String> {
-        j(self.0.plugin_rules_off(&a.id, &a.rules).await?)
-    }
-
-    #[tool(description = "Remove a plugin (its folder).")]
-    async fn plugin_remove(&self, Parameters(a): Parameters<PluginId>) -> Result<String, String> {
-        self.0.plugin_remove(&a.id).await?;
-        Ok(format!("removed {}", a.id))
-    }
-
-    #[tool(description = "A project's persistent worktrees (named, long-lived checkouts tasks start in: task_start's worktree): branch, base, commits ahead, uncommitted changes, tasks there now; and the worktrees git has that could be adopted.")]
-    async fn worktree_list(&self, Parameters(a): Parameters<ProjectId>) -> Result<String, String> {
-        let (kept, adoptable) = self.0.worktrees().list(&a.project).await?;
-        j(json!({"worktrees": kept, "adoptable": adoptable}))
-    }
-
-    #[tool(description = "Make a persistent worktree of a project (a branch checked out apart, for tasks to start in), or adopt one git has (path).")]
-    async fn worktree_add(&self, Parameters(a): Parameters<WorktreeAdd>) -> Result<String, String> {
-        j(self.0.worktrees().add(&a.project, reagent_tools::persistent::AddWorktree { name: a.name, branch: a.branch, base: a.base, path: a.path, sharing: a.sharing }).await?)
-    }
-
-    #[tool(description = "Merge a persistent worktree's branch into its base (commit everything there first); conflicts are named and nothing changes.")]
-    async fn worktree_merge(&self, Parameters(a): Parameters<WorktreeMerge>) -> Result<String, String> {
-        self.0.worktrees().merge(&a.project, &a.name, a.strategy.unwrap_or(reagent_tools::git::Strategy::Merge), a.message).await
-    }
-
-    #[tool(description = "Remove a persistent worktree and its branch (refused while tasks work there, or while it has work not in its base, unmerged commits or uncommitted files, unless force: that work is discarded); an adopted one is only forgotten unless delete.")]
-    async fn worktree_remove(&self, Parameters(a): Parameters<WorktreeRemove>) -> Result<String, String> {
-        self.0.worktrees().remove(&a.project, &a.name, a.force, a.delete).await
-    }
-
-    #[tool(description = "Search tasks' whole conversations for a regex: one task's (paged), or every task's (of a project), a few hits each.")]
-    async fn search(&self, Parameters(a): Parameters<Search>) -> Result<String, String> {
-        j(self.0.search(&a.pattern, a.task.as_deref(), a.project.as_deref(), None, a.page.unwrap_or(1)).await?)
-    }
+/// An endpoint as a tool: its input schema, its answer as JSON text.
+fn route(ep: Arc<Endpoint>) -> ToolRoute<ReagentTools> {
+    let annotations = ToolAnnotations::new().read_only(ep.method == Method::GET).destructive(ep.method == Method::DELETE);
+    let tool = Tool::new(ep.tool, ep.description, ep.schema.clone()).annotate(annotations);
+    ToolRoute::new_dyn(tool, move |ctx: ToolCallContext<'_, ReagentTools>| {
+        let (ep, s) = (ep.clone(), ctx.service.1.clone());
+        let input = Value::Object(ctx.arguments.unwrap_or_default());
+        Box::pin(async move {
+            Ok(match ep.call(s, Who::Agent, input).await {
+                Ok(v) => CallToolResult::success(vec![ContentBlock::text(serde_json::to_string_pretty(&v).unwrap_or_default())]),
+                Err(e) => CallToolResult::error(vec![ContentBlock::text(e.1)]),
+            }
+            .into())
+        })
+    })
 }
 
 /// Only callers with an API token.
@@ -694,9 +223,15 @@ pub async fn auth(State(s): State<S>, req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-pub fn service(app: Arc<App>) -> StreamableHttpService<ReagentTools, LocalSessionManager> {
+pub fn service(s: S, eps: &Endpoints) -> StreamableHttpService<ReagentTools, LocalSessionManager> {
+    let mut router = ReagentTools::tool_router();
+    for ep in &eps.0 {
+        assert!(!router.has_route(ep.tool), "the MCP API has its own {}", ep.tool);
+        router.add_route(route(ep.clone()));
+    }
+    let tools = ReagentTools(s.w.app.clone(), s, router);
     // Callers carry a token, so any host may (reagent sits behind a proxy with its own name).
     // Longer than its longest call (task_wait: an hour), still ending sessions a proxy silently dropped.
     let sessions = reagent_tools::mcp::sessions(Some(std::time::Duration::from_secs(6 * 3600)));
-    StreamableHttpService::new(move || Ok(ReagentTools(app.clone())), sessions.into(), StreamableHttpServerConfig::default().disable_allowed_hosts())
+    StreamableHttpService::new(move || Ok(tools.clone()), sessions.into(), StreamableHttpServerConfig::default().disable_allowed_hosts())
 }

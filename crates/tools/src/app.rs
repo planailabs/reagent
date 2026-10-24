@@ -65,22 +65,30 @@ pub fn is_repair(origin: &str) -> bool {
 pub const UNTITLED: &str = "(untitled: first name this task with tasks.task_title, a few words saying what it's about)";
 
 /// What starting a task takes.
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct StartTask {
+    /// A project's id (may be left out with a template pinned to one).
+    #[serde(default)]
     pub project: String,
     /// Empty: the task names itself (tasks.task_title).
     #[serde(default)]
     pub title: String,
+    /// What it should do: everything it needs to know (with a template: its rendered prompt unless given).
+    #[serde(default)]
     pub prompt: String,
+    /// A profile from reagent.hcl (a model).
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
     pub budget: Option<Budget>,
+    /// Skills loaded into its first message.
     #[serde(default)]
     pub skills: Vec<String>,
     #[serde(default)]
+    #[schemars(skip)]
     pub parent: Option<String>,
     #[serde(default)]
+    #[schemars(skip)]
     pub origin: Option<String>,
     /// A kind from reagent.hcl (its profile, its escalation).
     #[serde(default)]

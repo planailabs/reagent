@@ -11,7 +11,7 @@ use crate::app::App;
 use crate::git::{self, Merged, Strategy};
 
 /// A new persistent worktree: made (`branch`, `base`), or adopted (`path`).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
 pub struct AddWorktree {
     pub name: String,
     /// Its branch (default: the name): checked out if there is one, else made from `base`.

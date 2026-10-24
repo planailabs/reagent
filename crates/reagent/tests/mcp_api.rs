@@ -38,7 +38,7 @@ async fn another_agent_starts_and_follows_a_task_with_a_token() {
     tools.sort();
     assert!(["projects", "search", "prompt_design", "design_proposal", "design_create", "docs_list", "docs_read", "task_answer", "task_approve", "task_cancel", "task_get", "task_list", "task_merge", "task_message", "task_pause", "task_raise_budget", "task_resume", "task_retry", "task_start", "task_transcript", "task_wait"].iter().all(|t| tools.contains(&t.to_string())), "{tools:?}");
     let (_, p) = call(&c, "projects", json!({})).await;
-    assert!(p.contains("\"id\": \"site\""), "{p}");
+    assert!(p.contains("\"slug\": \"site\""), "{p}");
 
     r.push("Outside", |_| call_tool("c1", "ask.ask", json!({"question": "go on?"})));
     r.push("Outside", |b| {
@@ -47,7 +47,7 @@ async fn another_agent_starts_and_follows_a_task_with_a_token() {
     });
     let (err, started) = call(&c, "task_start", json!({"project": "site", "title": "Outside", "prompt": "x"})).await;
     assert!(!err, "{started}");
-    let id = serde_json::from_str::<Value>(&started).unwrap()["task"].as_str().unwrap().to_string();
+    let id = serde_json::from_str::<Value>(&started).unwrap()["id"].as_str().unwrap().to_string();
     // It waits for an answer; the outside agent sees why and answers.
     let (_, w) = call(&c, "task_wait", json!({"task": id, "timeout": 20})).await;
     let w: Value = serde_json::from_str(&w).unwrap();
@@ -70,6 +70,18 @@ async fn another_agent_starts_and_follows_a_task_with_a_token() {
     assert_eq!(t.origin, "mcp");
     let (err, msg) = call(&c, "task_retry", json!({"task": id})).await;
     assert!(err && msg.contains("isn't failed"), "{msg}");
+    // The rest of the web API: the same endpoints, typed from path, query and body.
+    let (err, w) = call(&c, "memory_write", json!({"scope": "site", "file": "notes.md", "text": "from outside", "about": "x"})).await;
+    assert!(!err, "{w}");
+    let (err, m) = call(&c, "memory_read", json!({"scope": "site", "file": "notes.md"})).await;
+    assert!(!err && m.contains("from outside"), "{m}");
+    let (err, m) = call(&c, "project_get", json!({"project": "nope"})).await;
+    assert!(err && m.contains("no project"), "{m}");
+    // An agent sees secrets' names, never their values; API tokens aren't its to make.
+    assert!(!call(&c, "secret_set", json!({"name": "KEY", "value": "hunter2"})).await.0);
+    let (_, l) = call(&c, "secret_list", json!({})).await;
+    assert!(l.contains("KEY") && !l.contains("hunter2"), "{l}");
+    assert!(!tools.iter().any(|t| t.contains("token")), "{tools:?}");
     // Revoked: no more.
     r.run.app.store.revoke_api_token("outside").await.unwrap();
     assert!(client(&r.run.web_url, token).await.is_err());
@@ -101,7 +113,7 @@ async fn another_agent_manages_services_and_persistent_worktrees() {
     let v = r.run.app.store.service("site", "web").await.unwrap().unwrap();
     assert_eq!(v.made_by, "mcp");
     let (_, stopped) = call(&c, "service_stop", json!({"project": "site", "name": "web"})).await;
-    assert!(stopped.contains("switched off"), "{stopped}");
+    assert!(stopped.contains("\"enabled\": false"), "{stopped}");
     let (err, _) = call(&c, "service_remove", json!({"project": "site", "name": "web"})).await;
     assert!(!err && r.run.app.store.service("site", "web").await.unwrap().is_none());
     // Persistent worktrees, and a task started in one.
@@ -115,7 +127,7 @@ async fn another_agent_manages_services_and_persistent_worktrees() {
     });
     let (err, said) = call(&c, "task_start", json!({"project": "site", "title": "There", "prompt": "x", "worktree": "next"})).await;
     assert!(!err, "{said}");
-    let id = serde_json::from_str::<Value>(&said).unwrap()["task"].as_str().unwrap().to_string();
+    let id = serde_json::from_str::<Value>(&said).unwrap()["id"].as_str().unwrap().to_string();
     let t = r.done(&id).await;
     assert_eq!(t.home.as_deref(), Some("next"));
     let (err, said) = call(&c, "worktree_remove", json!({"project": "site", "name": "next"})).await;

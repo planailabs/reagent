@@ -28,7 +28,7 @@ pub struct Proposal {
 }
 
 /// One thing to make.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Item {
     /// A task to start now.

@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod endpoints;
 pub mod mcp;
 
 use std::collections::HashMap;
@@ -92,8 +93,9 @@ async fn ui(uri: axum::http::Uri) -> Response {
 
 pub fn router(w: Arc<Web>) -> Router {
     let s: S = Arc::new(St { w, attempts: Default::default() });
-    let mcp = axum::Router::new().nest_service("/mcp", mcp::service(s.w.app.clone())).layer(axum::middleware::from_fn_with_state(s.clone(), mcp::auth));
-    api::routes()
+    let eps = api::endpoints();
+    let mcp = axum::Router::new().nest_service("/mcp", mcp::service(s.clone(), &eps)).layer(axum::middleware::from_fn_with_state(s.clone(), mcp::auth));
+    api::routes(&eps)
         .merge(mcp.with_state(s.clone()))
         .fallback(ui)
         .layer(axum::middleware::from_fn_with_state(s.clone(), guard))

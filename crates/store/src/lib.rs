@@ -14,7 +14,7 @@ pub fn now() -> i64 {
 }
 
 /// Per-task limits (any may be absent: no limit) and the project's daily cost.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Budget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
