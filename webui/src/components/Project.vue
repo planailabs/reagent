@@ -63,6 +63,7 @@ async function load() {
         on_busy: { person: "", agent: "", task: "", cron: "", trigger: "", ...(l.on_busy ?? {}) },
         merge_locks: l.merge_locks ?? [],
         merge_on_busy: l.merge_on_busy ?? null,
+        evaluator: { role: "", on_reject: "", static_checks: "", prompt: "", ...(p.value.evaluator ?? {}), risks: JSON.stringify(p.value.evaluator?.risks ?? [], null, 2) },
       };
     }
   } catch (e) {
@@ -98,12 +99,17 @@ async function save() {
   error.value = "";
   try {
     const s = settings.value;
-    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, worktree_sharing: s.worktree_sharing, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}"), locking: locking(s) };
+    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, worktree_sharing: s.worktree_sharing, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}"), locking: locking(s), evaluator: evaluator(s.evaluator) };
     p.value = await put(`/api/projects/${props.slug}`, body);
     error.value = "saved";
   } catch (e) {
     error.value = e.message;
   }
+}
+
+/** The evaluator fields as the project keeps them (empty: the default). */
+function evaluator(e) {
+  return { role: e.role || null, on_reject: e.on_reject || null, static_checks: e.static_checks || null, prompt: e.prompt, risks: JSON.parse(e.risks || "[]") };
 }
 
 /** The settings' lock fields as the project keeps them. */
@@ -257,6 +263,17 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         </div>
         <LockFields v-model:locks="settings.merge_locks" v-model:on-busy="settings.merge_on_busy" default-text="wait" />
         <span class="dim">the locks above are held while a branch is merged into its base (a task's, a persistent worktree's); when busy: wait or fail</span>
+      </fieldset>
+      <fieldset class="stack" aria-label="call evaluator">
+        <legend>call evaluator <span class="dim">{{ config?.evaluator_profile ? `(profile ${config.evaluator_profile})` : "(off: no evaluator_profile in reagent.hcl)" }}</span></legend>
+        <div class="row">
+          <label>role <select v-model="settings.evaluator.role" aria-label="evaluator role"><option value="">decides (default)</option><option value="decides">decides</option><option value="advises">advises you</option><option value="off">off</option></select></label>
+          <label>a rejected call <select v-model="settings.evaluator.on_reject" aria-label="a rejected call"><option value="">is refused (default)</option><option value="refuse">is refused</option><option value="person">comes to you</option></select></label>
+          <label>loops, duplicates, writes before reading <select v-model="settings.evaluator.static_checks" aria-label="static checks"><option value="">refused (default)</option><option value="refuse">refused</option><option value="warn">warned about</option><option value="off">let be</option></select></label>
+        </div>
+        <span class="dim">calls the rules would ask you about go to the evaluator first; deciding, what it approves runs</span>
+        <label>its instructions for this project <textarea v-model="settings.evaluator.prompt" rows="3" placeholder="e.g. This repo deploys on push to main: be strict about git push." aria-label="evaluator instructions for this project"></textarea></label>
+        <label>risk rules (JSON: [{"tool": "shell.exec", "command": "rm -rf target*", "risk": "mutating"}], first match wins) <textarea v-model="settings.evaluator.risks" rows="2" aria-label="risk rules"></textarea></label>
       </fieldset>
       <label>environment for its commands (JSON) <textarea v-model="settings.env" rows="4"></textarea></label>
       <div class="row"><button type="submit">save</button><span class="grow"></span><button type="button" @click="remove">remove project</button></div>

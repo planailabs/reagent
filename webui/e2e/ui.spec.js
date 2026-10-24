@@ -657,6 +657,30 @@ test("a task holding a lock makes the next wait; the locks tab shows both and br
   await page.request.post(`/api/tasks/${holder}/cancel`, { headers: { origin: new URL(page.url()).origin } });
 });
 
+test("the evaluator's instructions are kept for every project and for one, with its role", async ({ page }) => {
+  await page.goto("/#/settings");
+  await page.getByLabel("evaluator instructions for every project").fill("Never touch production.");
+  let saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"));
+  await page.getByLabel("evaluator instructions for every project").locator("xpath=..").getByRole("button", { name: "save" }).click();
+  expect((await saved).ok()).toBe(true);
+  expect((await (await page.request.get("/api/settings")).json()).evaluator_prompt).toBe("Never touch production.");
+  await page.goto("/#/project/site/settings");
+  await page.getByLabel("evaluator role").selectOption("advises");
+  await page.getByLabel("static checks").selectOption("warn");
+  await page.getByLabel("evaluator instructions for this project").fill("A static site.");
+  saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/projects/site"));
+  await page.getByRole("button", { name: "save" }).first().click();
+  expect((await saved).ok()).toBe(true);
+  const e = (await (await page.request.get("/api/projects/site")).json()).evaluator;
+  expect([e.role, e.static_checks, e.prompt]).toEqual(["advises", "warn", "A static site."]);
+  // Back to the defaults for the other tests.
+  await page.getByLabel("evaluator role").selectOption("");
+  await page.getByLabel("static checks").selectOption("");
+  saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/projects/site"));
+  await page.getByRole("button", { name: "save" }).first().click();
+  expect((await saved).ok()).toBe(true);
+});
+
 test("a stuck foreground command is moved to the background and the task goes on", async ({ page }) => {
   const rules = await (await page.request.get("/api/projects/site/rules")).json();
   await page.request.put("/api/projects/site/rules", { data: [{ tool: "shell.exec*", command: "sleep *", action: "allow" }, ...rules] });

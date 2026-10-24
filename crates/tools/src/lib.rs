@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod edit;
+pub mod evaluator;
 pub mod git;
 pub mod memory;
 pub mod plugins;

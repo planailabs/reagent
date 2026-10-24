@@ -62,6 +62,57 @@ pub struct Project {
     /// Its known locks, the busy policy per origin, and the locks merges take.
     #[serde(default)]
     pub locking: Json<Locking>,
+    /// How the call evaluator works for it.
+    #[serde(default)]
+    pub evaluator: Json<EvaluatorSettings>,
+}
+
+/// A project's call evaluator settings (none: the defaults).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EvaluatorSettings {
+    /// decides (default), advises or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Deciding, a rejected call is: refused (to the task, default) or asked (the person decides).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_reject: Option<String>,
+    /// Loops, duplicates and writes before any read: refuse (default), warn or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_checks: Option<String>,
+    /// Added to the evaluator's instructions for this project's calls.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prompt: String,
+    /// How risky calls are, before reagent's own classes (first match wins).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risks: Vec<RiskRule>,
+}
+
+/// A call's risk class by tool (and command): read_only, mutating or destructive.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RiskRule {
+    /// A glob over `<server>.<tool>`.
+    pub tool: String,
+    /// A glob over the command line (shell and terminal tools).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    pub risk: String,
+}
+
+/// What the call evaluator judged about a call, and what came of it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Evaluation {
+    pub id: i64,
+    pub task: String,
+    pub call_id: String,
+    pub tool: String,
+    pub args: String,
+    pub reason: String,
+    pub risk: String,
+    pub source: String,
+    pub approved: bool,
+    pub reasoning: String,
+    pub outcome: String,
+    pub created: i64,
 }
 
 /// A project's lock settings.
@@ -109,6 +160,7 @@ impl Project {
             max_tasks: None,
             worktree_sharing: shared(),
             locking: Json::default(),
+            evaluator: Json::default(),
         }
     }
 }
@@ -793,10 +845,10 @@ impl Store {
     /// Adds a project, or changes one (by its slug).
     pub async fn put_project(&self, p: &Project) -> R<()> {
         sqlx::query(
-            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks, worktree_sharing, locking)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks, worktree_sharing, locking, evaluator)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              on conflict (slug) do update set name = $2, path = $3, memory = $4, worktrees = $5, merge = $6,
-               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14, worktree_sharing = $15, locking = $16",
+               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14, worktree_sharing = $15, locking = $16, evaluator = $17",
         )
         .bind(&p.slug)
         .bind(&p.name)
@@ -814,6 +866,7 @@ impl Store {
         .bind(p.max_tasks)
         .bind(&p.worktree_sharing)
         .bind(&p.locking)
+        .bind(&p.evaluator)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1114,6 +1167,39 @@ impl Store {
     }
 
     /// The current agent's usage (what earlier agents used is added).
+    /// Usage beside its agent's (the evaluator's calls about it): counted for good, like an earlier agent's.
+    pub async fn add_usage(&self, id: &str, tokens: i64, cost: f64) -> R<()> {
+        sqlx::query("update tasks set base_tokens = base_tokens + $2, base_cost = base_cost + $3, tokens = tokens + $2, cost = cost + $3 where id = $1").bind(id).bind(tokens).bind(cost).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn add_evaluation(&self, e: &Evaluation) -> R<i64> {
+        sqlx::query_scalar("insert into evaluations (task, call_id, tool, args, reason, risk, source, approved, reasoning, outcome, created) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id")
+            .bind(&e.task)
+            .bind(&e.call_id)
+            .bind(&e.tool)
+            .bind(&e.args)
+            .bind(&e.reason)
+            .bind(&e.risk)
+            .bind(&e.source)
+            .bind(e.approved)
+            .bind(&e.reasoning)
+            .bind(&e.outcome)
+            .bind(now())
+            .fetch_one(&self.pool)
+            .await
+    }
+
+    /// A task's evaluations, newest first.
+    pub async fn evaluations(&self, task: &str, limit: i64) -> R<Vec<Evaluation>> {
+        sqlx::query_as("select * from evaluations where task = $1 order by id desc limit $2").bind(task).bind(limit).fetch_all(&self.pool).await
+    }
+
+    /// The evaluation that sent a call to the person, if one did.
+    pub async fn evaluation_of_call(&self, task: &str, call_id: &str) -> R<Option<Evaluation>> {
+        sqlx::query_as("select * from evaluations where task = $1 and call_id = $2 and call_id != '' order by id desc limit 1").bind(task).bind(call_id).fetch_optional(&self.pool).await
+    }
+
     pub async fn set_usage(&self, id: &str, tokens: i64, cost: f64) -> R<()> {
         sqlx::query("update tasks set tokens = base_tokens + $2, cost = base_cost + $3 where id = $1").bind(id).bind(tokens).bind(cost).execute(&self.pool).await?;
         Ok(())

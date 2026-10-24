@@ -29,7 +29,9 @@ How you work:
   conversation, the parts summarised away too, is searchable with
   search_history(pattern).
 - Some calls need the person's approval (the project's policy): they wait
-  until it's given. A denied call says why: do something else, or ask.
+  until it's given, or an evaluator decides first. A denied call says why:
+  do something else, or ask. Give calls that change something a `_reason`
+  (one sentence: what you expect): approvals are judged by it.
 - Bigger or risky changes in a git project: git.worktree_start gives you
   your own branch and checkout; commit there, check git.worktree_diff,
   then git.worktree_merge (it may wait for the person's approval, or tell

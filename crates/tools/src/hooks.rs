@@ -175,14 +175,36 @@ impl HookTools {
             (Some(r), None) => format!("the rule {} {}{}", r.tool, r.command.as_deref().map(|c| format!("`{c}` ")).unwrap_or_default(), r.action),
             (None, _) => format!("the project's default ({})", p.default_action),
         };
+        if d.action == Action::Deny {
+            return Ok(json!({"decision": "deny", "reason": format!("not allowed in {}: {why}", p.name)}).to_string());
+        }
+        let ev = crate::evaluator::Call::new(&self.0, &t, &p, &tool, args, &q.input, added).await;
+        // A loop, a duplicate, a destructive call before any read (calls that change something).
+        if let Some(refused) = ev.static_check(&self.0).await {
+            return Ok(json!({"decision": "deny", "reason": refused}).to_string());
+        }
         // Throwing a worktree's work away is the person's call, whatever the rules allow.
-        if d.action != Action::Deny && tool == "git.worktree_drop" && (args["discard"] == true || args["force"] == true) {
+        if tool == "git.worktree_drop" && (args["discard"] == true || args["force"] == true) {
+            ev.made(&self.0);
             return Ok(json!({"decision": "ask", "reason": "discards the worktree's work not in its base: the person decides"}).to_string());
         }
         Ok(match d.action {
-            Action::Allow => json!({"decision": "allow"}),
-            Action::Ask => json!({"decision": "ask", "reason": format!("needs approval: {why}")}),
-            Action::Deny => json!({"decision": "deny", "reason": format!("not allowed in {}: {why}", p.name)}),
+            Action::Allow => {
+                ev.made(&self.0);
+                json!({"decision": "allow"})
+            }
+            // What the rules would ask the person about goes to the evaluator first.
+            _ => match ev.judge(&self.0, &why).await {
+                crate::evaluator::Judged::Allow => {
+                    ev.made(&self.0);
+                    json!({"decision": "allow"})
+                }
+                crate::evaluator::Judged::Refuse(why) => json!({"decision": "deny", "reason": why}),
+                crate::evaluator::Judged::Ask(why) => {
+                    ev.made(&self.0);
+                    json!({"decision": "ask", "reason": why})
+                }
+            },
         }
         .to_string())
     }
@@ -194,11 +216,23 @@ impl HookTools {
             return Ok(json!({"decision": "allow"}).to_string());
         };
         let result = q.input["result"].as_str().unwrap_or_default();
+        // A static check set to warn let the call run: the task reads why with its result.
+        let note = q.input["call_id"].as_str().and_then(|id| self.0.call_notes.lock().unwrap().remove(id)).map(|n| format!("[evaluator] {n}"));
         if tool.starts_with("secrets.") || result.is_empty() {
-            return Ok(json!({"decision": "allow"}).to_string());
+            return Ok(match note {
+                Some(n) => json!({"decision": "allow", "note": n}),
+                None => json!({"decision": "allow"}),
+            }
+            .to_string());
         }
         let masked = self.0.mask(&t.project, result).await;
-        Ok(if masked == result { json!({"decision": "allow"}) } else { json!({"decision": "rewrite", "text": masked}) }.to_string())
+        Ok(match (masked == result, note) {
+            (true, None) => json!({"decision": "allow"}),
+            (true, Some(n)) => json!({"decision": "allow", "note": n}),
+            (false, None) => json!({"decision": "rewrite", "text": masked}),
+            (false, Some(n)) => json!({"decision": "rewrite", "text": format!("{masked}\n\n{n}")}),
+        }
+        .to_string())
     }
 
     #[tool(description = "pre_model: the memory indexes, AGENTS.md, the rules that apply and the skills list, when they're new to the task.")]

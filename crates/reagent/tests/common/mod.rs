@@ -19,10 +19,13 @@ pub struct Brain {
 }
 
 /// The task a request is from: its first message says `Task: <title>`;
-/// the prompt designer's are "designer".
+/// the prompt designer's are "designer", the call evaluator's "evaluator".
 pub fn title_of(body: &Value) -> String {
     if body["messages"][0]["content"].as_str().is_some_and(|c| c.starts_with("You are reagent's prompt designer")) {
         return "designer".into();
+    }
+    if body["messages"][0]["content"].as_str().is_some_and(|c| c.starts_with("You are reagent's call evaluator")) {
+        return "evaluator".into();
     }
     body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "user").find_map(|m| m["content"].as_str().and_then(|c| c.strip_prefix("Task: ")).map(|c| c.lines().next().unwrap_or("").to_string())).unwrap_or_default()
 }

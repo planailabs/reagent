@@ -141,7 +141,7 @@ pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], j
             format!("  params = {{ {} }}\n", kv.join(", "))
         };
         out.push_str(&format!(
-            "agent \"model-{name}\" {{\n  description = {desc}\n  credential {{\n    base_url = {url}{env}\n  }}\n  model = {model}\n{params}  system_prompt = {prompt}\n  executor {{ internal = true }}\n  nodes = [\"local\"]\n  spawns = []\n{history}{grep}  hooks = [\"policy\", \"mask\", \"context\", \"checkpoint\"]\n  compact = {{ at_tokens = {at}, keep = 8 }}\n}}\n\nmixture {mix} {{\n  agent = \"model-{name}\"\n  mcp = [{mcps}]\n}}\n\n",
+            "agent \"model-{name}\" {{\n  description = {desc}\n  credential {{\n    base_url = {url}{env}\n  }}\n  model = {model}\n{params}  system_prompt = {prompt}\n  executor {{ internal = true }}\n  nodes = [\"local\"]\n  spawns = []\n{history}{grep}  call_reasons = true\n  hooks = [\"policy\", \"mask\", \"context\", \"checkpoint\"]\n  compact = {{ at_tokens = {at}, keep = 8 }}\n}}\n\nmixture {mix} {{\n  agent = \"model-{name}\"\n  mcp = [{mcps}]\n}}\n\n",
             desc = hcl_str(&format!("a reagent task on {}", p.model)),
             url = hcl_str(&prov.base_url),
             model = hcl_str(&p.model),
@@ -173,7 +173,7 @@ pub fn render(c: &Config, mcp_base: &str, custom: &[reagent_store::McpServer], j
         out.push_str(&custom_block(m));
     }
     out.push_str(
-        "hook \"policy\" {\n  on = \"pre_tool\"\n  run { mcp = { server = \"hooks\", tool = \"policy\" } }\n  timeout = \"30s\"\n  on_lost = \"deny\"\n  idempotent = true\n}\n\n\
+        "hook \"policy\" {\n  on = \"pre_tool\"\n  run { mcp = { server = \"hooks\", tool = \"policy\" } }\n  timeout = \"150s\"\n  on_lost = \"deny\"\n  idempotent = true\n}\n\n\
          hook \"context\" {\n  on = \"pre_model\"\n  run { mcp = { server = \"hooks\", tool = \"context\" } }\n  timeout = \"15s\"\n  on_lost = \"allow\"\n  idempotent = true\n}\n\n\
          hook \"mask\" {\n  on = \"post_tool\"\n  run { mcp = { server = \"hooks\", tool = \"mask\" } }\n  timeout = \"15s\"\n  on_lost = \"allow\"\n  idempotent = true\n}\n\n\
          hook \"checkpoint\" {\n  on = \"pre_compact\"\n  run { mcp = { server = \"hooks\", tool = \"checkpoint\" } }\n  timeout = \"15s\"\n  on_lost = \"allow\"\n  idempotent = true\n}\n",

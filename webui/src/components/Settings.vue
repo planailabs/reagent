@@ -77,9 +77,20 @@ async function disablePush() {
 
 const limits = ref(null);
 const maxTasks = ref("");
+const evaluatorPrompt = ref("");
 async function loadLimits() {
   limits.value = await get("/api/settings").catch((e) => ((error.value = e.message), null));
   maxTasks.value = limits.value?.max_tasks ?? "";
+  evaluatorPrompt.value = limits.value?.evaluator_prompt ?? "";
+}
+async function saveEvaluator() {
+  error.value = "";
+  try {
+    limits.value = await put("/api/settings", { evaluator_prompt: evaluatorPrompt.value });
+    error.value = "saved";
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 async function saveLimits() {
   error.value = "";
@@ -117,6 +128,12 @@ onMounted(() => {
       <label>at most <input v-model="maxTasks" size="4" inputmode="numeric" placeholder="any" aria-label="tasks at once" /> tasks run at once</label>
       <button type="submit">save</button>
       <span class="dim">more wait, queued, and start oldest first; subtasks don't count; a project can set its own limit too. Now: {{ limits?.running ?? "?" }} running, {{ limits?.queued ?? "?" }} queued.</span>
+    </form>
+    <h2>call evaluator <span class="dim">({{ config.evaluator_profile ? `profile ${config.evaluator_profile}` : "off: set evaluator_profile in reagent.hcl" }})</span></h2>
+    <form class="stack" @submit.prevent="saveEvaluator">
+      <span class="dim">Calls the rules would ask you about go to a second model first; per project it decides (approved calls run, rejected ones are refused or come to you) or advises you. What you add here goes into its instructions for every project (a project adds its own).</span>
+      <textarea v-model="evaluatorPrompt" rows="4" placeholder="e.g. Never let a call reach production hosts." aria-label="evaluator instructions for every project"></textarea>
+      <div><button type="submit">save</button></div>
     </form>
     <h2>model profiles <span class="dim">(reagent.hcl)</span></h2>
     <table>

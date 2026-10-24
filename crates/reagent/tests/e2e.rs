@@ -484,7 +484,7 @@ async fn a_task_keeps_a_working_memory() {
         assert_eq!(got, json!({"plan": {"step": 2, "left": ["test"]}, "pr": "#43"}));
         call("c5", "wm.wm_remove", json!({"key": "plan"}))
     });
-    r.push("Remember", |_| call("c6", "wm.wm_remove", json!({"key": "plan"})));
+    r.push("Remember", |_| call("c6", "wm.wm_remove", json!({"key": "gone"})));
     r.push("Remember", |b| {
         assert!(last_result(b).contains("no slot"), "{}", last_result(b));
         text("remembered")

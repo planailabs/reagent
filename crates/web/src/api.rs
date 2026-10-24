@@ -75,7 +75,7 @@ pub fn endpoints() -> Endpoints {
     let mut e = Endpoints::default();
     e.get("/api/config", "config", "reagent's configuration: the kinds of task, the profiles (models), routing, notifications.", config)
         .get("/api/settings", "settings", "How many tasks may run at once (none: no limit), how many run and wait.", settings)
-        .put("/api/settings", "settings_set", "Set how many tasks may run at once (none or 0: no limit); queued ones start if there's room.", put_settings)
+        .put("/api/settings", "settings_set", "Set how many tasks may run at once (null or 0: no limit; queued ones start if there's room) and the call evaluator's instructions for every project; a field left out stays.", put_settings)
         .post("/api/design", "prompt_design", "Start reagent's designer for a rough goal: a design task reads the project, asks the person what it can't find out (task_wait shows its questions; task_answer answers them), and reports a proposal: tasks, cron entries, triggers, repo skills. design_proposal reads it, design_create makes the items you pick.", design_task)
         .post("/api/design/create", "design_create", "Make items from a design proposal (pass the ones you want, as they came or edited): tasks start, cron entries, triggers and repo skills are made. What became of each.", design_create)
         .get("/api/tasks/{task}/proposal", "design_proposal", "A design task's proposal: its note and items (null while it isn't done).", proposal)
@@ -159,6 +159,7 @@ pub fn endpoints() -> Endpoints {
         .post("/api/tasks/{task}/approve", "task_approve", "Approve or deny the call a task waits on.", approve)
         .post("/api/tasks/{task}/answer", "task_answer", "Answer a task's question.", answer)
         .post("/api/tasks/{task}/merge", "task_merge", "Decide a merge a task waits for: merge, or send it back with a message.", merge)
+        .get("/api/tasks/{task}/evaluations", "task_evaluations", "What the call evaluator judged about a task's calls, newest first: the call, its reason, the verdict (static checks or the model) with its reasoning, and what came of it (allowed, refused, asked, warned).", evaluations)
         .get("/api/tasks/{task}/diff", "task_diff", "A task's worktree: its branch and base, diffstat, diff and status.", diff)
         .get("/api/tasks/{task}/jobs", "task_jobs", "A task's commands (foreground and background jobs).", jobs)
         .get("/api/tasks/{task}/ptys", "task_ptys", "A task's terminals.", ptys)
@@ -266,24 +267,39 @@ async fn config(s: S, _: Who, _: Nothing) -> R {
     let c = &s.w.app.config;
     let profiles: Vec<Value> = c.profile.iter().map(|(n, p)| json!({"name": n, "model": p.model, "provider": p.provider, "price": p.price, "context": p.context, "fallback": p.fallback})).collect();
     let kinds: Vec<Value> = c.kind.iter().map(|(n, k)| json!({"name": n, "description": k.description, "profile": k.profile, "escalate": k.escalate, "escalate_after": k.escalate_after})).collect();
-    Ok(Json(json!({"kinds": kinds, "default_kind": c.default_kind, "routing": c.routing, "profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
+    Ok(Json(json!({"evaluator_profile": c.evaluator_profile, "kinds": kinds, "default_kind": c.default_kind, "routing": c.routing, "profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
 }
 
 /// What the person sets in the web UI: how many tasks may run at once (none: no limit).
 async fn settings(s: S, _: Who, _: Nothing) -> R {
     let running = db(s.w.app.store.running_tasks(None).await)?;
     let queued = db(s.w.app.store.queued_tasks().await)?.len();
-    Ok(Json(json!({"max_tasks": s.w.app.max_tasks().await, "running": running, "queued": queued})))
+    let evaluator_prompt = db(s.w.app.store.setting("evaluator_prompt").await)?.unwrap_or_default();
+    Ok(Json(json!({"max_tasks": s.w.app.max_tasks().await, "running": running, "queued": queued, "evaluator_prompt": evaluator_prompt})))
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct Settings {
-    max_tasks: Option<i64>,
+    /// How many tasks may run at once (none or 0: no limit; left out: as it is).
+    #[serde(default, deserialize_with = "some")]
+    max_tasks: Option<Option<i64>>,
+    /// Added to the call evaluator's instructions for every project (left out: as it is).
+    evaluator_prompt: Option<String>,
+}
+
+/// A field given as null is Some(None); one left out, None.
+fn some<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 async fn put_settings(s: S, who: Who, v: Settings) -> R {
-    let n = v.max_tasks.filter(|n| *n > 0);
-    db(s.w.app.store.set_setting("max_tasks", &n.map(|n| n.to_string()).unwrap_or_default()).await)?;
+    if let Some(n) = v.max_tasks {
+        let n = n.filter(|n| *n > 0);
+        db(s.w.app.store.set_setting("max_tasks", &n.map(|n| n.to_string()).unwrap_or_default()).await)?;
+    }
+    if let Some(p) = v.evaluator_prompt {
+        db(s.w.app.store.set_setting("evaluator_prompt", p.trim()).await)?;
+    }
     // More room: queued tasks start.
     s.w.app.start_queued().await;
     settings(s, who, Nothing {}).await
@@ -1262,6 +1278,11 @@ struct MergeQ {
 async fn merge(s: S, _: Who, m: MergeQ) -> R {
     s.w.app.decide_merge(&m.task, if m.merge { MergeAnswer::Merge } else { MergeAnswer::Reject(if m.message.is_empty() { "not now".into() } else { m.message }) }).await?;
     Ok(Json(json!({"ok": true})))
+}
+
+async fn evaluations(s: S, _: Who, r: TaskRef) -> R {
+    s.w.app.task(&r.task).await?;
+    Ok(Json(json!(db(s.w.app.store.evaluations(&r.task, 200).await)?)))
 }
 
 async fn diff(s: S, _: Who, r: TaskRef) -> R {

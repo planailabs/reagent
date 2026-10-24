@@ -155,6 +155,10 @@ pub struct App {
     pub triggers: crate::triggers::Runs,
     pub services: crate::services::Services,
     pub locks: crate::locks::Locks,
+    /// Each task's recent calls, for the evaluator's static checks.
+    pub calls: crate::evaluator::History,
+    /// Warnings for calls let run (static checks set to warn), by call id: added to their results.
+    pub call_notes: Mutex<HashMap<String, String>>,
     /// What wakes a task's shell.sleep: a message to it.
     // ponytail: one entry per task that ever slept, never removed; small.
     wakers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
@@ -213,6 +217,8 @@ impl App {
             triggers: Default::default(),
             services: Default::default(),
             locks: Default::default(),
+            calls: Default::default(),
+            call_notes: Default::default(),
         })
     }
 
@@ -405,6 +411,7 @@ impl App {
             crate::locks::OnBusy::parse(v)?;
         }
         crate::locks::parse_all(&p.slug, &l.merge_locks)?;
+        crate::evaluator::check_settings(&p.evaluator)?;
         crate::locks::parse_all(&p.slug, &l.locks.keys().cloned().collect::<Vec<_>>())?;
         if !matches!(l.merge_on_busy.as_deref(), None | Some("wait" | "fail")) {
             return Err("merge_on_busy: wait or fail".into());
@@ -1718,7 +1725,9 @@ impl App {
                 let call_id = call["id"].as_str().unwrap_or_default().to_string();
                 // Paused while it waits: it stays paused (its messages held) with the call still shown.
                 state = if a["paused"] == true { "paused" } else { "waiting" }.into();
-                wait = Some(json!({"kind": "approval", "call": call}));
+                // What the evaluator said about it, for the person deciding.
+                let evaluation = self.store.evaluation_of_call(&t.id, &call_id).await.ok().flatten();
+                wait = Some(json!({"kind": "approval", "call": call, "evaluation": evaluation}));
                 let key = (t.id.clone(), format!("approval:{call_id}"));
                 if self.notified.lock().unwrap().insert(key) {
                     let tool = call["function"]["name"].as_str().unwrap_or("").replace("__", ".");

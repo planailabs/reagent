@@ -43,6 +43,9 @@ const reports = computed(() => {
 /** Something waits for the person: a call to approve, a question, a merge, the budget. */
 const waiting = computed(() => !!call.value || ["question", "merge", "budget"].includes(t.value?.wait?.kind));
 const ptys = ref([]);
+/** What the call evaluator judged about its calls, newest first. */
+const evaluations = ref([]);
+const verdict = (e) => (e.source === "error" ? "couldn't judge" : e.source === "static" ? "static check" : e.approved ? "approves" : "rejects");
 /** Foreground commands the task waits for: each with its last lines, to move to the background when stuck. */
 const fg = ref([]);
 const now = ref(Date.now() / 1000);
@@ -55,6 +58,7 @@ async function load() {
     if (t.value.agent) tr.value = await get(`/api/tasks/${props.id}/transcript?full=true`).catch(() => tr.value);
     diff.value = t.value.worktree ? await get(`/api/tasks/${props.id}/diff`).catch(() => null) : null;
     ptys.value = await get(`/api/tasks/${props.id}/ptys`).catch(() => []);
+    evaluations.value = await get(`/api/tasks/${props.id}/evaluations`).catch(() => []);
     const running = (await get(`/api/tasks/${props.id}/jobs`).catch(() => [])).filter((j) => j.fg && !j.backgrounded && j.ended == null);
     fg.value = await Promise.all(running.map(async (j) => ({ ...j, tail: (await get(`/api/jobs/${j.id}/output?tail=5`).catch(() => ({ text: [] }))).text.map((l) => l.text).join("\n") })));
   } catch (e) {
@@ -174,6 +178,10 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <div v-if="call" class="err wait" aria-label="approval">
         <div>wants to run <span class="hi">{{ toolName(call.function.name) }}</span></div>
         <pre>{{ args }}</pre>
+        <div v-if="t.wait.evaluation" class="dim" aria-label="the evaluator's verdict">
+          the evaluator {{ verdict(t.wait.evaluation) }}<span v-if="t.wait.evaluation.reasoning">: {{ t.wait.evaluation.reasoning }}</span>
+          <span v-if="t.wait.evaluation.reason"> · the task's reason: {{ t.wait.evaluation.reason }}</span>
+        </div>
         <div class="row">
           <button @click="act('approve', { call_id: call.id, approved: true })">allow once</button>
           <button title="adds a rule allowing this tool with this command" @click="act('approve', { call_id: call.id, approved: true, always: true })">always allow this</button>
@@ -300,6 +308,14 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       </div>
     </section>
 
+    <details v-if="evaluations.length" class="card" aria-label="evaluated calls">
+      <summary>evaluator <span class="dim">{{ evaluations.length }} calls judged, {{ evaluations.filter((e) => e.outcome === "refused").length }} refused</span></summary>
+      <div v-for="e in evaluations" :key="e.id" :class="{ err: e.outcome === 'refused' }">
+        <span class="hi">{{ e.outcome }}</span> {{ e.tool }} <span class="dim">({{ e.risk }}; {{ verdict(e) }})</span> <code class="dim">{{ e.args.length > 160 ? e.args.slice(0, 160) + "…" : e.args }}</code>
+        <div v-if="e.reason" class="dim">reason: {{ e.reason }}</div>
+        <div v-if="e.reasoning">{{ e.reasoning }}</div>
+      </div>
+    </details>
     <div v-if="todos.length" class="todos" aria-label="todo list">
       <h2>todo <span class="dim">{{ todos.filter((x) => x.status === "done").length }} of {{ todos.filter((x) => x.status !== "cancelled").length }} done</span></h2>
       <div v-for="x in todos" :key="x.id" :class="['todo', x.status]"><span class="mark">{{ todoMark(x.status) }}</span> {{ x.text }}</div>
