@@ -191,6 +191,11 @@ pub struct Spawn {
     pub kind: Option<String>,
     /// A persistent worktree of its project to work in (default: yours, in this project; "": the project folder).
     pub worktree: Option<String>,
+    /// Locks it takes when it starts (`deploy`, `db:shared`, `global:staging`): your task tree's, so what you hold it has already.
+    #[serde(default)]
+    pub locks: Vec<String>,
+    /// When one is busy: wait (it's queued until free), skip (not started) or fail (default: the project's).
+    pub on_busy: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -249,6 +254,11 @@ pub struct CronAdd {
     pub profile: Option<String>,
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Locks its tasks take when they start (`deploy`, `db:shared`, `global:staging`), held until they end.
+    #[serde(default)]
+    pub locks: Vec<String>,
+    /// When one is busy: wait, skip or fail (default: the project's).
+    pub on_busy: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -397,6 +407,8 @@ impl TaskTools {
                 values: a.values,
                 unlimited: vec![],
                 worktree: a.worktree,
+                locks: a.locks,
+                on_busy: a.on_busy,
             })
             .await?;
         Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.name()))
@@ -523,7 +535,7 @@ impl TaskTools {
             tz: a.tz.unwrap_or_else(|| "UTC".into()),
             title: a.title,
             prompt: a.prompt,
-            options: Json(CronOptions { profile: a.profile, kind: None, budget: None, skills: a.skills }),
+            options: Json(CronOptions { profile: a.profile, kind: None, budget: None, skills: a.skills, locks: a.locks, on_busy: a.on_busy }),
             overlap: a.overlap.unwrap_or_else(|| "skip".into()),
             catch_up: true,
             enabled: true,

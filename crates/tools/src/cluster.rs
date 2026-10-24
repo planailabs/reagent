@@ -22,6 +22,8 @@ pub const SERVERS: &[(&str, &[&str])] = &[
     ("ask", &["ask"]),
     ("todo", &["todo_list"]),
     ("wm", &["wm_get"]),
+    // Taking what's held already, or letting go of what isn't, changes nothing.
+    ("locks", &["lock_acquire", "lock_release", "lock_list"]),
     ("secrets", &["secrets_list", "secrets_get"]),
     ("triggers", &["trigger_list"]),
     ("services", &["service_list", "service_logs"]),

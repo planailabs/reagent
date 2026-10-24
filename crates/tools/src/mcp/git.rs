@@ -121,8 +121,12 @@ impl GitTools {
             }
         }
         let (dir, base, branch) = (dir.to_path_buf(), w.base.clone(), w.branch.clone());
-        let r = tokio::task::spawn_blocking(move || git::merge(&repo, &dir, &branch, &base, strategy, &message)).await.map_err(|e| e.to_string())??;
-        Ok(match r {
+        // Under the project's merge locks, held by this task's tree (what it holds already counts).
+        let holder = crate::locks::holder_of(&self.0, &t).await;
+        let taken = crate::locks::for_merge(&self.0, &p, &holder).await?;
+        let r = tokio::task::spawn_blocking(move || git::merge(&repo, &dir, &branch, &base, strategy, &message)).await.map_err(|e| e.to_string());
+        crate::locks::release(&self.0, &holder, &taken).await;
+        Ok(match r?? {
             Merged::Done { commit } => format!("merged {} into {} ({commit}). The worktree stays until git.worktree_drop.", w.branch, w.base),
             Merged::Nothing => "nothing to merge".into(),
             Merged::Conflicts { files } => format!("conflicts in: {}. Nothing was changed in {}. Resolve them in your worktree (git merge {} there, fix, commit), then merge again.", files.join(", "), w.base, w.base),

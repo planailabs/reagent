@@ -27,6 +27,10 @@ pub fn prepare(c: &mut Cron, now: i64) -> Result<(), String> {
     if c.title.trim().is_empty() || c.prompt.trim().is_empty() {
         return Err("a cron entry needs a title and a prompt".into());
     }
+    crate::locks::parse_all(&c.project, &c.options.locks)?;
+    if let Some(b) = &c.options.on_busy {
+        crate::locks::OnBusy::parse(b)?;
+    }
     c.next_run = Some(next_run(&c.expr, &c.tz, now)?);
     Ok(())
 }
@@ -60,6 +64,8 @@ pub async fn run(app: &App, c: &Cron) -> Result<Task, String> {
         parent: None,
         origin: Some(format!("cron:{}", c.id)),
         kind: o.kind.clone(),
+        locks: o.locks.clone(),
+        on_busy: o.on_busy.clone(),
         ..Default::default()
     })
     .await
@@ -85,6 +91,8 @@ pub async fn tick(app: &App, now: i64) {
             } else if !busy {
                 match run(app, &c).await {
                     Ok(t) => tracing::info!(cron = c.id, task = %t.id, "cron run started"),
+                    // A lock it needs is busy: until its next time.
+                    Err(e) if e.starts_with(crate::locks::SKIPPED) => tracing::info!(cron = c.id, "cron run {e}"),
                     Err(e) => {
                         tracing::warn!(cron = c.id, error = %e, "cron run didn't start");
                         app.notify("cron", None, &format!("{} didn't start", c.title), &e).await;
@@ -106,8 +114,9 @@ pub async fn task_ended(app: &App, t: &Task) {
         c.queued = false;
         c.last_run = Some(chrono::Utc::now().timestamp());
         let _ = app.store.put_cron(&c).await;
-        if let Err(e) = run(app, &c).await {
-            app.notify("cron", None, &format!("{} didn't start", c.title), &e).await;
+        match run(app, &c).await {
+            Err(e) if !e.starts_with(crate::locks::SKIPPED) => app.notify("cron", None, &format!("{} didn't start", c.title), &e).await,
+            _ => {}
         }
     }
 }

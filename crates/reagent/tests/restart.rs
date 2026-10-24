@@ -71,6 +71,7 @@ async fn a_task_that_never_got_an_agent_starts_after_a_restart() {
             skills: vec![],
             kind: None,
             home: None,
+            locks: vec![],
         })
         .await
         .unwrap();

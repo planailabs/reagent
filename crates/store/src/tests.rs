@@ -330,3 +330,26 @@ async fn concurrent_transactions_on_several_connections_dont_fail() {
     let ids: Vec<i64> = s.todos(&t.id).await.unwrap().iter().map(|t| t.id).collect();
     assert_eq!(ids, (1..=32).collect::<Vec<_>>());
 }
+
+#[tokio::test]
+async fn locks_are_taken_all_or_none_shared_or_exclusive() {
+    let (s, _d) = store().await;
+    let l = |n: &str, shared: bool| ("site".to_string(), n.to_string(), shared);
+    assert_eq!(s.take_locks("task:a", &[l("db", true), l("deploy", false)]).await.unwrap().unwrap().len(), 2);
+    // Shared with shared; an exclusive one is in the way, and nothing is taken then.
+    assert!(s.take_locks("task:b", &[l("db", true)]).await.unwrap().is_ok());
+    let busy = s.take_locks("task:c", &[l("other", false), l("deploy", false)]).await.unwrap().unwrap_err();
+    assert_eq!(busy.iter().map(|b| b.holder.as_str()).collect::<Vec<_>>(), ["task:a"]);
+    assert!(s.locks(Some("site")).await.unwrap().iter().all(|x| x.name != "other"));
+    // What it holds isn't taken again; making a shared one exclusive waits for the others.
+    assert!(s.take_locks("task:a", &[l("deploy", false)]).await.unwrap().unwrap().is_empty());
+    assert!(s.take_locks("task:a", &[l("db", false)]).await.unwrap().is_err());
+    assert!(s.release_lock("task:b", "site", "db").await.unwrap());
+    assert!(s.take_locks("task:a", &[l("db", false)]).await.unwrap().is_ok());
+    // Global locks are listed with every project's.
+    s.take_locks("sync:x/", &[(String::new(), "staging".into(), false)]).await.unwrap().unwrap();
+    assert_eq!(s.locks(Some("site")).await.unwrap().len(), 3);
+    assert_eq!(s.break_lock("site", "deploy").await.unwrap(), ["task:a"]);
+    assert_eq!(s.release_transient_locks().await.unwrap(), 1);
+    assert_eq!(s.release_holder("task:a").await.unwrap(), 1);
+}

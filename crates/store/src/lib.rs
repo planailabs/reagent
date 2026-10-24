@@ -59,6 +59,26 @@ pub struct Project {
     /// `shared` or `exclusive`: tasks in one persistent worktree at once (each may set its own).
     #[serde(default = "shared")]
     pub worktree_sharing: String,
+    /// Its known locks, the busy policy per origin, and the locks merges take.
+    #[serde(default)]
+    pub locking: Json<Locking>,
+}
+
+/// A project's lock settings.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Locking {
+    /// The locks its tasks should know of: name, what it's for.
+    #[serde(default)]
+    pub locks: std::collections::BTreeMap<String, String>,
+    /// wait, skip or fail per origin (person, agent, task, cron, trigger) when an action's locks are busy.
+    #[serde(default)]
+    pub on_busy: std::collections::BTreeMap<String, String>,
+    /// Held while a branch is merged into its base.
+    #[serde(default)]
+    pub merge_locks: Vec<String>,
+    /// wait (default) or fail.
+    #[serde(default)]
+    pub merge_on_busy: Option<String>,
 }
 
 fn shared() -> String {
@@ -88,6 +108,7 @@ impl Project {
             kind: None,
             max_tasks: None,
             worktree_sharing: shared(),
+            locking: Json::default(),
         }
     }
 }
@@ -166,6 +187,9 @@ pub struct Task {
     /// The persistent worktree it works in (none: the project folder).
     #[serde(default)]
     pub home: Option<String>,
+    /// The locks it takes when it starts (`deploy`, `db:shared`, `global:staging`).
+    #[serde(default)]
+    pub locks: Json<Vec<String>>,
 }
 
 impl Task {
@@ -178,6 +202,17 @@ impl Task {
     pub fn is_active(&self) -> bool {
         matches!(self.state.as_str(), "running" | "waiting" | "paused" | "queued")
     }
+}
+
+/// One holder of a lock.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Lock {
+    /// '' for a global lock.
+    pub project: String,
+    pub name: String,
+    pub holder: String,
+    pub shared: bool,
+    pub since: i64,
 }
 
 /// What starting a task needs.
@@ -194,6 +229,7 @@ pub struct NewTask {
     pub skills: Vec<String>,
     pub kind: Option<String>,
     pub home: Option<String>,
+    pub locks: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
@@ -244,6 +280,12 @@ pub struct CronOptions {
     pub budget: Option<Budget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+    /// The locks its tasks (and a trigger's script run) take.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locks: Vec<String>,
+    /// wait, skip or fail when one is busy (none: the project's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_busy: Option<String>,
 }
 
 /// A trigger: a script that watches something (poll, watch, webhook) and
@@ -399,6 +441,12 @@ pub struct GitSync {
     pub notes: String,
     #[serde(default)]
     pub state: Json<SyncState>,
+    /// The locks a round takes.
+    #[serde(default)]
+    pub locks: Json<Vec<String>>,
+    /// wait, skip (default) or fail when one is busy.
+    #[serde(default)]
+    pub on_busy: Option<String>,
 }
 
 fn sync_every() -> i64 {
@@ -411,7 +459,7 @@ fn rebase() -> String {
 
 impl GitSync {
     pub fn new(project: &str, place: &str) -> Self {
-        GitSync { project: project.into(), place: place.into(), enabled: false, every: sync_every(), strategy: rebase(), remote: None, branch: None, notes: String::new(), state: Json::default() }
+        GitSync { project: project.into(), place: place.into(), enabled: false, every: sync_every(), strategy: rebase(), remote: None, branch: None, notes: String::new(), state: Json::default(), locks: Json::default(), on_busy: None }
     }
 }
 
@@ -745,10 +793,10 @@ impl Store {
     /// Adds a project, or changes one (by its slug).
     pub async fn put_project(&self, p: &Project) -> R<()> {
         sqlx::query(
-            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks, worktree_sharing)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            "insert into projects (slug, name, path, memory, worktrees, merge, default_action, profile, budget, env, devshell, devshell_attr, kind, max_tasks, worktree_sharing, locking)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              on conflict (slug) do update set name = $2, path = $3, memory = $4, worktrees = $5, merge = $6,
-               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14, worktree_sharing = $15",
+               default_action = $7, profile = $8, budget = $9, env = $10, devshell = $11, devshell_attr = $12, kind = $13, max_tasks = $14, worktree_sharing = $15, locking = $16",
         )
         .bind(&p.slug)
         .bind(&p.name)
@@ -765,6 +813,7 @@ impl Store {
         .bind(&p.kind)
         .bind(p.max_tasks)
         .bind(&p.worktree_sharing)
+        .bind(&p.locking)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -816,8 +865,8 @@ impl Store {
     pub async fn add_task(&self, t: &NewTask) -> R<Task> {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "insert into tasks (id, project, parent, title, prompt, origin, cwd, profile, budget, skills, kind, home)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            "insert into tasks (id, project, parent, title, prompt, origin, cwd, profile, budget, skills, kind, home, locks)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(&id)
         .bind(&t.project)
@@ -831,6 +880,7 @@ impl Store {
         .bind(Json(&t.skills))
         .bind(&t.kind)
         .bind(&t.home)
+        .bind(Json(&t.locks))
         .execute(&self.pool)
         .await?;
         Ok(self.task(&id).await?.expect("just added"))
@@ -1208,6 +1258,12 @@ impl Store {
         Ok(sqlx::query("insert into trigger_keys (project, name, key) values ($1, $2, $3) on conflict do nothing").bind(project).bind(name).bind(key).execute(&self.pool).await?.rows_affected() > 0)
     }
 
+    /// Forgets a key, so its event counts as new when it comes again.
+    pub async fn trigger_key_forget(&self, project: &str, name: &str, key: &str) -> R<()> {
+        sqlx::query("delete from trigger_keys where project = $1 and name = $2 and key = $3").bind(project).bind(name).bind(key).execute(&self.pool).await?;
+        Ok(())
+    }
+
     /// Records a run (the last 20 are kept); its id.
     pub async fn add_trigger_run(&self, project: &str, name: &str, r: &TriggerRun) -> R<i64> {
         let id = sqlx::query_scalar("insert into trigger_runs (project, name, started, ended, exit, ok, events, output, error) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id")
@@ -1248,8 +1304,8 @@ impl Store {
     /// Adds or changes a branch's sync settings (its state stays).
     pub async fn put_git_sync(&self, v: &GitSync) -> R<()> {
         sqlx::query(
-            "insert into git_sync (project, place, enabled, every, strategy, remote, branch, notes) values ($1, $2, $3, $4, $5, $6, $7, $8)
-             on conflict (project, place) do update set enabled = $3, every = $4, strategy = $5, remote = $6, branch = $7, notes = $8",
+            "insert into git_sync (project, place, enabled, every, strategy, remote, branch, notes, locks, on_busy) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             on conflict (project, place) do update set enabled = $3, every = $4, strategy = $5, remote = $6, branch = $7, notes = $8, locks = $9, on_busy = $10",
         )
         .bind(&v.project)
         .bind(&v.place)
@@ -1259,6 +1315,8 @@ impl Store {
         .bind(&v.remote)
         .bind(&v.branch)
         .bind(&v.notes)
+        .bind(&v.locks)
+        .bind(&v.on_busy)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1273,6 +1331,73 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Locks held: a project's and the global ones (none: every one).
+    pub async fn locks(&self, project: Option<&str>) -> R<Vec<Lock>> {
+        sqlx::query_as("select * from locks where $1 is null or project = $1 or project = '' order by project, name, since").bind(project).fetch_all(&self.pool).await
+    }
+
+    /// Takes locks (project, name, shared) for a holder, all or none: those
+    /// another holder has in the way, or the ones newly taken (what it held
+    /// already isn't). A shared one it holds becomes exclusive when asked.
+    pub async fn take_locks(&self, holder: &str, want: &[(String, String, bool)]) -> R<Result<Vec<(String, String, bool)>, Vec<Lock>>> {
+        let mut tx = self.pool.begin().await?;
+        let mut busy = vec![];
+        for (project, name, shared) in want {
+            let others: Vec<Lock> = sqlx::query_as("select * from locks where project = $1 and name = $2 and holder != $3").bind(project).bind(name).bind(holder).fetch_all(&mut *tx).await?;
+            busy.extend(others.into_iter().filter(|l| !shared || !l.shared));
+        }
+        if !busy.is_empty() {
+            return Ok(Err(busy));
+        }
+        let mut taken = vec![];
+        for (project, name, shared) in want {
+            let had: Option<bool> = sqlx::query_scalar("select shared from locks where project = $1 and name = $2 and holder = $3").bind(project).bind(name).bind(holder).fetch_optional(&mut *tx).await?;
+            match had {
+                None => {
+                    sqlx::query("insert into locks (project, name, holder, shared, since) values ($1, $2, $3, $4, $5)").bind(project).bind(name).bind(holder).bind(shared).bind(now()).execute(&mut *tx).await?;
+                    taken.push((project.clone(), name.clone(), *shared));
+                }
+                Some(true) if !shared => {
+                    sqlx::query("update locks set shared = false where project = $1 and name = $2 and holder = $3").bind(project).bind(name).bind(holder).execute(&mut *tx).await?;
+                }
+                Some(_) => {}
+            }
+        }
+        tx.commit().await?;
+        Ok(Ok(taken))
+    }
+
+    pub async fn release_lock(&self, holder: &str, project: &str, name: &str) -> R<bool> {
+        Ok(sqlx::query("delete from locks where holder = $1 and project = $2 and name = $3").bind(holder).bind(project).bind(name).execute(&self.pool).await?.rows_affected() > 0)
+    }
+
+    pub async fn release_holder(&self, holder: &str) -> R<u64> {
+        Ok(sqlx::query("delete from locks where holder = $1").bind(holder).execute(&self.pool).await?.rows_affected())
+    }
+
+    /// Breaks a lock: its holders, who no longer hold it.
+    pub async fn break_lock(&self, project: &str, name: &str) -> R<Vec<String>> {
+        let holders: Vec<String> = sqlx::query_scalar("delete from locks where project = $1 and name = $2 returning holder").bind(project).bind(name).fetch_all(&self.pool).await?;
+        Ok(holders)
+    }
+
+    /// Lets go of what only a running reagent holds (sync rounds, merges, trigger runs).
+    pub async fn release_transient_locks(&self) -> R<u64> {
+        Ok(sqlx::query("delete from locks where holder not like 'task:%'").execute(&self.pool).await?.rows_affected())
+    }
+
+    /// Whether a task or any task under it still goes on.
+    pub async fn tree_active(&self, root: &str) -> R<bool> {
+        let n: i64 = sqlx::query_scalar(
+            "with recursive tree(id) as (select id from tasks where id = $1 union all select t.id from tasks t join tree on t.parent = tree.id)
+             select count(*) from tasks where id in (select id from tree) and state not in ('done', 'failed', 'cancelled')",
+        )
+        .bind(root)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n > 0)
     }
 
     pub async fn remove_git_sync(&self, project: &str, place: &str) -> R<bool> {

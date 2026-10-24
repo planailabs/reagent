@@ -107,6 +107,8 @@ pub async fn up(o: Opts) -> anyhow::Result<Running> {
     app.recount_usage().await;
     resume_paused(&app, &hub).await;
     app.requeue_unstarted().await;
+    // A sync round's, a merge's or a trigger run's locks ended with the reagent that ran them.
+    let _ = app.store.release_transient_locks().await;
     app.follow();
     app.watch_mcp();
     reagent_tools::cron::schedule(app.clone());

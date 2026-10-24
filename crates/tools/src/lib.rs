@@ -16,6 +16,7 @@ pub mod design;
 pub mod devshell;
 pub mod gitsync;
 pub mod hooks;
+pub mod locks;
 pub mod mcp;
 pub mod notify;
 pub mod persistent;

@@ -107,6 +107,8 @@ pub fn endpoints() -> Endpoints {
         .get("/api/projects/{project}/agent-rules", "project_agent_rules", "The rules (.agents/rules, global, plugins') a project's tasks get, and when.", project_rules)
         .get("/api/projects/{project}/cron", "cron_list", "A project's cron entries.", crons)
         .get("/api/projects/{project}/triggers", "project_triggers", "A project's triggers, whole (each with its webhook path), and its repo triggers that couldn't be read.", triggers)
+        .get("/api/projects/{project}/locks", "lock_list", "A project's locks and the global ones: what each is for, who holds it (a task, a sync round, a merge, a trigger's run; shared or not, since when), who waits.", locks)
+        .delete("/api/locks/{project}/{name}", "lock_break", "Break a lock (project `global` for a global one): its holders lose it (a task is told).", break_lock)
         .get("/api/projects/{project}/services", "project_services", "A project's services, whole, and its repo services that couldn't be read.", services)
         .put("/api/services/{project}/{name}", "service_put", "Add or change a service, whole (service_add takes a shorter form). The person's command is allowed; an agent's goes by the project's policy.", put_service)
         .delete("/api/services/{project}/{name}", "service_remove", "Remove a service: it's stopped (a repo service's files go too).", remove_service)
@@ -716,8 +718,29 @@ struct MergeWorktree {
 }
 
 async fn merge_worktree(s: S, _: Who, b: MergeWorktree) -> R {
-    let said = s.w.app.worktrees().merge(&b.project, &b.name, b.strategy.unwrap_or(reagent_tools::git::Strategy::Merge), b.message).await?;
-    Ok(Json(json!({"merged": said})))
+    let p = s.w.app.project(&b.project).await?;
+    // Under the project's merge locks.
+    let holder = format!("merge:{}/{}", p.slug, b.name);
+    let taken = reagent_tools::locks::for_merge(&s.w.app, &p, &holder).await?;
+    let said = s.w.app.worktrees().merge(&b.project, &b.name, b.strategy.unwrap_or(reagent_tools::git::Strategy::Merge), b.message).await;
+    reagent_tools::locks::release(&s.w.app, &holder, &taken).await;
+    Ok(Json(json!({"merged": said?})))
+}
+
+async fn locks(s: S, _: Who, p: ProjectRef) -> R {
+    Ok(Json(reagent_tools::locks::list(&s.w.app, &p.project).await?))
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct LockRef {
+    /// The lock's project, or `global`.
+    project: String,
+    name: String,
+}
+
+async fn break_lock(s: S, _: Who, l: LockRef) -> R {
+    let project = if l.project == "global" { String::new() } else { s.w.app.project(&l.project).await?.slug };
+    Ok(Json(json!({"broken": reagent_tools::locks::break_lock(&s.w.app, &project, &l.name).await?})))
 }
 
 #[derive(Deserialize, JsonSchema)]

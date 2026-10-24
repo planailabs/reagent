@@ -4,6 +4,7 @@
 
 pub mod fs;
 pub mod git;
+pub mod locks;
 pub mod misc;
 pub mod shell;
 pub mod services;
@@ -134,6 +135,7 @@ pub fn router(app: Arc<App>) -> axum::Router {
         .nest_service("/mcp/ask", service(misc::AskTools(app.clone())))
         .nest_service("/mcp/todo", service(misc::TodoTools(app.clone())))
         .nest_service("/mcp/wm", service(misc::WorkingMemoryTools(app.clone())))
+        .nest_service("/mcp/locks", service(locks::LockTools(app.clone())))
         .nest_service("/mcp/secrets", service(misc::SecretTools(app.clone())))
         .nest_service("/mcp/triggers", service(triggers::TriggerTools(app.clone())))
         .nest_service("/mcp/services", service(services::ServiceTools(app.clone())))

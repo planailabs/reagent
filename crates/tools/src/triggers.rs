@@ -95,6 +95,10 @@ pub fn check(t: &Trigger) -> Result<(), String> {
     if !matches!(t.overlap.as_str(), "skip" | "queue" | "parallel") {
         return Err("overlap: skip, queue or parallel".into());
     }
+    crate::locks::parse_all(&t.project, &t.options.locks)?;
+    if let Some(b) = &t.options.on_busy {
+        crate::locks::OnBusy::parse(b)?;
+    }
     if !(1..=3600).contains(&t.timeout) {
         return Err("timeout: 1 to 3600 seconds".into());
     }
@@ -149,6 +153,10 @@ struct Front {
     secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     devshell: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    locks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    on_busy: Option<String>,
 }
 
 /// A trigger from its TRIGGER.md and the folder it's in (the script read from beside it).
@@ -184,7 +192,7 @@ pub fn from_markdown(project: &str, dir: &Path, text: &str) -> Result<Trigger, S
         overlap: f.overlap.unwrap_or_else(|| "skip".into()),
         title: f.title,
         prompt: body,
-        options: Json(CronOptions { profile: f.profile, kind: f.kind, budget: f.budget, skills: f.skills }),
+        options: Json(CronOptions { profile: f.profile, kind: f.kind, budget: f.budget, skills: f.skills, locks: f.locks, on_busy: f.on_busy }),
         secret: f.secret,
         devshell: f.devshell.unwrap_or(true),
         enabled: true,
@@ -214,6 +222,8 @@ pub fn to_markdown(t: &Trigger) -> String {
         budget: o.budget.clone(),
         secret: t.secret.clone(),
         devshell: (!t.devshell).then_some(false),
+        locks: o.locks.clone(),
+        on_busy: o.on_busy.clone(),
     };
     format!("---\n{}---\n\n{}\n", serde_yaml::to_string(&f).unwrap_or_default(), t.prompt.trim())
 }
@@ -359,6 +369,11 @@ pub struct Def {
     pub secret: Option<String>,
     /// false: not in the project's nix dev shell.
     pub devshell: Option<bool>,
+    /// Locks a poll or webhook script holds while it runs, and its tasks after (`deploy`, `db:shared`, `global:staging`).
+    #[serde(default)]
+    pub locks: Vec<String>,
+    /// When one is busy: wait, skip or fail (default: the project's, else skip).
+    pub on_busy: Option<String>,
 }
 
 impl Def {
@@ -379,7 +394,7 @@ impl Def {
             overlap: self.overlap.unwrap_or_else(|| "skip".into()),
             title: self.title,
             prompt: self.prompt,
-            options: Json(CronOptions { profile: self.profile, kind: self.kind, budget: None, skills: self.skills }),
+            options: Json(CronOptions { profile: self.profile, kind: self.kind, budget: None, skills: self.skills, locks: self.locks, on_busy: self.on_busy }),
             secret: self.secret,
             devshell: self.devshell.unwrap_or(true),
             enabled: true,
@@ -739,7 +754,14 @@ async fn dispatch(app: &App, t: &Trigger, p: &Project, e: &Event) -> Result<Stri
     if !app.store.trigger_key_new(&p.slug, &t.name, &key).await.map_err(|e| e.to_string())? {
         return Ok(format!("{key}: seen before, dropped"));
     }
-    deliver(app, t, p, e).await
+    match deliver(app, t, p, e).await {
+        // Its task's lock is busy and it shouldn't wait: the event comes again.
+        Err(why) if why.starts_with(crate::locks::SKIPPED) => {
+            app.store.trigger_key_forget(&p.slug, &t.name, &key).await.map_err(|e| e.to_string())?;
+            Ok(format!("{key}: {why}; not marked seen"))
+        }
+        r => r,
+    }
 }
 
 /// An event past the key check: a message to a task, or a new task (as the overlap allows).
@@ -786,7 +808,7 @@ async fn start(app: &App, t: &Trigger, p: &Project, e: &Event, ctx: &Value) -> R
     }
     let title = render(e.title.as_deref().unwrap_or(&t.title), ctx);
     let task = app
-        .start_task(StartTask { project: p.slug.clone(), title, prompt, profile: o.profile.clone(), budget: o.budget.clone(), skills: o.skills.clone(), parent: None, origin: Some(origin(t)), kind: o.kind.clone(), ..Default::default() })
+        .start_task(StartTask { project: p.slug.clone(), title, prompt, profile: o.profile.clone(), budget: o.budget.clone(), skills: o.skills.clone(), parent: None, origin: Some(origin(t)), kind: o.kind.clone(), locks: o.locks.clone(), on_busy: o.on_busy.clone(), ..Default::default() })
         .await?;
     let (id, key) = (task.id.clone(), e.key.clone().unwrap_or_default());
     update(app, &p.slug, &t.name, |s| {
@@ -819,8 +841,40 @@ pub async fn task_ended(app: &App, task: &Task) {
 /// A poll run (or a run asked for now).
 async fn poll(app: Arc<App>, t: Trigger, p: Project) {
     let started = chrono::Utc::now().timestamp();
+    let holder = format!("trigger:{}", t.id());
+    let taken = match run_locks(&app, &t, &p, &holder, false).await {
+        Ok(taken) => taken,
+        Err(None) => return,
+        Err(Some(e)) => return finish(&app, &t, &p, started, Out { exit: None, stdout: String::new(), log: String::new(), error: Some(e) }).await,
+    };
     let out = run_script(&app, &t, &p, None).await;
+    // Its tasks take the locks themselves.
+    crate::locks::release(&app, &holder, &taken).await;
     finish(&app, &t, &p, started, out).await;
+}
+
+/// Takes the locks a script run needs (a poll's, a webhook's): those newly
+/// taken; else Err(None) when it doesn't run now (wait: a poll tries again at
+/// the next tick; skip: at its next time), Err(Some) a failed run.
+async fn run_locks(app: &App, t: &Trigger, p: &Project, holder: &str, webhook: bool) -> Result<Vec<crate::locks::Spec>, Option<String>> {
+    use crate::locks::OnBusy;
+    let specs = crate::locks::parse_all(&p.slug, &t.options.locks).map_err(Some)?;
+    let busy = match crate::locks::take(app, holder, &specs).await {
+        Ok(taken) => return Ok(taken),
+        Err(busy) => busy,
+    };
+    match crate::locks::on_busy(p, t.options.on_busy.as_deref(), "trigger").map_err(Some)? {
+        // A webhook's delivery has no next tick: it waits here.
+        OnBusy::Wait if webhook => crate::locks::wait_for(app, holder, &specs, std::time::Duration::from_secs(600)).await.map_err(|e| Some(format!("a lock it needs: {e}"))),
+        OnBusy::Wait => Err(None),
+        OnBusy::Skip => {
+            tracing::info!(trigger = %t.id(), "run skipped: a lock it needs is busy: {busy}");
+            let next = next_due(t, chrono::Utc::now().timestamp());
+            update(app, &p.slug, &t.name, |s| s.next_run = Some(next)).await;
+            Err(None)
+        }
+        OnBusy::Fail => Err(Some(format!("a lock it needs is busy: {busy}"))),
+    }
 }
 
 /// A watcher: started in the supervisor when it doesn't run; its new
@@ -962,7 +1016,14 @@ pub async fn webhook(app: Arc<App>, project: &str, name: &str, headers: &axum::h
             Trust::Deny(why) => return refused(&app, &t, &p, &why).await,
         }
         let input = json!({"headers": hdrs, "body": serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text))}).to_string();
+        let holder = format!("trigger:{}", t.id());
+        let taken = match run_locks(&app, &t, &p, &holder, true).await {
+            Ok(taken) => taken,
+            Err(None) => return,
+            Err(Some(e)) => return finish(&app, &t, &p, started, Out { exit: None, stdout: String::new(), log: String::new(), error: Some(e) }).await,
+        };
         let out = run_script(&app, &t, &p, Some(input)).await;
+        crate::locks::release(&app, &holder, &taken).await;
         finish(&app, &t, &p, started, out).await;
     });
     Ok(())

@@ -198,6 +198,12 @@ enum TriggerCmd {
         /// Not in the project's nix dev shell.
         #[arg(long)]
         no_devshell: bool,
+        /// A lock its script run and its tasks take (deploy, db:shared, global:staging; again for more).
+        #[arg(long = "lock")]
+        locks: Vec<String>,
+        /// When one is busy: wait, skip or fail (default: the project's, else skip).
+        #[arg(long)]
+        on_busy: Option<String>,
         #[arg(long, default_value = "")]
         description: String,
     },
@@ -273,6 +279,9 @@ enum TaskCmd {
         /// A persistent worktree of the project to work in (`reagent worktree list`).
         #[arg(long)]
         worktree: Option<String>,
+        /// A lock it takes when it starts (deploy, db:shared, global:staging; again for more): it waits for it.
+        #[arg(long = "lock")]
+        locks: Vec<String>,
     },
     /// Start the designer for a rough goal: a design task that reads the project, asks you
     /// (in the web UI, or by notification), and proposes tasks, cron entries, triggers, skills.
@@ -667,7 +676,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             let project = |store: reagent_store::Store, slug: String| async move { store.project(&slug).await?.ok_or_else(|| anyhow::anyhow!("no project {slug:?}")) };
             let trigger = |store: reagent_store::Store, slug: String, name: String| async move { store.trigger(&slug, &name).await?.ok_or_else(|| anyhow::anyhow!("no trigger {name:?} in {slug}")) };
             match cmd {
-                TriggerCmd::Add { name, project: slug, mode, every, cron, tz, script, script_file, title, prompt, prompt_file, overlap, timeout, profile, kind, skills, secret, no_devshell, description } => {
+                TriggerCmd::Add { name, project: slug, mode, every, cron, tz, script, script_file, title, prompt, prompt_file, overlap, timeout, profile, kind, skills, secret, no_devshell, description, locks, on_busy } => {
                     let p = project(store.clone(), slug).await?;
                     let script = match (script, script_file) {
                         (Some(s), None) => s,
@@ -680,7 +689,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                         (None, Some(f)) => std::fs::read_to_string(&f)?,
                         _ => anyhow::bail!("--prompt or --prompt-file"),
                     };
-                    let def = reagent_tools::triggers::Def { name, mode, every, cron, tz: Some(tz), script: Some(script), timeout: Some(timeout), overlap: Some(overlap), title, prompt, description: Some(description), profile, kind, skills, secret, devshell: Some(!no_devshell) };
+                    let def = reagent_tools::triggers::Def { name, mode, every, cron, tz: Some(tz), script: Some(script), timeout: Some(timeout), overlap: Some(overlap), title, prompt, description: Some(description), profile, kind, skills, secret, devshell: Some(!no_devshell), locks, on_busy };
                     let t = reagent_tools::triggers::save(&store, &p, def.into_trigger(&p.slug, "person").map_err(anyhow::Error::msg)?, true).await.map_err(anyhow::Error::msg)?;
                     println!("{}", reagent_tools::triggers::line(&t));
                     if t.mode == "webhook" {
@@ -760,10 +769,10 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
             let config = reagent::load_config(&data)?;
             let store = reagent_store::Store::open(&data.join("reagent.db")).await?;
             // A task the running reagent starts (it starts queued ones as places free).
-            let queue = |p: &reagent_store::Project, title: String, prompt: String, origin: &str, skills: Vec<String>, profile: Option<String>, kind: Option<String>, budget: Option<reagent_store::Budget>, home: Option<reagent_store::PersistentWorktree>| {
+            let queue = |p: &reagent_store::Project, title: String, prompt: String, origin: &str, skills: Vec<String>, profile: Option<String>, kind: Option<String>, budget: Option<reagent_store::Budget>, home: Option<reagent_store::PersistentWorktree>, locks: Vec<String>| {
                 let store = store.clone();
                 let cwd = home.as_ref().map(|w| w.path.clone()).unwrap_or_else(|| p.path.clone());
-                let new = reagent_store::NewTask { project: p.slug.clone(), parent: None, title, prompt, origin: origin.into(), cwd, profile: profile.or(p.profile.clone()).unwrap_or(config.default_profile.clone()), budget: budget.unwrap_or_default(), skills, kind, home: home.map(|w| w.name) };
+                let new = reagent_store::NewTask { project: p.slug.clone(), parent: None, title, prompt, origin: origin.into(), cwd, profile: profile.or(p.profile.clone()).unwrap_or(config.default_profile.clone()), budget: budget.unwrap_or_default(), skills, kind, home: home.map(|w| w.name), locks };
                 async move {
                     let t = store.add_task(&new).await?;
                     store.set_state(&t.id, "queued", None).await?;
@@ -771,8 +780,8 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                 }
             };
             match cmd {
-                TaskCmd::Start { project, template, set, title, prompt, skills, profile, kind, worktree } => {
-                    let mut req = reagent_tools::app::StartTask { project, title, prompt, skills, profile, kind, worktree, ..Default::default() };
+                TaskCmd::Start { project, template, set, title, prompt, skills, profile, kind, worktree, locks } => {
+                    let mut req = reagent_tools::app::StartTask { project, title, prompt, skills, profile, kind, worktree, locks, ..Default::default() };
                     if let Some(name) = template {
                         let p = if req.project.is_empty() { None } else { Some(store.project(&req.project).await?.ok_or_else(|| anyhow::anyhow!("no project {:?}", req.project))?) };
                         let t = reagent_tools::templates::find(&store, &data, p.as_ref(), &name).await.map_err(anyhow::Error::msg)?;
@@ -786,6 +795,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     anyhow::ensure!(!req.project.is_empty(), "--project: which project?");
                     anyhow::ensure!(!req.prompt.trim().is_empty(), "--prompt or --template: what to do?");
                     let p = store.project(&req.project).await?.ok_or_else(|| anyhow::anyhow!("no project {:?}", req.project))?;
+                    let locks = reagent_tools::locks::parse_all(&p.slug, &req.locks).map_err(anyhow::Error::msg)?.iter().map(reagent_tools::locks::Spec::label).collect();
                     let mut budget = req.budget.unwrap_or_default();
                     budget.tokens = budget.tokens.or(p.budget.tokens);
                     budget.cost = budget.cost.or(p.budget.cost);
@@ -795,7 +805,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                         Some(n) => Some(reagent_tools::persistent::Worktrees { store: &store, data: &data }.get(&p.slug, n).await.map_err(anyhow::Error::msg)?),
                         None => None,
                     };
-                    let t = queue(&p, req.title.trim().to_string(), req.prompt, "cli", req.skills, req.profile.or(kind_profile), req.kind, Some(budget), home).await?;
+                    let t = queue(&p, req.title.trim().to_string(), req.prompt, "cli", req.skills, req.profile.or(kind_profile), req.kind, Some(budget), home, locks).await?;
                     println!("{}", t.id);
                     eprintln!("queued: the running reagent starts it");
                 }
@@ -803,7 +813,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                     anyhow::ensure!(matches!(target.as_str(), "task" | "cron" | "trigger"), "--target: task, cron or trigger");
                     anyhow::ensure!(!goal.trim().is_empty(), "what do you want done?");
                     let p = store.project(&project).await?.ok_or_else(|| anyhow::anyhow!("no project {project:?}"))?;
-                    let t = queue(&p, reagent_tools::design::title(&goal), reagent_tools::design::task_prompt(&target, &goal), "design", vec!["reagent-prompt-design".into()], config.design_profile.clone(), None, None, None).await?;
+                    let t = queue(&p, reagent_tools::design::title(&goal), reagent_tools::design::task_prompt(&target, &goal), "design", vec!["reagent-prompt-design".into()], config.design_profile.clone(), None, None, None, vec![]).await?;
                     println!("{}", t.id);
                     eprintln!("design task queued: the running reagent starts it; answer its questions in the web UI (or a notification), then `reagent task proposal {}`", t.id);
                 }
@@ -829,7 +839,7 @@ async fn run(cmd: Cmd, data: PathBuf) -> anyhow::Result<()> {
                         for i in picked {
                             let item = prop.items.get(i).ok_or_else(|| anyhow::anyhow!("there's no item {}", i + 1))?;
                             let done = match item {
-                                reagent_tools::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => queue(&p, title.clone(), prompt.clone(), "ui", skills.clone(), profile.clone(), kind.clone(), budget.clone(), None).await.map(|t| format!("task {} queued ({})", t.title, t.id)).map_err(|e| e.to_string()),
+                                reagent_tools::design::Item::Task { title, prompt, skills, kind, profile, budget, .. } => queue(&p, title.clone(), prompt.clone(), "ui", skills.clone(), profile.clone(), kind.clone(), budget.clone(), None, vec![]).await.map(|t| format!("task {} queued ({})", t.title, t.id)).map_err(|e| e.to_string()),
                                 other => reagent_tools::design::make(&store, &p, other).await,
                             };
                             eprintln!("{}. {}", i + 1, done.unwrap_or_else(|e| format!("not made: {e}")));

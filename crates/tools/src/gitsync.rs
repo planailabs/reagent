@@ -23,6 +23,8 @@ struct Front {
     strategy: Option<String>,
     remote: Option<String>,
     branch: Option<String>,
+    locks: Option<Vec<String>>,
+    on_busy: Option<String>,
 }
 
 /// A branch's sync as it applies: reagent.db's settings with the repo file's over them.
@@ -49,6 +51,10 @@ pub fn check(s: &GitSync) -> Result<(), String> {
     }
     if s.every < 60 {
         return Err("every: at least a minute".into());
+    }
+    crate::locks::parse_all(&s.project, &s.locks)?;
+    if let Some(b) = &s.on_busy {
+        crate::locks::OnBusy::parse(b)?;
     }
     for v in [&s.remote, &s.branch].into_iter().flatten() {
         if v.is_empty() || v.starts_with('-') || v.chars().any(|c| c.is_whitespace() || c == ':') {
@@ -90,6 +96,14 @@ fn apply_repo(s: &mut GitSync, text: &str) -> Result<Vec<&'static str>, String> 
     if f.branch.is_some() {
         s.branch = f.branch;
         set.push("branch");
+    }
+    if let Some(v) = f.locks {
+        s.locks = sqlx::types::Json(v);
+        set.push("locks");
+    }
+    if f.on_busy.is_some() {
+        s.on_busy = f.on_busy;
+        set.push("on_busy");
     }
     if !body.is_empty() {
         s.notes = body;
@@ -308,6 +322,22 @@ async fn save(app: &App, s: &GitSync, st: &SyncState) {
     let _ = app.events.send(serde_json::json!({"kind": "sync", "project": s.project, "place": s.place}));
 }
 
+/// Takes a round's locks; else its status (waiting, skipped, error) and why.
+async fn sync_locks(app: &App, holder: &str, s: &GitSync) -> Result<Vec<crate::locks::Spec>, (&'static str, String)> {
+    use crate::locks::OnBusy;
+    let specs = crate::locks::parse_all(&s.project, &s.locks).map_err(|e| ("error", e))?;
+    let busy = match crate::locks::take(app, holder, &specs).await {
+        Ok(taken) => return Ok(taken),
+        Err(busy) => busy,
+    };
+    let on_busy = s.on_busy.as_deref().map(OnBusy::parse).transpose().map_err(|e| ("error", e))?.unwrap_or(OnBusy::Skip);
+    Err(match on_busy {
+        OnBusy::Wait => ("waiting", format!("waits for a lock: {busy}")),
+        OnBusy::Skip => ("skipped", format!("a lock it needs is busy: {busy}; next round in {} min", s.every / 60)),
+        OnBusy::Fail => ("error", format!("a lock it needs is busy: {busy}")),
+    })
+}
+
 /// A round for one place, if it's due.
 async fn tick_one(app: &App, p: &Project, sy: Sync, now: i64) {
     let s = &sy.settings;
@@ -330,9 +360,24 @@ async fn tick_one(app: &App, p: &Project, sy: Sync, now: i64) {
         st.message = Some(format!("{n} task(s) work there; next round in {} min", s.every / 60));
         return save(app, s, &st).await;
     }
+    let was = st.status.clone();
+    let holder = format!("sync:{}/{}", p.slug, s.place);
+    let taken = match sync_locks(app, &holder, s).await {
+        Ok(taken) => taken,
+        Err((status, m)) => {
+            if status == "error" && was != "error" {
+                app.notify("sync", None, &format!("Sync failed: {} of {}", place_name(&s.place), p.name), &m).await;
+            }
+            // Waiting: tried again at the next tick.
+            st.run_now = status == "waiting";
+            st.status = status.into();
+            st.message = Some(m);
+            return save(app, s, &st).await;
+        }
+    };
     let (dir, set) = (sy.path.clone(), s.clone());
     let o = tokio::task::spawn_blocking(move || round(&dir, &set)).await.unwrap_or_else(|e| Outcome::Error(e.to_string()));
-    let was = st.status.clone();
+    crate::locks::release(app, &holder, &taken).await;
     let what = format!("{} of {}", place_name(&s.place), p.name);
     match o {
         Outcome::Ok(m) => {

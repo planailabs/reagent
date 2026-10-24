@@ -106,6 +106,12 @@ pub struct StartTask {
     /// parent's, else the project folder; "": the project folder).
     #[serde(default)]
     pub worktree: Option<String>,
+    /// Locks it takes when it starts (`deploy`, `db:shared`, `global:staging`), held by its task tree until it ends.
+    #[serde(default)]
+    pub locks: Vec<String>,
+    /// When one is busy: wait (queued until it's free), skip (not started) or fail (a failed task); none: the project's.
+    #[serde(default)]
+    pub on_busy: Option<String>,
 }
 
 pub struct App {
@@ -148,6 +154,7 @@ pub struct App {
     /// Triggers' runs going on.
     pub triggers: crate::triggers::Runs,
     pub services: crate::services::Services,
+    pub locks: crate::locks::Locks,
     /// What wakes a task's shell.sleep: a message to it.
     // ponytail: one entry per task that ever slept, never removed; small.
     wakers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
@@ -205,6 +212,7 @@ impl App {
             queued_rx: Mutex::new(Some(queued_rx)),
             triggers: Default::default(),
             services: Default::default(),
+            locks: Default::default(),
         })
     }
 
@@ -240,6 +248,11 @@ impl App {
         self.store.set_title(id, title).await.map_err(|e| e.to_string())?;
         self.task_changed(id).await;
         Ok(())
+    }
+
+    /// The locks changed (taken, let go, waited for): the web UI looks again.
+    pub fn emit_locks(&self) {
+        self.emit(json!({"kind": "locks"}));
     }
 
     async fn task_changed(&self, id: &str) {
@@ -383,6 +396,18 @@ impl App {
             if !ok.contains(&v.as_str()) {
                 return Err(format!("{field}: one of {}", ok.join(", ")));
             }
+        }
+        let l = &p.locking.0;
+        for (class, v) in &l.on_busy {
+            if !["person", "agent", "task", "cron", "trigger"].contains(&class.as_str()) {
+                return Err(format!("on_busy: for person, agent, task, cron or trigger, not {class:?}"));
+            }
+            crate::locks::OnBusy::parse(v)?;
+        }
+        crate::locks::parse_all(&p.slug, &l.merge_locks)?;
+        crate::locks::parse_all(&p.slug, &l.locks.keys().cloned().collect::<Vec<_>>())?;
+        if !matches!(l.merge_on_busy.as_deref(), None | Some("wait" | "fail")) {
+            return Err("merge_on_busy: wait or fail".into());
         }
         if let Some(pr) = &p.profile {
             self.config.profile(Some(pr))?;
@@ -652,6 +677,22 @@ impl App {
         for name in &req.skills {
             skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
         }
+        let locks = crate::locks::parse_all(&p.slug, &req.locks)?;
+        let on_busy = crate::locks::on_busy(&p, req.on_busy.as_deref(), crate::locks::class(&origin, req.parent.is_some()))?;
+        // Its locks busy and it shouldn't wait: not started, or a failed task that says why.
+        let mut failed = None;
+        if !locks.is_empty() && on_busy != crate::locks::OnBusy::Wait {
+            let holder = match &req.parent {
+                Some(parent) => crate::locks::holder_of(self, &self.task(parent).await?).await,
+                None => String::new(),
+            };
+            if let Some(busy) = crate::locks::in_the_way(self, &holder, &locks).await? {
+                if on_busy == crate::locks::OnBusy::Skip {
+                    return Err(format!("{} a lock it needs is busy: {busy}", crate::locks::SKIPPED));
+                }
+                failed = Some(busy);
+            }
+        }
         // Over the limit of tasks running at once: it waits (subtasks never do: their parent waits for them).
         // ponytail: two starts at the same moment may both find the last place; add a lock if that matters.
         let repair = is_repair(&origin);
@@ -670,16 +711,49 @@ impl App {
                 skills: req.skills.clone(),
                 kind,
                 home: home_name,
+                locks: locks.iter().map(crate::locks::Spec::label).collect(),
             })
             .await
             .map_err(|e| e.to_string())?;
+        if let Some(busy) = failed {
+            self.store.set_state(&t.id, "failed", None).await.map_err(|e| e.to_string())?;
+            self.store.set_report(&t.id, &format!("didn't start: a lock it needs is busy: {busy}")).await.map_err(|e| e.to_string())?;
+            let t = self.task(&t.id).await?;
+            self.task_changed(&t.id).await;
+            self.notify("failed", Some(&t), &format!("{} didn't start", t.name()), &format!("A lock it needs is busy: {busy}.")).await;
+            return Ok(t);
+        }
         if queue {
             self.store.set_state(&t.id, "queued", None).await.map_err(|e| e.to_string())?;
             self.task_changed(&t.id).await;
             tracing::info!(task = %t.id, title = %t.name(), project = %p.slug, "task queued: {}", if repair { "a repair waits until nothing else goes on in the project" } else { "as many as may run at once already do" });
             return self.task(&t.id).await;
         }
+        if !self.take_locks(&t).await {
+            return self.task(&t.id).await;
+        }
         self.spawn(&t).await
+    }
+
+    /// Takes a task's locks for its tree, or queues it with what it waits for.
+    async fn take_locks(&self, t: &Task) -> bool {
+        let Ok(specs) = crate::locks::parse_all(&t.project, &t.locks) else { return true };
+        if specs.is_empty() {
+            return true;
+        }
+        let holder = crate::locks::holder_of(self, t).await;
+        match crate::locks::take(self, &holder, &specs).await {
+            Ok(_) => true,
+            Err(busy) => {
+                let wait = json!({"kind": "lock", "busy": busy});
+                if t.state != "queued" || t.wait.as_ref().map(|w| &w.0) != Some(&wait) {
+                    let _ = self.store.set_state(&t.id, "queued", Some(&wait)).await;
+                    self.task_changed(&t.id).await;
+                    tracing::info!(task = %t.id, title = %t.name(), "task queued: waits for a lock: {busy}");
+                }
+                false
+            }
+        }
     }
 
     /// The limits of tasks running at once: the global one (`max_tasks` in
@@ -733,7 +807,11 @@ impl App {
                 Some(n) => self.store.persistent_worktree(&p.slug, n).await.ok().flatten(),
                 None => None,
             };
-            if !self.has_room(&p, home.as_ref()).await || (is_repair(&t.origin) && self.store.busy_besides(&p.slug, &t.id).await.unwrap_or(1) > 0) {
+            // Subtasks wait for their locks only.
+            if t.parent.is_none() && (!self.has_room(&p, home.as_ref()).await || (is_repair(&t.origin) && self.store.busy_besides(&p.slug, &t.id).await.unwrap_or(1) > 0)) {
+                continue;
+            }
+            if !self.take_locks(&t).await {
                 continue;
             }
             match self.spawn(&t).await {
@@ -743,12 +821,14 @@ impl App {
         }
     }
 
-    /// Starts a queued task now, whatever the limits.
+    /// Starts a queued task now, whatever the limits (not past its locks: break one first).
     pub async fn start_now(&self, id: &str) -> Result<Task, String> {
         let t = self.task(id).await?;
         if t.state != "queued" {
             return Err(format!("{} isn't queued (it's {})", t.name(), t.state));
         }
+        let specs = crate::locks::parse_all(&t.project, &t.locks)?;
+        crate::locks::take(self, &crate::locks::holder_of(self, &t).await, &specs).await.map_err(|busy| format!("it waits for a lock: {busy} (break it first)"))?;
         self.spawn(&t).await
     }
 
@@ -786,8 +866,15 @@ impl App {
             },
             None => String::new(),
         };
+        let mut locks = String::new();
+        if !t.locks.is_empty() {
+            locks.push_str(&format!("\nLocks your task tree holds: {}, until it ends (or locks.lock_release).", t.locks.join(", ")));
+        }
+        if !p.locking.locks.is_empty() {
+            locks.push_str(&format!("\nThis project's locks (take one with locks.lock_acquire before doing what it guards): {}.", p.locking.locks.iter().map(|(n, d)| if d.is_empty() { n.clone() } else { format!("{n} ({d})") }).collect::<Vec<_>>().join(", ")));
+        }
         let first = format!(
-            "Task: {}\nProject: {} ({})\nWorking directory: {}{home}\nScratchpad: {} ($REAGENT_SCRATCHPAD): yours alone, for temporary scripts and outputs; they don't go into the project.\n\n{role}{}{}",
+            "Task: {}\nProject: {} ({})\nWorking directory: {}{home}{locks}\nScratchpad: {} ($REAGENT_SCRATCHPAD): yours alone, for temporary scripts and outputs; they don't go into the project.\n\n{role}{}{}",
             if t.title.is_empty() { UNTITLED } else { &t.title },
             p.name,
             p.slug,
@@ -1749,6 +1836,7 @@ impl App {
                 if let Err(e) = me.sync().await {
                     tracing::warn!(error = %e, "following tasks");
                 }
+                crate::locks::sweep(&me).await;
                 me.start_queued().await;
                 // Agents left on an older version (an upgrade that failed while the
                 // node was still coming up, say) are moved on as soon as it can.
