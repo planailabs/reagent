@@ -676,8 +676,13 @@ async fn finish(app: &App, t: &Trigger, p: &Project, started: i64, out: Out) {
 async fn ended(app: &App, t: &Trigger, p: &Project, error: Option<String>, log: &str) {
     let now = chrono::Utc::now().timestamp();
     let normal = next_due(t, now);
+    // Changed while it ran: the change's reset stands (the new script is due now).
+    let changed = app.store.trigger(&p.slug, &t.name).await.ok().flatten().is_some_and(|cur| script_hash(&cur) != script_hash(t));
     let st = update(app, &p.slug, &t.name, |s| {
         s.last_run = Some(now);
+        if changed {
+            return;
+        }
         match &error {
             None => {
                 s.failures = 0;
