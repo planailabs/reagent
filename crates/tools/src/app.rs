@@ -274,7 +274,8 @@ impl App {
         let _ = std::fs::write(self.paths.data.join("cluster.hcl"), &text);
         hub.apply_cluster(vec![subnet::hub::db::ClusterFile { name: "cluster.hcl".into(), text }], false, &root()).await.map_err(|e| e.to_string())?;
         // Until the node has taken it (configured for this version) and offers the task types.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        // ponytail: 3 minutes; a node reconfiguring waits for each added server (45 s for one that doesn't start), on a slow host more.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
         loop {
             let nodes = hub.list_nodes().await;
             let types = hub.op(&root(), Op::ListTypes).await?;
