@@ -2,11 +2,12 @@
 import { onMounted, ref } from "vue";
 import { del, get, post } from "../lib/api.js";
 import Designer from "./Designer.vue";
+import LockFields from "./LockFields.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, config: Object });
 const crons = ref([]);
 const error = ref("");
-const blank = () => ({ id: 0, expr: "0 3 * * *", tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", title: "", prompt: "", overlap: "skip", catch_up: true, enabled: true, options: { profile: null, skills: [] } });
+const blank = () => ({ id: 0, expr: "0 3 * * *", tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", title: "", prompt: "", overlap: "skip", catch_up: true, enabled: true, options: { profile: null, skills: [], locks: [], on_busy: null } });
 const form = ref(blank());
 
 async function load() {
@@ -79,6 +80,7 @@ onMounted(load);
       </div>
       <input v-model="form.title" placeholder="task title" aria-label="cron title" required />
       <textarea v-model="form.prompt" placeholder="what the task does" aria-label="cron prompt" required></textarea>
+      <LockFields v-model:locks="form.options.locks" v-model:on-busy="form.options.on_busy" default-text="the project's, else skip" />
       <div class="row"><button type="submit">save</button><button v-if="form.id" type="button" @click="form = blank()">new instead</button></div>
     </form>
   </section>

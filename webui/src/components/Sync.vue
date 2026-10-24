@@ -2,6 +2,7 @@
 // A project's git sync: each branch (the folder's, each persistent worktree's) pulled and pushed on an interval.
 import { inject, onMounted, ref, watch } from "vue";
 import { get, post, put } from "../lib/api.js";
+import LockFields from "./LockFields.vue";
 
 const props = defineProps({ slug: { type: String, required: true } });
 const live = inject("live");
@@ -12,7 +13,7 @@ const error = ref("");
 const key = (s) => s.place || ".";
 // In a URL the folder is "-": a browser drops a "." path segment.
 const path = (s) => encodeURIComponent(s.place || "-");
-const formOf = (k) => ({ enabled: k.enabled, every: `${Math.round(k.every / 60)}m`, strategy: k.strategy, remote: k.remote ?? "", branch: k.branch ?? "", notes: k.notes });
+const formOf = (k) => ({ enabled: k.enabled, every: `${Math.round(k.every / 60)}m`, strategy: k.strategy, remote: k.remote ?? "", branch: k.branch ?? "", notes: k.notes, locks: k.locks ?? [], on_busy: k.on_busy ?? null });
 
 async function load() {
   list.value = await get(`/api/projects/${props.slug}/sync`).catch((e) => ((error.value = e.message), []));
@@ -30,7 +31,7 @@ async function save(s) {
   error.value = "";
   try {
     const f = forms.value[key(s)];
-    await put(`/api/projects/${props.slug}/sync/${path(s)}`, { enabled: f.enabled, every: seconds(f.every), strategy: f.strategy, remote: f.remote || null, branch: f.branch || null, notes: f.notes });
+    await put(`/api/projects/${props.slug}/sync/${path(s)}`, { enabled: f.enabled, every: seconds(f.every), strategy: f.strategy, remote: f.remote || null, branch: f.branch || null, notes: f.notes, locks: f.locks, on_busy: f.on_busy });
     delete forms.value[key(s)];
     await load();
   } catch (e) {
@@ -55,7 +56,7 @@ watch(() => [props.slug, live.tick], load);
     <p v-if="error" class="err" role="alert">{{ error }}</p>
     <p class="dim">
       A branch that's on is pulled with its strategy and pushed every interval. A conflict, or uncommitted changes no task works on, start a task to sort it out; reagent pushes after it. A checkout's
-      <code>.agents/sync.md</code> (frontmatter <code>enabled, every, strategy, remote, branch</code>; body: notes) overrides what it sets.
+      <code>.agents/sync.md</code> (frontmatter <code>enabled, every, strategy, remote, branch, locks, on_busy</code>; body: notes) overrides what it sets.
     </p>
     <div v-for="s in list" :key="key(s)" class="card" :aria-label="`sync of ${key(s)}`">
       <div class="row">
@@ -88,6 +89,7 @@ watch(() => [props.slug, live.tick], load);
           <label :class="{ dim: overridden(s, 'branch') }">branch <input v-model="forms[key(s)].branch" size="12" placeholder="upstream's" /></label>
         </div>
         <textarea v-model="forms[key(s)].notes" rows="2" :class="{ dim: overridden(s, 'notes') }" placeholder="notes for the task that resolves a conflict or decides about uncommitted changes"></textarea>
+        <LockFields v-model:locks="forms[key(s)].locks" v-model:on-busy="forms[key(s)].on_busy" default-text="skip" @update:locks="forms[key(s)].dirty = true" @update:on-busy="forms[key(s)].dirty = true" />
         <div class="row"><button type="submit">save</button><span v-if="s.from_repo.length" class="dim">greyed fields are set by the repo file, which wins</span></div>
       </form>
     </div>

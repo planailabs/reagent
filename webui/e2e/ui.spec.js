@@ -624,6 +624,39 @@ test("a branch's sync settings are kept on the sync tab", async ({ page }) => {
   expect([kept.enabled, kept.every, kept.strategy]).toEqual([false, 7200, "merge"]);
 });
 
+test("a task holding a lock makes the next wait; the locks tab shows both and breaks it", async ({ page }) => {
+  await page.goto("/#/project/site/settings");
+  await page.getByLabel("known locks").fill("deploy: the production deploy");
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/projects/site"));
+  await page.getByRole("button", { name: "save" }).click();
+  expect((await saved).ok()).toBe(true);
+  const startLocked = async (title) => {
+    await page.goto("/#/project/site/new");
+    await page.getByLabel("title", { exact: true }).fill(title);
+    await page.getByLabel("what to do").fill("go");
+    await page.getByLabel("locks").fill("deploy");
+    await page.getByRole("button", { name: "start" }).click();
+    await expect(page.getByRole("heading", { name: title })).toBeVisible();
+    return page.url().split("/task/")[1];
+  };
+  // "Ask …" waits for an answer, holding its lock.
+  const holder = await startLocked("Ask with the deploy lock");
+  await expect(page.getByText("which color?").first()).toBeVisible();
+  const waiter = await startLocked("Deploy after it");
+  await expect(page.getByText("queued: waits for a lock: deploy, held by task Ask with the deploy lock").first()).toBeVisible();
+  await page.goto("/#/project/site/locks");
+  const card = page.getByLabel("lock deploy");
+  await expect(card).toContainText("the production deploy");
+  await expect(card).toContainText("held by task Ask with the deploy lock");
+  await expect(card).toContainText("waits: task Deploy after it");
+  page.once("dialog", (d) => d.accept());
+  await card.getByRole("button", { name: "break" }).click();
+  // The waiting task takes it and finishes; then it's free.
+  await expect(card).toContainText("free");
+  await expect.poll(async () => (await (await page.request.get(`/api/tasks/${waiter}`)).json()).state).toBe("done");
+  await page.request.post(`/api/tasks/${holder}/cancel`, { headers: { origin: new URL(page.url()).origin } });
+});
+
 test("a stuck foreground command is moved to the background and the task goes on", async ({ page }) => {
   const rules = await (await page.request.get("/api/projects/site/rules")).json();
   await page.request.put("/api/projects/site/rules", { data: [{ tool: "shell.exec*", command: "sleep *", action: "allow" }, ...rules] });

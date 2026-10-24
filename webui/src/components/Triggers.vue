@@ -3,13 +3,14 @@ import { inject, onMounted, ref, watch } from "vue";
 import { del, get, post, put } from "../lib/api.js";
 import { markdown } from "../lib/markdown.js";
 import Designer from "./Designer.vue";
+import LockFields from "./LockFields.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, config: Object });
 const live = inject("live");
 const list = ref({ triggers: [], errors: [] });
 const runs = ref({});
 const error = ref("");
-const blank = () => ({ name: "", mode: "poll", every: "5m", cron: "", tz: "UTC", script: "", timeout: 60, overlap: "skip", title: "", prompt: "", description: "", secret: "", devshell: true, options: { profile: null, kind: null, skills: [] }, editing: false });
+const blank = () => ({ name: "", mode: "poll", every: "5m", cron: "", tz: "UTC", script: "", timeout: 60, overlap: "skip", title: "", prompt: "", description: "", secret: "", devshell: true, options: { profile: null, kind: null, skills: [], locks: [], on_busy: null }, editing: false });
 const form = ref(blank());
 
 async function load() {
@@ -150,6 +151,8 @@ watch(() => [props.slug, live.tick], load);
         <label v-if="config?.kinds?.length">kind <select v-model="form.options.kind"><option :value="null">default</option><option v-for="k in config.kinds" :key="k.name" :value="k.name">{{ k.name }}</option></select></label>
         <label><input v-model="form.devshell" type="checkbox" /> in the dev shell</label>
       </div>
+      <LockFields v-if="form.mode !== 'watch'" v-model:locks="form.options.locks" v-model:on-busy="form.options.on_busy" default-text="the project's, else skip" />
+      <span v-if="form.mode !== 'watch'" class="dim">its script holds them while it runs, then the tasks it starts take them</span>
       <input v-model="form.description" placeholder="what it watches (optional)" />
       <div class="row"><button type="submit">save</button><button v-if="form.editing" type="button" @click="form = blank()">new instead</button></div>
     </form>

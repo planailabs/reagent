@@ -18,6 +18,8 @@ export function waitText(t) {
       return `merge ${w.branch} into ${w.base}`;
     case "budget":
       return "over budget";
+    case "lock":
+      return `queued: waits for a lock: ${w.busy}`;
     default:
       return w.kind;
   }

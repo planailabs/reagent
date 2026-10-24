@@ -222,6 +222,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <a :href="`#/project/${t.project}`" class="dim">{{ t.project }}</a>
       <span class="dim">{{ t.state }} · {{ t.kind ? `${t.kind} · ` : "" }}{{ t.profile }} · {{ t.tokens }} tokens · {{ money(t.cost) }} · {{ ago(t.created) }} ago · {{ t.origin }}</span>
     </div>
+    <div v-if="t.state === 'queued'" class="dim" aria-label="why it's queued">{{ waitText(t) }}</div>
     <div v-if="t.parent" class="dim">subtask of <a :href="`#/task/${t.parent}`">{{ t.parent.slice(0, 8) }}</a></div>
     <div class="dim">in {{ t.cwd }}<span v-if="t.home"> · persistent worktree <a :href="`#/project/${t.project}/worktrees`">{{ t.home }}</a></span><span v-if="t.worktree"> · worktree {{ t.worktree.branch }} (from {{ t.worktree.base }})</span></div>
 
@@ -229,7 +230,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <button :disabled="!['running', 'waiting'].includes(t.state)" @click="act('pause', { mode: 'quick' })">pause</button>
       <button :disabled="!['running', 'waiting'].includes(t.state)" title="finish this turn, then stop" @click="act('pause', { mode: 'safe' })">pause after this turn</button>
       <button :disabled="t.state !== 'paused'" @click="act('resume')">resume</button>
-      <button v-if="t.state === 'queued'" title="it waits for a place among the tasks running at once" @click="act('start')">start now</button>
+      <button v-if="t.state === 'queued'" title="past the limits on tasks at once (not past a busy lock: break it on the locks tab)" @click="act('start')">start now</button>
       <button v-if="t.state === 'failed'" @click="act('retry')">retry from the failure</button>
       <button v-if="['done', 'failed', 'cancelled'].includes(t.state)" title="a new task from the same prompt, settings and budget" @click="cloneTask">clone and restart</button>
       <button :disabled="['done', 'cancelled'].includes(t.state)" @click="cancelTask">cancel</button>

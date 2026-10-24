@@ -16,6 +16,8 @@ import Templates from "./Templates.vue";
 import Worktrees from "./Worktrees.vue";
 import Services from "./Services.vue";
 import Sync from "./Sync.vue";
+import Locks from "./Locks.vue";
+import LockFields from "./LockFields.vue";
 
 const props = defineProps({ slug: { type: String, required: true }, tab: { type: String, default: "tasks" } });
 const live = inject("live");
@@ -26,7 +28,7 @@ const skills = ref([]);
 const rules = ref([]);
 const config = ref(null);
 const error = ref("");
-const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "", worktree: "" });
+const start = ref({ title: "", prompt: "", profile: "", kind: "", skills: [], tokens: "", cost: "", minutes: "", worktree: "", locks: [], on_busy: null });
 const homes = ref([]);
 const settings = ref(null);
 const templates = ref([]);
@@ -39,7 +41,7 @@ const formLike = computed(() => !!tf.value?.current?.fields.length);
 function applyTemplate(t) {
   if (!t) return;
   const b = t.budget ?? {};
-  start.value = { ...start.value, title: t.fields.length ? "" : (t.title ?? ""), prompt: t.fields.length ? "" : t.prompt, profile: t.profile ?? "", kind: t.kind ?? "", skills: t.skills.filter((s) => skills.value.some((k) => k.name === s)), tokens: b.tokens ?? "", cost: b.cost ?? "", minutes: b.minutes ?? "", worktree: t.worktree ?? start.value.worktree };
+  start.value = { ...start.value, title: t.fields.length ? "" : (t.title ?? ""), prompt: t.fields.length ? "" : t.prompt, profile: t.profile ?? "", kind: t.kind ?? "", skills: t.skills.filter((s) => skills.value.some((k) => k.name === s)), tokens: b.tokens ?? "", cost: b.cost ?? "", minutes: b.minutes ?? "", worktree: t.worktree ?? start.value.worktree, locks: t.locks ?? [], on_busy: t.on_busy ?? null };
 }
 
 async function load() {
@@ -52,7 +54,16 @@ async function load() {
     templates.value = (await get(`/api/templates?project=${encodeURIComponent(props.slug)}`)).filter((t) => !t.project || t.project === props.slug);
     config.value ??= await get("/api/config");
     if (!settings.value) {
-      settings.value = { ...p.value, budget: { ...p.value.budget }, env: JSON.stringify(p.value.env, null, 2) };
+      const l = p.value.locking ?? {};
+      settings.value = {
+        ...p.value,
+        budget: { ...p.value.budget },
+        env: JSON.stringify(p.value.env, null, 2),
+        known_locks: Object.entries(l.locks ?? {}).map(([n, d]) => (d ? `${n}: ${d}` : n)).join("\n"),
+        on_busy: { person: "", agent: "", task: "", cron: "", trigger: "", ...(l.on_busy ?? {}) },
+        merge_locks: l.merge_locks ?? [],
+        merge_on_busy: l.merge_on_busy ?? null,
+      };
     }
   } catch (e) {
     error.value = e.message;
@@ -73,6 +84,8 @@ async function startTask() {
       skills: start.value.skills,
       budget: budget(start.value),
       worktree: start.value.worktree || undefined,
+      locks: start.value.locks,
+      on_busy: start.value.on_busy || undefined,
       ...(formLike.value ? { template: tf.value.current.name, values: values.value, prompt: "" } : {}),
     });
     location.hash = `#/task/${t.id}`;
@@ -85,12 +98,23 @@ async function save() {
   error.value = "";
   try {
     const s = settings.value;
-    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, worktree_sharing: s.worktree_sharing, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}") };
+    const body = { max_tasks: s.max_tasks === "" || s.max_tasks == null ? null : Number(s.max_tasks), kind: s.kind || null, devshell: s.devshell, devshell_attr: s.devshell_attr || null, name: s.name, path: s.path, memory: s.memory, worktrees: s.worktrees, merge: s.merge, worktree_sharing: s.worktree_sharing, default_action: s.default_action, profile: s.profile || null, budget: budget(s.budget), env: JSON.parse(s.env || "{}"), locking: locking(s) };
     p.value = await put(`/api/projects/${props.slug}`, body);
     error.value = "saved";
   } catch (e) {
     error.value = e.message;
   }
+}
+
+/** The settings' lock fields as the project keeps them. */
+function locking(s) {
+  const locks = {};
+  for (const line of (s.known_locks || "").split("\n")) {
+    const [name, ...about] = line.split(":");
+    if (name.trim()) locks[name.trim()] = about.join(":").trim();
+  }
+  const on_busy = Object.fromEntries(Object.entries(s.on_busy).filter(([, v]) => v));
+  return { locks, on_busy, merge_locks: s.merge_locks, merge_on_busy: s.merge_on_busy };
 }
 
 async function remove() {
@@ -127,7 +151,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
   <section v-if="p">
     <h2>{{ p.name }} <span class="dim">{{ p.path }}</span></h2>
     <nav class="row tabs">
-      <a v-for="t in ['tasks', 'new', 'templates', 'worktrees', 'sync', 'cron', 'triggers', 'services', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
+      <a v-for="t in ['tasks', 'new', 'templates', 'worktrees', 'sync', 'cron', 'triggers', 'services', 'locks', 'policy', 'memory', 'skills', 'mcp', 'secrets', 'settings']" :key="t" :href="`#/project/${slug}/${t}`" :class="{ on: tab === t }">{{ t }}</a>
     </nav>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
@@ -165,6 +189,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         <label>cost <input v-model="start.cost" size="6" inputmode="decimal" aria-label="cost budget" /></label>
         <label>minutes <input v-model="start.minutes" size="5" inputmode="numeric" aria-label="time budget" /></label>
       </div>
+      <LockFields v-model:locks="start.locks" v-model:on-busy="start.on_busy" />
       <SkillPicker v-if="skills.length" v-model="start.skills" :skills="skills" />
       <button type="submit">start</button>
     </form>
@@ -175,6 +200,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
     <Cron v-if="tab === 'cron'" :slug="slug" :config="config" />
     <Triggers v-else-if="tab === 'triggers'" :slug="slug" :config="config" />
     <Services v-else-if="tab === 'services'" :slug="slug" />
+    <Locks v-else-if="tab === 'locks'" :slug="slug" />
     <Rules v-else-if="tab === 'policy'" :slug="slug" />
     <Memory v-else-if="tab === 'memory'" :scope="slug" />
     <McpServers v-else-if="tab === 'mcp'" :project="slug" />
@@ -219,6 +245,19 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         <label>minutes <input v-model="settings.budget.minutes" size="5" /></label>
         <label>per day <input v-model="settings.budget.daily_cost" size="6" /></label>
       </div>
+      <fieldset class="stack" aria-label="locks">
+        <legend>locks</legend>
+        <label>known locks, one a line (name: what it guards) <textarea v-model="settings.known_locks" rows="3" placeholder="deploy: the production deploy" aria-label="known locks"></textarea></label>
+        <div class="row">when a lock is busy:
+          <label v-for="c in ['person', 'agent', 'task', 'cron', 'trigger']" :key="c">{{ c }}
+            <select v-model="settings.on_busy[c]" :aria-label="`when busy: ${c}`">
+              <option value="">{{ c === "cron" || c === "trigger" ? "skip" : "wait" }} (default)</option><option>wait</option><option>skip</option><option>fail</option>
+            </select>
+          </label>
+        </div>
+        <LockFields v-model:locks="settings.merge_locks" v-model:on-busy="settings.merge_on_busy" default-text="wait" />
+        <span class="dim">the locks above are held while a branch is merged into its base (a task's, a persistent worktree's); when busy: wait or fail</span>
+      </fieldset>
       <label>environment for its commands (JSON) <textarea v-model="settings.env" rows="4"></textarea></label>
       <div class="row"><button type="submit">save</button><span class="grow"></span><button type="button" @click="remove">remove project</button></div>
     </form>

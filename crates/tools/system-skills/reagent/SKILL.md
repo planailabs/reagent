@@ -37,6 +37,9 @@ are summarised as they go.
   worktree's) pulled (rebase by default) and pushed on an interval; a
   conflict or uncommitted changes go to a task, then reagent pushes
   (`reagent-worktrees`).
+- **Locks**: named locks keep things from happening at once (two deploys,
+  a sync under a release): actions wait, skip or fail while one is busy
+  (`reagent-locks`).
 - **Secrets**: tokens and keys the person (or a task) keeps; commands get
   them as environment variables, results show them as `***`
   (`reagent-secrets`).

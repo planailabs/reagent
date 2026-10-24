@@ -9,6 +9,7 @@ test("states have glyphs and waits words", () => {
   assert.equal(waitText({ state: "waiting", wait: { kind: "approval", call: { function: { name: "shell__exec" } } } }), "approve shell.exec");
   assert.equal(waitText({ state: "waiting", wait: { kind: "question", question: "red?" } }), "answer: red?");
   assert.equal(waitText({ state: "waiting", wait: { kind: "merge", branch: "reagent/x", base: "main" } }), "merge reagent/x into main");
+  assert.equal(waitText({ state: "queued", wait: { kind: "lock", busy: "deploy, held by task X" } }), "queued: waits for a lock: deploy, held by task X");
   assert.equal(waitText({ state: "failed" }), "failed");
   assert.equal(waitText({ state: "running" }), "");
 });
