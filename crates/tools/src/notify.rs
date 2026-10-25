@@ -52,6 +52,11 @@ pub async fn apprise(urls: &[String], title: &str, body: &str) -> Result<(), Str
     }
 }
 
+/// Markdown becomes HTML for services like Telegram: a literal `<host>` would be a tag.
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 async fn apprise_once(urls: &[String], title: &str, body: &str) -> Result<(), String> {
     // -v: its warnings say why a send failed (they name the service, not the URL).
     let o = tokio::process::Command::new("apprise")
@@ -59,9 +64,9 @@ async fn apprise_once(urls: &[String], title: &str, body: &str) -> Result<(), St
         .arg("-i")
         .arg("markdown")
         .arg("-t")
-        .arg(title)
+        .arg(escape(title))
         .arg("-b")
-        .arg(body)
+        .arg(escape(body))
         .args(urls)
         .stdin(std::process::Stdio::null())
         .output()
