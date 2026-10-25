@@ -249,7 +249,8 @@ pub fn verdict_of(answer: &Value) -> Option<Verdict> {
 pub async fn ask(app: &App, profile: &str, system: &str, user: &str) -> Result<(Verdict, i64, f64), String> {
     let (_, pr) = app.config.profile(Some(profile))?;
     let prov = app.config.provider.get(&pr.provider).ok_or_else(|| format!("no provider {:?}", pr.provider))?;
-    let mut body = json!({"model": pr.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "tools": tools(), "tool_choice": "required", "stream": false});
+    // ponytail: no tool_choice: thinking models (deepseek) refuse a forced one; verdict_of reads a text answer too.
+    let mut body = json!({"model": pr.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "tools": tools(), "stream": false});
     for (k, v) in &pr.params {
         body[k] = v.clone();
     }
