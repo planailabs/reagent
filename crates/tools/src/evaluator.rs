@@ -53,6 +53,19 @@ const DESTRUCTIVE_COMMANDS: &[&str] = &[
     "kill *", "pkill *", "killall *", "docker rm*", "docker system prune*", "truncate *", "curl * | *sh", "wget * | *sh", "* > /dev/sd*", "systemctl stop*", "systemctl disable*",
 ];
 
+/// What the read-first check is for: calls that throw away what's there.
+/// Pushing, killing or stopping something is hard to undo too, but reading
+/// first doesn't make it safer.
+const DISCARDS: &[&str] = &["services.service_remove", "triggers.trigger_remove", "secrets.secrets_remove", "memory.memory_remove"];
+const DISCARD_COMMANDS: &[&str] = &[
+    "rm *", "rmdir *", "git reset --hard*", "git clean*", "git checkout -- *", "git branch -D*", "git push*--force*", "git push* -f*", "dd *", "mkfs*", "shred *", "truncate *", "docker rm*", "docker system prune*",
+];
+
+fn discards(call: &Made) -> bool {
+    let args: Value = serde_json::from_str(&call.args).unwrap_or_default();
+    DISCARDS.contains(&call.tool.as_str()) || crate::hooks::command_of(&call.tool, &args).is_some_and(|c| crate::policy::pieces(c).iter().any(|p| DISCARD_COMMANDS.iter().any(|g| glob(g, p.trim()))))
+}
+
 /// Commands that only look (globs over a piece of a command line).
 const READ_COMMANDS: &[&str] = &[
     "ls", "ls *", "cat *", "echo *", "printf *", "pwd", "head *", "tail *", "wc *", "rg *", "grep *", "git status*", "git diff*", "git log*", "git show*", "git branch", "git branch -a*", "git branch --list*",
@@ -136,7 +149,7 @@ const LOOP: usize = 3;
 
 /// A call that changes something: a loop (the same call again and again in a
 /// row), a duplicate (the same non-shell call among the last three), or a
-/// destructive call before anything was read. Why, or nothing.
+/// call throwing away what's there before anything was read. Why, or nothing.
 pub fn static_check(call: &Made, history: &[Made]) -> Option<String> {
     if call.risk == Risk::ReadOnly {
         return None;
@@ -148,7 +161,7 @@ pub fn static_check(call: &Made, history: &[Made]) -> Option<String> {
     if !shell && history.iter().rev().take(3).any(|m| m.tool == call.tool && m.args == call.args) {
         return Some(format!("the same {} call was made just now: check its result instead of making it again.", call.tool));
     }
-    if call.risk == Risk::Destructive && !history.is_empty() && !history.iter().any(|m| m.risk == Risk::ReadOnly) {
+    if call.risk == Risk::Destructive && discards(call) && !history.is_empty() && !history.iter().any(|m| m.risk == Risk::ReadOnly) {
         return Some(format!("{} is hard to undo and nothing was read first: look at the current state before changing it.", call.tool));
     }
     None
@@ -440,9 +453,12 @@ mod tests {
         assert!(static_check(&test, &[test.clone(), test.clone(), test.clone()]).unwrap().contains("loop"));
         assert!(static_check(&edit, &[read.clone(), edit.clone(), test.clone()]).unwrap().contains("just now"));
         assert_eq!(static_check(&test, &[read.clone(), test.clone()]), None, "a repeated command isn't a duplicate");
-        let push = made("shell.exec", "{\"cmd\":\"git push\"}", Risk::Destructive);
-        assert!(static_check(&push, &[edit.clone()]).unwrap().contains("nothing was read"));
-        assert_eq!(static_check(&push, &[]), None, "nothing known (after a restart): no judgement");
+        let wipe = made("shell.exec", "{\"cmd\":\"git reset --hard\"}", Risk::Destructive);
+        assert!(static_check(&wipe, &[edit.clone()]).unwrap().contains("nothing was read"));
+        assert_eq!(static_check(&wipe, &[]), None, "nothing known (after a restart): no judgement");
+        let push = |cmd: &str| made("shell.exec", &json!({"cmd": cmd}).to_string(), Risk::Destructive);
+        assert_eq!(static_check(&push("git commit -am x && git push"), &[edit.clone()]), None, "pushing needs no read");
+        assert!(static_check(&push("git push --force origin main"), &[edit.clone()]).is_some(), "a force push throws away what's there");
         assert_eq!(static_check(&read, &[read.clone(), read.clone(), read.clone()]), None, "reading is never caught");
     }
 
