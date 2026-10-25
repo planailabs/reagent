@@ -1254,10 +1254,13 @@ struct Approve {
     /// Also allow calls like it from now on (a rule).
     #[serde(default)]
     always: bool,
+    /// Why (optional): the task reads it.
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn approve(s: S, _: Who, a: Approve) -> R {
-    s.w.app.approve(&a.task, &a.call_id, a.approved, a.always).await?;
+    s.w.app.approve(&a.task, &a.call_id, a.approved, a.always, a.reason).await?;
     Ok(Json(json!({"ok": true})))
 }
 

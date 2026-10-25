@@ -50,7 +50,7 @@ async fn a_call_the_policy_asks_about_waits_for_approval_and_always_allow_adds_a
     assert_eq!(wait["kind"], "approval", "{wait}");
     let call_id = wait["call"]["id"].as_str().unwrap().to_string();
     assert!(!r.project.path().join("made.txt").exists(), "nothing ran yet");
-    r.run.app.approve(&t.id, &call_id, true, true).await.unwrap();
+    r.run.app.approve(&t.id, &call_id, true, true, None).await.unwrap();
     r.done(&t.id).await;
     assert!(r.project.path().join("made.txt").exists());
     assert_eq!(r.requests("Touch").len(), 3, "the second touch ran without asking");
@@ -126,7 +126,7 @@ async fn a_worktree_s_work_goes_only_when_the_person_approves_discarding_it() {
     assert_eq!(wait["kind"], "approval", "asks though every call is allowed: {wait}");
     let dir = std::path::PathBuf::from(&w.worktree.as_ref().unwrap().0.path);
     assert!(dir.join("draft.txt").exists(), "kept until the person says so");
-    r.run.app.approve(&t.id, wait["call"]["id"].as_str().unwrap(), true, false).await.unwrap();
+    r.run.app.approve(&t.id, wait["call"]["id"].as_str().unwrap(), true, false, None).await.unwrap();
     r.done(&t.id).await;
     assert!(!dir.exists());
 }

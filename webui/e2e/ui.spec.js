@@ -98,8 +98,9 @@ test("a call the policy asks about is approved from the inbox", async ({ page })
   const box = page.getByLabel("approval");
   await expect(box).toContainText("shell.exec");
   await expect(box).toContainText("touch from-ui.txt");
+  await box.getByLabel("reason").fill("scratch file");
   await box.getByRole("button", { name: "allow once" }).click();
-  await expect(page.locator(".reports")).toContainText("touched");
+  await expect(page.locator(".reports")).toContainText("touched for a reason");
 });
 
 test("a task's todo list shows", async ({ page }) => {

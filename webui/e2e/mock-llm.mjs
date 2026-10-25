@@ -54,7 +54,7 @@ function reply(body) {
   }
   if (title.startsWith("Touch")) {
     if (!tools.length) return call("t1", "shell__exec", { cmd: "touch from-ui.txt" });
-    return text("touched");
+    return text(all.includes("[the user approved call t1: scratch file]") ? "touched for a reason" : "touched");
   }
   if (title.startsWith("Hang")) {
     if (!tools.length) return call("h1", "shell__exec", { cmd: "sleep 600" });

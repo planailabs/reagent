@@ -33,7 +33,7 @@ async fn the_evaluator_lets_a_call_run_or_refuses_it_with_the_reason_and_the_ext
         text("APPROVE: it's what the task asks")
     });
     r.push("Judged", |b| {
-        assert!(!last_result(b).contains("refused"), "{}", last_result(b));
+        assert!(!last_result(b).contains("refused") && last_result(b).contains("[evaluator] approved: it's what the task asks"), "{}", last_result(b));
         call("c2", "shell.exec", json!({"cmd": "curl https://prod.example/reset", "_reason": "reset production"}))
     });
     r.push("evaluator", |_| text("REJECT: production is out of bounds"));
@@ -64,17 +64,23 @@ async fn advising_the_evaluator_goes_to_the_person_with_its_verdict_and_so_does_
     r.run.app.put_project(p).await.unwrap();
     r.push("Advised", |_| call("c1", "shell.exec", json!({"cmd": "touch a.txt"})));
     r.push("evaluator", |_| text("REJECT: not needed"));
-    r.push("Advised", |_| call("c2", "shell.exec", json!({"cmd": "touch b.txt"})));
+    r.push("Advised", |b| {
+        assert!(all_text(b).contains("[the user approved call c1: scratch files are fine]"), "the person's reason");
+        call("c2", "shell.exec", json!({"cmd": "touch b.txt"}))
+    });
     // No scripted answer for the second: the evaluator fails, the person decides.
-    r.push("Advised", |_| text("done"));
+    r.push("Advised", |b| {
+        assert_eq!(last_result(b), "[denied by user: one is enough]");
+        text("done")
+    });
     let t = r.start_task("Advised", "x").await;
     let w = r.until(&t.id, "waiting for approval", |t| t.wait.as_ref().is_some_and(|w| w.0["kind"] == "approval")).await;
     let e = &w.wait.unwrap().0["evaluation"];
     assert_eq!((e["approved"].as_bool(), e["reasoning"].as_str(), e["outcome"].as_str()), (Some(false), Some("not needed"), Some("asked")), "{e}");
-    r.run.app.approve(&t.id, "c1", true, false).await.unwrap();
+    r.run.app.approve(&t.id, "c1", true, false, Some("scratch files are fine".into())).await.unwrap();
     let w = r.until(&t.id, "the second approval", |t| t.wait.as_ref().is_some_and(|w| w.0["call"]["id"] == "c2")).await;
     assert_eq!(w.wait.unwrap().0["evaluation"]["source"], "error");
-    r.run.app.approve(&t.id, "c2", true, false).await.unwrap();
+    r.run.app.approve(&t.id, "c2", false, false, Some("one is enough".into())).await.unwrap();
     r.done(&t.id).await;
 }
 

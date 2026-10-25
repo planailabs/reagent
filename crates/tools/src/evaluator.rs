@@ -314,6 +314,13 @@ impl Call {
         app.calls.push(&self.task.id, self.as_made());
     }
 
+    /// Goes with the call's result (the mask hook adds it).
+    fn note(&self, app: &App, text: String) {
+        if !self.call_id.is_empty() {
+            app.call_notes.lock().unwrap().entry(self.call_id.clone()).and_modify(|n| *n = format!("{n}; {text}")).or_insert(text);
+        }
+    }
+
     async fn record(&self, app: &App, source: &str, approved: bool, reasoning: &str, outcome: &str) {
         let e = reagent_store::Evaluation { id: 0, task: self.task.id.clone(), call_id: self.call_id.clone(), tool: self.tool.clone(), args: cut(&self.args.to_string(), 4000), reason: self.reason.clone(), risk: self.risk.as_str().into(), source: source.into(), approved, reasoning: reasoning.into(), outcome: outcome.into(), created: 0 };
         if let Err(err) = app.store.add_evaluation(&e).await {
@@ -333,9 +340,7 @@ impl Call {
         let why = static_check(&self.as_made(), &app.calls.recent(&self.task.id))?;
         if mode == "warn" {
             self.record(app, "static", false, &why, "warned").await;
-            if !self.call_id.is_empty() {
-                app.call_notes.lock().unwrap().insert(self.call_id.clone(), why);
-            }
+            self.note(app, why);
             return None;
         }
         self.record(app, "static", false, &why, "refused").await;
@@ -359,6 +364,7 @@ impl Call {
                 match v {
                     Verdict::Approved(r) if role == "decides" => {
                         self.record(app, "model", true, &r, "allowed").await;
+                        self.note(app, format!("approved: {r}"));
                         Judged::Allow
                     }
                     Verdict::Rejected(r) if refuse => {

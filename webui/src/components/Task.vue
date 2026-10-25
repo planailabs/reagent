@@ -22,6 +22,7 @@ const tr = ref(null);
 const diff = ref(null);
 const msg = ref("");
 const answerText = ref("");
+const approveReason = ref("");
 const rejectText = ref("");
 const raiseForm = ref({ tokens: "", cost: "", minutes: "" });
 const error = ref("");
@@ -129,6 +130,10 @@ async function cancelQueued(m) {
   await load();
 }
 
+async function decide(body) {
+  if (await act("approve", { call_id: call.value.id, reason: approveReason.value.trim() || undefined, ...body }) !== undefined) approveReason.value = "";
+}
+
 async function answer(text) {
   if (await act("answer", { text }) !== undefined) answerText.value = "";
 }
@@ -183,9 +188,10 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
           <span v-if="t.wait.evaluation.reason"> · the task's reason: {{ t.wait.evaluation.reason }}</span>
         </div>
         <div class="row">
-          <button @click="act('approve', { call_id: call.id, approved: true })">allow once</button>
-          <button title="adds a rule allowing this tool with this command" @click="act('approve', { call_id: call.id, approved: true, always: true })">always allow this</button>
-          <button @click="act('approve', { call_id: call.id, approved: false })">deny</button>
+          <input v-model="approveReason" class="grow" placeholder="why (optional): the task reads it" aria-label="reason" />
+          <button @click="decide({ approved: true })">allow once</button>
+          <button title="adds a rule allowing this tool with this command" @click="decide({ approved: true, always: true })">always allow this</button>
+          <button @click="decide({ approved: false })">deny</button>
         </div>
       </div>
       <div v-if="t.wait?.kind === 'question'" class="err wait" aria-label="question">

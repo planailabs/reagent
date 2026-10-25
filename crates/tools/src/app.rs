@@ -1237,8 +1237,9 @@ impl App {
     }
 
     /// Approves or denies the call a task waits on; `always` adds a rule
-    /// allowing its kind (the tool, and the command as it was) in front.
-    pub async fn approve(&self, id: &str, call_id: &str, approved: bool, always: bool) -> Result<(), String> {
+    /// allowing its kind (the tool, and the command as it was) in front;
+    /// the task reads `reason`.
+    pub async fn approve(&self, id: &str, call_id: &str, approved: bool, always: bool, reason: Option<String>) -> Result<(), String> {
         let t = self.task(id).await?;
         let agent = Self::agent_of(&t)?;
         if always && approved {
@@ -1253,7 +1254,7 @@ impl App {
                     .map_err(|e| e.to_string())?;
             }
         }
-        self.hub()?.op(&root(), Op::Approve { id: agent, call_id: call_id.into(), approved }).await?;
+        self.hub()?.op(&root(), Op::Approve { id: agent, call_id: call_id.into(), approved, reason: reason.filter(|r| !r.trim().is_empty()) }).await?;
         self.notified.lock().unwrap().remove(&(id.to_string(), format!("approval:{call_id}")));
         self.store.set_state(id, "running", None).await.map_err(|e| e.to_string())?;
         self.task_changed(id).await;
@@ -1471,7 +1472,7 @@ impl App {
                 if w["kind"] != "approval" || w["call"]["id"] != a["call_id"] {
                     return gone();
                 }
-                self.approve(&id, a["call_id"].as_str().unwrap_or_default(), k == "approve", false).await?;
+                self.approve(&id, a["call_id"].as_str().unwrap_or_default(), k == "approve", false, None).await?;
                 Ok(if k == "approve" { "allowed".into() } else { "denied".into() })
             }
             Some("answer") => {
