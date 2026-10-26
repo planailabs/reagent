@@ -78,10 +78,21 @@ async function disablePush() {
 const limits = ref(null);
 const maxTasks = ref("");
 const evaluatorPrompt = ref("");
+const reviewerPrompt = ref("");
 async function loadLimits() {
   limits.value = await get("/api/settings").catch((e) => ((error.value = e.message), null));
   maxTasks.value = limits.value?.max_tasks ?? "";
   evaluatorPrompt.value = limits.value?.evaluator_prompt ?? "";
+  reviewerPrompt.value = limits.value?.reviewer_prompt ?? "";
+}
+async function saveReviewer() {
+  error.value = "";
+  try {
+    limits.value = await put("/api/settings", { reviewer_prompt: reviewerPrompt.value });
+    error.value = "saved";
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 async function saveEvaluator() {
   error.value = "";
@@ -133,6 +144,12 @@ onMounted(() => {
     <form class="stack" @submit.prevent="saveEvaluator">
       <span class="dim">Calls the rules would ask you about go to a second model first; per project it decides (approved calls run, rejected ones are refused or come to you) or advises you. What you add here goes into its instructions for every project (a project adds its own).</span>
       <textarea v-model="evaluatorPrompt" rows="4" placeholder="e.g. Never let a call reach production hosts." aria-label="evaluator instructions for every project"></textarea>
+      <div><button type="submit">save</button></div>
+    </form>
+    <h2>merge reviewer <span class="dim">({{ config.reviewer_profile || config.evaluator_profile ? `profile ${config.reviewer_profile || config.evaluator_profile}` : "off: set reviewer_profile or evaluator_profile in reagent.hcl" }})</span></h2>
+    <form class="stack" @submit.prevent="saveReviewer">
+      <span class="dim">With a project's merging on review, a review subtask reads a task's change before it's merged: approved, it's merged; rejected, it goes back to the task. What you add here goes into its instructions for every project (a project adds its own).</span>
+      <textarea v-model="reviewerPrompt" rows="4" placeholder="e.g. Every change needs a test that fails without it." aria-label="reviewer instructions for every project"></textarea>
       <div><button type="submit">save</button></div>
     </form>
     <h2>model profiles <span class="dim">(reagent.hcl)</span></h2>

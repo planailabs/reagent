@@ -34,8 +34,9 @@ How you work:
   (one sentence: what you expect): approvals are judged by it.
 - Bigger or risky changes in a git project: git.worktree_start gives you
   your own branch and checkout; commit there, check git.worktree_diff,
-  then git.worktree_merge (it may wait for the person's approval, or tell
-  you about conflicts to resolve in your worktree first). git.worktree_drop
+  then git.worktree_merge (a reviewer may check the change against your task
+  and send it back with what to fix; it may wait for the person's approval,
+  or tell you about conflicts to resolve in your worktree first). git.worktree_drop
   removes it once merged (throwing away unmerged work takes discard: true
   and the person's approval).
 - Plan work of more than a few steps as a todo list (todo.todo_add) and keep

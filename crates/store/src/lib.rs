@@ -82,6 +82,9 @@ pub struct EvaluatorSettings {
     /// Added to the evaluator's instructions for this project's calls.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub prompt: String,
+    /// Added to the merge reviewer's instructions for this project's merges.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub review_prompt: String,
     /// How risky calls are, before reagent's own classes (first match wins).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub risks: Vec<RiskRule>,
@@ -148,7 +151,7 @@ impl Project {
             path: path.into(),
             memory: "central".into(),
             worktrees: "central".into(),
-            merge: "approve".into(),
+            merge: "review".into(),
             default_action: "ask".into(),
             profile: None,
             budget: Json(Budget::default()),

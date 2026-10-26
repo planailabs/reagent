@@ -148,7 +148,8 @@ impl History {
 const LOOP: usize = 3;
 
 /// A call that changes something: a loop (the same call again and again in a
-/// row), a duplicate (the same non-shell call among the last three), or a
+/// row), a duplicate (the same call among the last three; not a command, nor a
+/// merge: asked again after the worktree changed, as after a review), or a
 /// call throwing away what's there before anything was read. Why, or nothing.
 pub fn static_check(call: &Made, history: &[Made]) -> Option<String> {
     if call.risk == Risk::ReadOnly {
@@ -157,8 +158,8 @@ pub fn static_check(call: &Made, history: &[Made]) -> Option<String> {
     if history.len() >= LOOP && history.iter().rev().take(LOOP).all(|m| m.tool == call.tool && m.args == call.args) {
         return Some(format!("{} with the same arguments {LOOP} times in a row already: this looks like a loop. Look at the results you got, and try another way.", call.tool));
     }
-    let shell = call.tool.starts_with("shell.") || call.tool.starts_with("pty.");
-    if !shell && history.iter().rev().take(3).any(|m| m.tool == call.tool && m.args == call.args) {
+    let again = call.tool.starts_with("shell.") || call.tool.starts_with("pty.") || call.tool == "git.worktree_merge";
+    if !again && history.iter().rev().take(3).any(|m| m.tool == call.tool && m.args == call.args) {
         return Some(format!("the same {} call was made just now: check its result instead of making it again.", call.tool));
     }
     if call.risk == Risk::Destructive && discards(call) && !history.is_empty() && !history.iter().any(|m| m.risk == Risk::ReadOnly) {
@@ -453,6 +454,8 @@ mod tests {
         assert!(static_check(&test, &[test.clone(), test.clone(), test.clone()]).unwrap().contains("loop"));
         assert!(static_check(&edit, &[read.clone(), edit.clone(), test.clone()]).unwrap().contains("just now"));
         assert_eq!(static_check(&test, &[read.clone(), test.clone()]), None, "a repeated command isn't a duplicate");
+        let merge = made("git.worktree_merge", "{}", Risk::Mutating);
+        assert_eq!(static_check(&merge, &[merge.clone(), test.clone()]), None, "nor a merge asked again");
         let wipe = made("shell.exec", "{\"cmd\":\"git reset --hard\"}", Risk::Destructive);
         assert!(static_check(&wipe, &[edit.clone()]).unwrap().contains("nothing was read"));
         assert_eq!(static_check(&wipe, &[]), None, "nothing known (after a restart): no judgement");

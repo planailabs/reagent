@@ -63,7 +63,7 @@ async function load() {
         on_busy: { person: "", agent: "", task: "", cron: "", trigger: "", ...(l.on_busy ?? {}) },
         merge_locks: l.merge_locks ?? [],
         merge_on_busy: l.merge_on_busy ?? null,
-        evaluator: { role: "", on_reject: "", static_checks: "", prompt: "", ...(p.value.evaluator ?? {}), risks: JSON.stringify(p.value.evaluator?.risks ?? [], null, 2) },
+        evaluator: { role: "", on_reject: "", static_checks: "", prompt: "", review_prompt: "", ...(p.value.evaluator ?? {}), risks: JSON.stringify(p.value.evaluator?.risks ?? [], null, 2) },
       };
     }
   } catch (e) {
@@ -109,7 +109,7 @@ async function save() {
 
 /** The evaluator fields as the project keeps them (empty: the default). */
 function evaluator(e) {
-  return { role: e.role || null, on_reject: e.on_reject || null, static_checks: e.static_checks || null, prompt: e.prompt, risks: JSON.parse(e.risks || "[]") };
+  return { role: e.role || null, on_reject: e.on_reject || null, static_checks: e.static_checks || null, prompt: e.prompt, review_prompt: e.review_prompt, risks: JSON.parse(e.risks || "[]") };
 }
 
 /** The settings' lock fields as the project keeps them. */
@@ -232,7 +232,7 @@ watch(() => [props.slug, showAll.value, live.tick], load);
       <label>folder <input v-model="settings.path" size="50" /></label>
       <label>memory <select v-model="settings.memory"><option>central</option><option>repo</option></select> <span class="dim">central: in reagent's data; repo: .reagent/memory in the folder</span></label>
       <label>worktrees <select v-model="settings.worktrees"><option>central</option><option>repo</option></select></label>
-      <label>merging <select v-model="settings.merge"><option>approve</option><option>auto</option></select></label>
+      <label>merging <select v-model="settings.merge"><option>review</option><option>approve</option><option>auto</option></select></label>
       <label>persistent worktrees <select v-model="settings.worktree_sharing" aria-label="worktree sharing"><option value="shared">shared</option><option value="exclusive">one task at a time</option></select> <span class="dim">tasks in one persistent worktree at once (each worktree may set its own)</span></label>
       <label>nix dev shell <select v-model="settings.devshell"><option>auto</option><option>on</option><option>off</option></select>
         <input v-model="settings.devshell_attr" size="10" placeholder="default" aria-label="dev shell" />
@@ -274,6 +274,11 @@ watch(() => [props.slug, showAll.value, live.tick], load);
         <span class="dim">calls the rules would ask you about go to the evaluator first; deciding, what it approves runs</span>
         <label>its instructions for this project <textarea v-model="settings.evaluator.prompt" rows="3" placeholder="e.g. This repo deploys on push to main: be strict about git push." aria-label="evaluator instructions for this project"></textarea></label>
         <label>risk rules (JSON: [{"tool": "shell.exec", "command": "rm -rf target*", "risk": "mutating"}], first match wins) <textarea v-model="settings.evaluator.risks" rows="2" aria-label="risk rules"></textarea></label>
+      </fieldset>
+      <fieldset class="stack" aria-label="merge reviewer">
+        <legend>merge reviewer <span class="dim">{{ config?.reviewer_profile || config?.evaluator_profile ? `(profile ${config.reviewer_profile || config.evaluator_profile})` : "(off: no reviewer_profile or evaluator_profile in reagent.hcl: merges to review come to you)" }}</span></legend>
+        <span class="dim">with merging on review, a review subtask reads a task's change before it's merged</span>
+        <label>its instructions for this project <textarea v-model="settings.evaluator.review_prompt" rows="3" placeholder="e.g. Changes to the API need DESIGN.md updated." aria-label="reviewer instructions for this project"></textarea></label>
       </fieldset>
       <label>environment for its commands (JSON) <textarea v-model="settings.env" rows="4"></textarea></label>
       <div class="row"><button type="submit">save</button><span class="grow"></span><button type="button" @click="remove">remove project</button></div>

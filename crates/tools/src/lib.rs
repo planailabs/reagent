@@ -21,6 +21,7 @@ pub mod locks;
 pub mod mcp;
 pub mod notify;
 pub mod persistent;
+pub mod review;
 pub mod services;
 pub mod source;
 pub mod templates;

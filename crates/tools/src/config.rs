@@ -42,6 +42,9 @@ pub struct Config {
     /// The profile the call evaluator asks about calls the rules would ask the person about (none: no evaluator).
     #[serde(default)]
     pub evaluator_profile: Option<String>,
+    /// The profile the merge reviewer runs on (none: `evaluator_profile`; neither: merges to review go to the person).
+    #[serde(default)]
+    pub reviewer_profile: Option<String>,
 }
 
 /// A kind of task (research, chore, …).
@@ -264,6 +267,7 @@ grep_results = { over = 12000, except = ["skills.skill_load", "fs.read", "shell.
 search_history = true
 # design_profile = "default"                   # the model the prompt designer asks
 # evaluator_profile = "default"                # the model that judges calls the rules would ask you about (none: they come to you)
+# reviewer_profile = "default"                 # the model that reviews a task's merge (merge = "review"; none: evaluator_profile)
 
 notify {
   apprise = []                                 # more apprise URLs (tgram://…, ntfys://…), besides the channels on the settings page
@@ -313,6 +317,9 @@ impl Config {
         }
         if let Some(d) = &self.evaluator_profile {
             anyhow::ensure!(self.profile.contains_key(d), "evaluator_profile {d:?} isn't a profile");
+        }
+        if let Some(d) = &self.reviewer_profile {
+            anyhow::ensure!(self.profile.contains_key(d), "reviewer_profile {d:?} isn't a profile");
         }
         for g in std::iter::once(&self.grep_results).chain(self.profile.values().filter_map(|p| p.grep_results.as_ref())) {
             anyhow::ensure!(g.over == 0 || g.over >= 500, "grep_results.over: 0 (off) or at least 500 characters");

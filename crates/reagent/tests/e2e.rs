@@ -193,6 +193,63 @@ async fn a_worktree_is_merged_once_the_person_approves() {
 }
 
 #[tokio::test]
+async fn a_reviewer_sends_a_merge_back_then_approves_and_an_unchanged_ask_goes_to_the_person() {
+    let r = start_in(tempfile::tempdir().unwrap(), "reviewer_profile = \"default\"\n").await;
+    r.allow_all().await;
+    let mut p = r.run.app.project("site").await.unwrap();
+    p.merge = "review".into();
+    p.evaluator.0.review_prompt = "Docs change with the code.".into();
+    r.run.app.put_project(p).await.unwrap();
+    r.run.app.store.set_setting("reviewer_prompt", "Every change needs a test.").await.unwrap();
+    r.push("Feature", |_| call("c1", "git.worktree_start", json!({})));
+    r.push("Feature", |_| call("c2", "fs.write", json!({"path": "feature.txt", "text": "new\n"})));
+    r.push("Feature", |_| call("c3", "shell.exec", json!({"cmd": "git add -A && git commit -qm feature"})));
+    r.push("Feature", |_| call("c4", "git.worktree_merge", json!({})));
+    // The reviewer works in the worktree, with the task's prompt.
+    r.push("Review: Feature", |b| {
+        let all = all_text(b);
+        assert!(all.contains("add a feature with tests") && all.contains("feature.txt") && all.contains("APPROVE or REJECT"), "{all}");
+        assert!(all.contains("Every change needs a test.") && all.contains("Docs change with the code."), "both extensions: {all}");
+        text("REJECT\nfeature.txt: no test for it")
+    });
+    r.push("Feature", |b| {
+        assert!(last_result(b).contains("the reviewer sent it back") && last_result(b).contains("no test for it"), "{}", last_result(b));
+        assert!(!all_text(b).contains("[subtask "), "the review isn't also a message");
+        call("c5", "shell.exec", json!({"cmd": "echo ok > feature_test.txt && git add -A && git commit -qm test"}))
+    });
+    r.push("Feature", |_| call("c6", "git.worktree_merge", json!({})));
+    r.push("Review: Feature", |b| {
+        assert!(all_text(b).contains("Your previous review sent it back"), "{}", all_text(b));
+        text("APPROVE\nit has its test now")
+    });
+    r.push("Feature", |b| {
+        assert!(last_result(b).contains("merged reagent/feature") && last_result(b).contains("it has its test now"), "{}", last_result(b));
+        call("c7", "fs.write", json!({"path": "more.txt", "text": "more\n"}))
+    });
+    r.push("Feature", |_| call("c8", "shell.exec", json!({"cmd": "git add -A && git commit -qm more"})));
+    r.push("Feature", |_| call("c9", "git.worktree_merge", json!({})));
+    r.push("Review: Feature", |_| text("REJECT\nmore.txt isn't asked for"));
+    // Unchanged, asked again: the person decides, with the review.
+    r.push("Feature", |_| call("c10", "git.worktree_merge", json!({})));
+    r.push("Feature", |b| {
+        assert!(last_result(b).contains("merged reagent/feature"), "{}", last_result(b));
+        text("merged")
+    });
+    let t = r.start_task("Feature", "add a feature with tests").await;
+    let w = r.until(&t.id, "the merge to wait for the person", |t| t.wait.as_ref().is_some_and(|w| w.0["kind"] == "merge")).await;
+    let review = w.wait.unwrap().0["review"].as_str().unwrap().to_string();
+    assert!(review.contains("asked again unchanged") && review.contains("more.txt isn't asked for"), "{review}");
+    assert_eq!(std::fs::read_to_string(r.project.path().join("feature_test.txt")).unwrap(), "ok\n", "the approved merge went in");
+    assert!(!r.project.path().join("more.txt").exists());
+    r.run.app.decide_merge(&t.id, reagent_tools::app::MergeAnswer::Merge).await.unwrap();
+    r.done(&t.id).await;
+    assert!(r.project.path().join("more.txt").exists());
+    let subs = r.run.app.store.tasks(None, Some(&t.id), false, 10).await.unwrap();
+    let project = r.project.path().canonicalize().unwrap().display().to_string();
+    assert!(subs.len() == 3 && subs.iter().all(|s| s.kind.as_deref() == Some("review") && s.cwd != project), "reviews in the worktree: {subs:?}");
+}
+
+#[tokio::test]
 async fn a_question_waits_for_the_answer() {
     let r = start().await;
     r.push("Q", |_| call("c1", "ask.ask", json!({"question": "red or blue?", "options": ["red", "blue"]})));

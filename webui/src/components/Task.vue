@@ -211,6 +211,7 @@ watch(() => (t.value?.agent ? live.agentTick[t.value.agent] : 0), () => load());
       <div v-if="t.wait?.kind === 'merge'" class="err wait" aria-label="merge">
         <div>ready to merge <span class="hi">{{ t.wait.branch }}</span> into <span class="hi">{{ t.wait.base }}</span> ({{ t.wait.ahead }} commits, {{ t.wait.strategy }})</div>
         <pre class="dim">{{ t.wait.stat }}</pre>
+        <div v-if="t.wait.review" aria-label="review"><div>the reviewer:</div><div class="md" v-html="markdown(t.wait.review)"></div></div>
         <div class="row">
           <button @click="act('merge', { merge: true })">merge</button>
           <input v-model="rejectText" class="grow" placeholder="what to change first" aria-label="send back" />

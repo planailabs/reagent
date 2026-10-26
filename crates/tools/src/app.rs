@@ -112,6 +112,10 @@ pub struct StartTask {
     /// When one is busy: wait (queued until it's free), skip (not started) or fail (a failed task); none: the project's.
     #[serde(default)]
     pub on_busy: Option<String>,
+    /// Where it works instead (the merge reviewer: the task's own worktree).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub cwd: Option<String>,
 }
 
 pub struct App {
@@ -399,7 +403,7 @@ impl App {
             return Err(format!("{} isn't a folder", path.display()));
         }
         p.path = path.display().to_string();
-        for (field, v, ok) in [("devshell", &p.devshell, &["off", "auto", "on"][..]), ("memory", &p.memory, &["central", "repo"]), ("worktrees", &p.worktrees, &["central", "repo"]), ("merge", &p.merge, &["approve", "auto"]), ("default_action", &p.default_action, &["allow", "ask", "deny"]), ("worktree_sharing", &p.worktree_sharing, &["shared", "exclusive"])] {
+        for (field, v, ok) in [("devshell", &p.devshell, &["off", "auto", "on"][..]), ("memory", &p.memory, &["central", "repo"]), ("worktrees", &p.worktrees, &["central", "repo"]), ("merge", &p.merge, &["review", "approve", "auto"]), ("default_action", &p.default_action, &["allow", "ask", "deny"]), ("worktree_sharing", &p.worktree_sharing, &["shared", "exclusive"])] {
             if !ok.contains(&v.as_str()) {
                 return Err(format!("{field}: one of {}", ok.join(", ")));
             }
@@ -680,7 +684,7 @@ impl App {
             }
             None => None,
         };
-        let cwd = home.as_ref().map(|w| w.path.clone()).unwrap_or_else(|| p.path.clone());
+        let cwd = req.cwd.clone().or_else(|| home.as_ref().map(|w| w.path.clone())).unwrap_or_else(|| p.path.clone());
         let skills = self.skills_for(Path::new(&cwd), &p);
         for name in &req.skills {
             skills.iter().find(|s| &s.name == name).ok_or_else(|| format!("no skill {name:?}"))?;
@@ -1530,7 +1534,9 @@ impl App {
             let _ = self.message(&t.id, &nudge).await;
             return;
         }
-        if kind != "cancelled" {
+        // A merge review's verdict goes to the merge call waiting for it, not to the person or as a message.
+        let review = t.origin.starts_with("merge-review:");
+        if kind != "cancelled" && !review {
             self.notify(kind, Some(t), &format!("{} — {state}", t.name()), &content.chars().take(400).collect::<String>()).await;
         }
         persist("ending a task", || self.store.set_state(&t.id, state, None)).await;
@@ -1538,6 +1544,7 @@ impl App {
         tracing::info!(task = %t.id, state, "task reported");
         // Its parent hears it even after ending its turn ("waiting for it"): the message wakes it; not a cancelled one.
         if let Some(parent) = &t.parent
+            && !review
             && let Ok(p) = self.task(parent).await
             && p.state != "cancelled"
         {

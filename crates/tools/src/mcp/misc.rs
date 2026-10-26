@@ -409,6 +409,7 @@ impl TaskTools {
                 worktree: a.worktree,
                 locks: a.locks,
                 on_busy: a.on_busy,
+                cwd: None,
             })
             .await?;
         Ok(format!("started subtask {} ({}); its report comes as a message, tasks.task_wait waits for it", sub.id, sub.name()))

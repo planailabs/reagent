@@ -1,6 +1,6 @@
 ---
 name: reagent-worktrees
-description: Working on a branch of one's own with git worktrees in reagent - start, diff, merge (approval, strategies, conflicts), drop; persistent worktrees (a task's home) and how merges come back to them; git sync (branches pulled and pushed on an interval, conflicts resolved by a task).
+description: Working on a branch of one's own with git worktrees in reagent - start, diff, merge (the reviewer, approval, strategies, conflicts), drop; persistent worktrees (a task's home) and how merges come back to them; git sync (branches pulled and pushed on an interval, conflicts resolved by a task).
 ---
 
 # Worktrees
@@ -18,8 +18,13 @@ disturbed until the work is merged.
 - `git.worktree_status()`, `git.worktree_diff(stat?)`: what's changed.
 - `git.worktree_merge(strategy?, message?)`: `merge`, `squash` or `rebase`
   into the base branch. The worktree must be clean. With the project's
-  `merge = approve` (the default) the person sees the diff and merges or
-  sends it back with a message (you get it as the call's result). Conflicts
+  `merge = review` (the default) a review subtask reads your change in the
+  worktree and judges it against your task: approved, it's merged; rejected,
+  its review is the call's result: fix what it names, commit, merge again.
+  Asking again unchanged after a rejection, or a third rejection in a row,
+  hands it to the person (also when no reviewer profile is set). With
+  `merge = approve` the person sees the diff and merges or sends it back
+  with a message (you get it as the call's result). Conflicts
   are aborted and named: resolve them in your worktree (merge the base in),
   commit, and merge again.
 - `git.worktree_drop(force?)`: throw it away (refused while it has unmerged

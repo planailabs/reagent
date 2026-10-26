@@ -658,13 +658,18 @@ test("a task holding a lock makes the next wait; the locks tab shows both and br
   await page.request.post(`/api/tasks/${holder}/cancel`, { headers: { origin: new URL(page.url()).origin } });
 });
 
-test("the evaluator's instructions are kept for every project and for one, with its role", async ({ page }) => {
+test("the evaluator's and the reviewer's instructions are kept for every project and for one, with its role", async ({ page }) => {
   await page.goto("/#/settings");
   await page.getByLabel("evaluator instructions for every project").fill("Never touch production.");
   let saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"));
   await page.getByLabel("evaluator instructions for every project").locator("xpath=..").getByRole("button", { name: "save" }).click();
   expect((await saved).ok()).toBe(true);
   expect((await (await page.request.get("/api/settings")).json()).evaluator_prompt).toBe("Never touch production.");
+  await page.getByLabel("reviewer instructions for every project").fill("Every change needs a test.");
+  saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"));
+  await page.getByLabel("reviewer instructions for every project").locator("xpath=..").getByRole("button", { name: "save" }).click();
+  expect((await saved).ok()).toBe(true);
+  expect((await (await page.request.get("/api/settings")).json()).reviewer_prompt).toBe("Every change needs a test.");
   await page.goto("/#/project/site/settings");
   await page.getByLabel("evaluator role").selectOption("advises");
   await page.getByLabel("static checks").selectOption("warn");
@@ -672,8 +677,12 @@ test("the evaluator's instructions are kept for every project and for one, with 
   saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/projects/site"));
   await page.getByRole("button", { name: "save" }).first().click();
   expect((await saved).ok()).toBe(true);
+  await page.getByLabel("reviewer instructions for this project").fill("Docs change with the code.");
+  saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/projects/site"));
+  await page.getByRole("button", { name: "save" }).first().click();
+  expect((await saved).ok()).toBe(true);
   const e = (await (await page.request.get("/api/projects/site")).json()).evaluator;
-  expect([e.role, e.static_checks, e.prompt]).toEqual(["advises", "warn", "A static site."]);
+  expect([e.role, e.static_checks, e.prompt, e.review_prompt]).toEqual(["advises", "warn", "A static site.", "Docs change with the code."]);
   // Back to the defaults for the other tests.
   await page.getByLabel("evaluator role").selectOption("");
   await page.getByLabel("static checks").selectOption("");

@@ -267,7 +267,7 @@ async fn config(s: S, _: Who, _: Nothing) -> R {
     let c = &s.w.app.config;
     let profiles: Vec<Value> = c.profile.iter().map(|(n, p)| json!({"name": n, "model": p.model, "provider": p.provider, "price": p.price, "context": p.context, "fallback": p.fallback})).collect();
     let kinds: Vec<Value> = c.kind.iter().map(|(n, k)| json!({"name": n, "description": k.description, "profile": k.profile, "escalate": k.escalate, "escalate_after": k.escalate_after})).collect();
-    Ok(Json(json!({"evaluator_profile": c.evaluator_profile, "kinds": kinds, "default_kind": c.default_kind, "routing": c.routing, "profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
+    Ok(Json(json!({"evaluator_profile": c.evaluator_profile, "reviewer_profile": c.reviewer_profile, "kinds": kinds, "default_kind": c.default_kind, "routing": c.routing, "profiles": profiles, "default_profile": c.default_profile, "grep_results": c.grep_results, "notify": {"apprise": !c.notify.apprise_urls().is_empty(), "events": c.notify.events, "url": c.notify.url}})))
 }
 
 /// What the person sets in the web UI: how many tasks may run at once (none: no limit).
@@ -275,7 +275,8 @@ async fn settings(s: S, _: Who, _: Nothing) -> R {
     let running = db(s.w.app.store.running_tasks(None).await)?;
     let queued = db(s.w.app.store.queued_tasks().await)?.len();
     let evaluator_prompt = db(s.w.app.store.setting("evaluator_prompt").await)?.unwrap_or_default();
-    Ok(Json(json!({"max_tasks": s.w.app.max_tasks().await, "running": running, "queued": queued, "evaluator_prompt": evaluator_prompt})))
+    let reviewer_prompt = db(s.w.app.store.setting("reviewer_prompt").await)?.unwrap_or_default();
+    Ok(Json(json!({"max_tasks": s.w.app.max_tasks().await, "running": running, "queued": queued, "evaluator_prompt": evaluator_prompt, "reviewer_prompt": reviewer_prompt})))
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -285,6 +286,8 @@ struct Settings {
     max_tasks: Option<Option<i64>>,
     /// Added to the call evaluator's instructions for every project (left out: as it is).
     evaluator_prompt: Option<String>,
+    /// Added to the merge reviewer's instructions for every project (left out: as it is).
+    reviewer_prompt: Option<String>,
 }
 
 /// A field given as null is Some(None); one left out, None.
@@ -299,6 +302,9 @@ async fn put_settings(s: S, who: Who, v: Settings) -> R {
     }
     if let Some(p) = v.evaluator_prompt {
         db(s.w.app.store.set_setting("evaluator_prompt", p.trim()).await)?;
+    }
+    if let Some(p) = v.reviewer_prompt {
+        db(s.w.app.store.set_setting("reviewer_prompt", p.trim()).await)?;
     }
     // More room: queued tasks start.
     s.w.app.start_queued().await;

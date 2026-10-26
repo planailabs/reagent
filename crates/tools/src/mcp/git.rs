@@ -14,6 +14,7 @@ use serde_json::json;
 use super::caller;
 use crate::app::{App, MergeAnswer};
 use crate::git::{self, Merged, Strategy};
+use crate::review::Review;
 
 #[derive(Clone)]
 pub struct GitTools(pub Arc<App>);
@@ -99,7 +100,7 @@ impl GitTools {
         Ok(if d.trim().is_empty() { "no changes".into() } else { d })
     }
 
-    #[tool(description = "Merge your worktree's branch into its base (commit everything first). Per project it merges at once or waits for the person's approval; conflicts are named for you to resolve in the worktree (merge the base into it there), then merge again.")]
+    #[tool(description = "Merge your worktree's branch into its base (commit everything first). Per project it merges at once, after a reviewer approves it (it may send it back with what to fix), or after the person approves; conflicts are named for you to resolve in the worktree (merge the base into it there), then merge again.")]
     async fn worktree_merge(&self, Parameters(a): Parameters<Merge>, ctx: RequestContext<RoleServer>) -> Result<String, String> {
         let (t, p) = caller(&self.0, &ctx).await?;
         let w = worktree(&t)?;
@@ -113,8 +114,25 @@ impl GitTools {
         if ahead == 0 {
             return Ok(format!("nothing to merge: {} has no commits beyond {}", w.branch, w.base));
         }
-        if p.merge == "approve" {
-            let summary = json!({"branch": w.branch, "base": w.base, "strategy": strategy, "message": message, "ahead": ahead, "stat": git::diff(dir, &w.base, true).unwrap_or_default()});
+        let mut summary = json!({"branch": w.branch, "base": w.base, "strategy": strategy, "message": message, "ahead": ahead, "stat": git::diff(dir, &w.base, true).unwrap_or_default()});
+        let mut reviewed = String::new();
+        let mut ask = p.merge == "approve";
+        if p.merge == "review" {
+            let head = git::git(dir, &["rev-parse", "HEAD"])?;
+            match crate::review::merge(&self.0, &t, &p, &w, head.trim(), &message).await? {
+                Review::Approved(why) => reviewed = format!("\n\nThe reviewer approved it:\n{why}"),
+                Review::Rejected(why) => {
+                    return Ok(format!(
+                        "not merged: the reviewer sent it back:\n\n{why}\n\nFix what it names in the worktree, commit, and merge again. If you're sure it's wrong, say why in your reply and merge again unchanged: the person decides then."
+                    ));
+                }
+                Review::Person(why) => {
+                    summary["review"] = json!(why);
+                    ask = true;
+                }
+            }
+        }
+        if ask {
             match self.0.wait_merge(&t.id, summary).await? {
                 MergeAnswer::Merge => {}
                 MergeAnswer::Reject(why) => return Ok(format!("not merged: the person sent it back: {why}")),
@@ -127,7 +145,7 @@ impl GitTools {
         let r = tokio::task::spawn_blocking(move || git::merge(&repo, &dir, &branch, &base, strategy, &message)).await.map_err(|e| e.to_string());
         crate::locks::release(&self.0, &holder, &taken).await;
         Ok(match r?? {
-            Merged::Done { commit } => format!("merged {} into {} ({commit}). The worktree stays until git.worktree_drop.", w.branch, w.base),
+            Merged::Done { commit } => format!("merged {} into {} ({commit}). The worktree stays until git.worktree_drop.{reviewed}", w.branch, w.base),
             Merged::Nothing => "nothing to merge".into(),
             Merged::Conflicts { files } => format!("conflicts in: {}. Nothing was changed in {}. Resolve them in your worktree (git merge {} there, fix, commit), then merge again.", files.join(", "), w.base, w.base),
         })
